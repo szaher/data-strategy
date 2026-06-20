@@ -1,0 +1,442 @@
+---
+title: "Kubernetes as Data Platform Runtime"
+quiz:
+  - question: "When should a team default to managed cloud services over self-hosted Kubernetes for data workloads?"
+    options:
+      - "When running large-scale production workloads with strict SLAs"
+      - "When the team is small, single-cloud, and the managed equivalent is mature"
+      - "When multi-cloud portability is a requirement"
+      - "When cost optimization at scale is the primary driver"
+    correctIndex: 1
+  - question: "Which workload placement choice provides the most control but requires the highest operational expertise?"
+    options:
+      - "Managed cloud services with vendor-specific features"
+      - "VM or bare-metal deployments with minimal abstraction"
+      - "Self-hosted on Kubernetes with operators"
+      - "Serverless functions for event-driven processing"
+    correctIndex: 2
+  - question: "How do the three data platform archetypes differ in their workload placement decisions?"
+    options:
+      - "All three archetypes default to Kubernetes for consistency"
+      - "Centralized Platform maximizes managed services, Embedded defaults to K8s, Federated Mesh uses VMs"
+      - "Centralized Platform uses K8s for control, Embedded uses managed services for speed, Federated Mesh blends both"
+      - "All three archetypes avoid Kubernetes due to operational complexity"
+    correctIndex: 2
+---
+
+## Overview
+
+Every data platform makes dozens of **workload placement decisions**: should Kafka run on a managed service, self-hosted on Kubernetes, or on bare-metal hardware? What about Spark? Airflow? Databases? Object storage? The answers shape operational cost, team velocity, vendor lock-in, and long-term platform flexibility.
+
+**Kubernetes is not a universal answer** — it is one deployment choice among several, each with trade-offs. Teams that default everything to K8s create operational burden without justification. Teams that default everything to managed services sacrifice control and cost efficiency at scale. The best platforms make **workload-by-workload decisions** using a clear framework.
+
+This lesson presents that framework. You'll learn:
+
+- The three workload placement options and their trade-offs
+- A decision matrix for choosing managed vs K8s vs VM/bare-metal
+- When Kubernetes makes sense for data workloads (and when it doesn't)
+- How Kubernetes operators simplify lifecycle management for stateful data systems
+- How the three platform archetypes from Module 1 approach workload placement differently
+
+By the end, you'll know how to evaluate every component in your data stack against objective criteria — not vendor marketing or default assumptions.
+
+---
+
+## The Workload Placement Decision
+
+Modern data platforms are built from **dozens of components**: message brokers (Kafka), compute engines (Spark, Flink), orchestrators (Airflow, Prefect), data warehouses (BigQuery, Snowflake), databases (PostgreSQL, Cassandra), object storage (S3, GCS), monitoring tools (Prometheus, Grafana), and more.
+
+For each component, platform teams must decide:
+
+1. **Managed cloud service** — use the vendor-provided, fully managed version (e.g., AWS MSK for Kafka, Google Cloud Composer for Airflow, Snowflake for warehousing)
+2. **Self-hosted on Kubernetes** — deploy open-source software on your own K8s cluster, often using operators (e.g., Strimzi for Kafka, Spark Operator, Airflow Helm charts)
+3. **VM or bare-metal** — run the software directly on virtual machines or dedicated hardware (e.g., on-premises Hadoop clusters, GPU nodes for ML training)
+
+Each choice has trade-offs. **There is no single best answer** — the right choice depends on team size, workload scale, regulatory constraints, multi-cloud strategy, and cost structure.
+
+### The Default Trap
+
+Many teams fall into one of two extremes:
+
+- **Managed-first trap** — "We'll use managed services for everything because we don't want to manage infrastructure." This works early but leads to vendor lock-in, high per-unit costs at scale, and loss of control over performance tuning and data sovereignty.
+- **Kubernetes-first trap** — "We'll run everything on Kubernetes for consistency and portability." This works if you have a strong platform engineering team, but creates massive operational overhead for small teams or workloads that don't justify the investment.
+
+The **correct approach** is to evaluate each component independently using a decision framework.
+
+---
+
+## Decision Framework: Managed vs K8s vs VM
+
+Use this matrix to guide workload placement decisions:
+
+| **Criterion**              | **Managed Service**                          | **Self-Hosted on K8s**                       | **VM / Bare-Metal**                          |
+|----------------------------|----------------------------------------------|----------------------------------------------|----------------------------------------------|
+| **Operational burden**     | Lowest — vendor handles patching, scaling    | Medium — requires K8s expertise, operators   | Highest — manual lifecycle management        |
+| **Time to production**     | Fastest — provision in minutes               | Medium — requires cluster setup, RBAC, CI/CD | Slowest — provision VMs, configure networking |
+| **Control & customization**| Low — vendor-defined config options          | High — full control over deployment, tuning  | Highest — kernel-level tuning, hardware access |
+| **Cost at small scale**    | Low — pay only for usage                     | Medium — cluster overhead + workload cost    | High — fixed VM costs regardless of usage     |
+| **Cost at large scale**    | High — per-unit pricing compounds            | Low — amortize cluster cost over many workloads | Medium — efficient for dedicated workloads   |
+| **Vendor lock-in**         | High — proprietary APIs, limited portability | Low — open-source, portable across clouds    | Low — VMs are portable, but data gravity applies |
+| **Portability**            | Low — tied to cloud provider                 | High — same manifests work on any K8s cluster | Medium — VM images portable, networking differs |
+| **Performance tuning**     | Limited — vendor-controlled parameters       | High — tune JVM, kernel, network, storage    | Highest — direct hardware access, NUMA tuning |
+| **Compliance & sovereignty** | Depends on vendor certifications           | Full control over data residency             | Full control, but requires manual auditing    |
+| **Team skill required**    | Low — basic cloud console knowledge          | High — K8s, Helm, operators, observability   | High — systems administration, networking     |
+
+### When to Choose Each Option
+
+**Choose managed services when:**
+- Your team is small (< 5 engineers) or lacks K8s expertise
+- You're in a single cloud with no multi-cloud requirements
+- The managed equivalent is mature and meets your needs (e.g., BigQuery, Snowflake, AWS MSK)
+- Speed to production is more valuable than cost optimization
+- You don't have data sovereignty constraints that prevent using the vendor's managed service
+
+**Choose Kubernetes when:**
+- You have a multi-cloud or hybrid cloud strategy
+- You need full control over performance tuning, resource allocation, or data residency
+- Your scale justifies the operational investment (e.g., hundreds of Spark jobs per day, petabytes of Kafka data)
+- You already have a strong platform engineering team with K8s expertise
+- You want to avoid vendor lock-in and maintain portability across clouds
+
+**Choose VM or bare-metal when:**
+- You have specific performance needs that require direct hardware access (e.g., GPU training, high-IOPS databases, low-latency trading systems)
+- You need to integrate with legacy on-premises systems
+- You want to minimize abstraction overhead (e.g., running a single high-performance Postgres instance)
+- Kubernetes operators for your workload are immature or unsupported
+
+---
+
+## When Kubernetes Makes Sense for Data Workloads
+
+Kubernetes was designed for **stateless microservices** — short-lived processes that can be killed and restarted without consequence. Data workloads are fundamentally different: they are **stateful, long-running, and sensitive to disruption**. A Kafka broker maintains local disk state. A Spark job holds in-memory shuffle data. A database requires careful orchestration of replicas, backups, and failover.
+
+Running data workloads on Kubernetes requires **additional machinery** to handle state, lifecycle management, and resource isolation. This is where **operators** come in.
+
+### Kubernetes Operators for Data Workloads
+
+A **Kubernetes operator** is a custom controller that extends K8s to manage complex, stateful applications. Instead of manually writing YAML for StatefulSets, Services, PersistentVolumeClaims, and ConfigMaps, you define a **custom resource** (e.g., a `Kafka` CR or a `SparkApplication` CR), and the operator handles the lifecycle.
+
+**Examples of mature data platform operators:**
+- **Strimzi** — manages Kafka clusters, Kafka Connect, MirrorMaker, schema registries
+- **Spark Operator** — submits and monitors Spark jobs as Kubernetes-native resources
+- **Airflow on Kubernetes** — deploys Airflow with Helm, using KubernetesExecutor to run tasks as pods
+- **Postgres Operator (Zalando, Crunchy Data)** — manages highly available PostgreSQL clusters
+- **Flink Kubernetes Operator** — deploys and manages Apache Flink jobs
+- **Prometheus Operator** — manages Prometheus, Alertmanager, and monitoring stacks
+
+Operators **abstract away low-level K8s complexity** while preserving control. For example, with Strimzi, you define a Kafka cluster as:
+
+<CodeBlock code={`apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: data-platform-kafka
+  namespace: data-infra
+spec:
+  kafka:
+    version: 3.6.0
+    replicas: 3
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+    storage:
+      type: jbod
+      volumes:
+        - id: 0
+          type: persistent-claim
+          size: 500Gi
+          class: fast-ssd
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+  zookeeper:
+    replicas: 3
+    storage:
+      type: persistent-claim
+      size: 100Gi
+      class: fast-ssd
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+`} language="yaml" filename="kafka-cluster.yaml" />
+
+The operator handles:
+- Provisioning StatefulSets for Kafka brokers and ZooKeeper nodes
+- Creating Services for client access and inter-broker communication
+- Managing persistent volumes and storage classes
+- Rolling updates without downtime
+- Topic and ACL management via Kubernetes CRs
+- Monitoring and metrics export to Prometheus
+
+This is **far simpler** than managing Kafka manually on VMs or writing hundreds of lines of Terraform.
+
+### Kubernetes Patterns for Data Workloads
+
+Beyond operators, Kubernetes provides primitives that map well to data platform needs:
+
+1. **StatefulSets** — for stable network identities and persistent storage (Kafka brokers, Cassandra nodes)
+2. **Jobs and CronJobs** — for batch data processing and scheduled orchestration (Spark batch jobs, dbt runs)
+3. **Resource requests and limits** — to prevent noisy neighbor problems (isolate Spark drivers from shared services)
+4. **Node affinity and taints/tolerations** — to schedule GPU workloads on GPU nodes, or isolate high-memory jobs
+5. **Network policies** — to enforce security boundaries (isolate production Kafka from staging consumers)
+6. **Horizontal Pod Autoscaler (HPA)** — to scale stateless services based on CPU or custom metrics (Kafka Connect workers)
+
+These primitives give platform teams **fine-grained control** over resource allocation, scheduling, and security — control that managed services don't expose.
+
+---
+
+## When Kubernetes is Overkill
+
+Kubernetes is **not free**. It requires:
+
+- Platform engineers who understand pods, RBAC, Helm, CRDs, and debugging
+- CI/CD pipelines to build, test, and deploy Kubernetes manifests
+- Monitoring and observability stacks (Prometheus, Grafana, logging aggregators)
+- Cluster upgrades, certificate rotation, etcd backups
+- Security hardening (network policies, pod security standards, secrets management)
+
+If your team lacks this expertise, **Kubernetes will slow you down**. You'll spend more time debugging pod scheduling than building data products.
+
+**Skip Kubernetes if:**
+- Your team is small (< 5 engineers) and doesn't have K8s experience
+- You're running a single workload that a managed service handles well (e.g., BigQuery for analytics, AWS MSK for Kafka)
+- You're in a single cloud with no portability requirements
+- Your data volumes are low enough that managed service costs are acceptable
+- You don't have data sovereignty or compliance constraints that require self-hosting
+
+In these cases, **managed services are the better default**. You can always migrate to K8s later if scale or control becomes a bottleneck.
+
+---
+
+## Mapping to the Three Platform Archetypes
+
+Recall the three platform archetypes from Module 1 Lesson 4: **Centralized Platform**, **Embedded Services**, and **Federated Mesh**. Each archetype makes different workload placement decisions based on its operating model.
+
+<MermaidDiagram chart={`graph TD
+    A[Platform Archetype] --> B[Centralized Platform]
+    A --> C[Embedded Services]
+    A --> D[Federated Mesh]
+    
+    B --> B1["Workload Placement:<br/>K8s for control + managed for speed"]
+    C --> C1["Workload Placement:<br/>Managed services by default"]
+    D --> D1["Workload Placement:<br/>Hybrid — teams choose"]
+    
+    B1 --> B2[Core infra on K8s<br/>Kafka, Airflow, Spark]
+    B1 --> B3[Data stores managed<br/>BigQuery, S3, RDS]
+    
+    C1 --> C2[All managed services<br/>Quick onboarding]
+    C1 --> C3[Embed into app teams<br/>No shared K8s]
+    
+    D1 --> D2[Shared K8s clusters<br/>optional for teams]
+    D1 --> D3[Teams run own services<br/>on shared infra]
+    
+    style B fill:#ebf8ff,stroke:#3182ce
+    style C fill:#f0fff4,stroke:#38a169
+    style D fill:#fef5e7,stroke:#d97706
+`} />
+
+### Centralized Platform — K8s for Control, Managed for Speed
+
+The **Centralized Platform** archetype builds a shared data platform that all application teams use. The platform team owns infrastructure, provides golden paths, and enforces governance.
+
+**Workload placement strategy:**
+- **Core infrastructure on Kubernetes** — Kafka, Airflow, Spark, Flink, monitoring tools. These are shared services that justify the operational investment. The platform team has K8s expertise and amortizes the cost across all users.
+- **Data storage on managed services** — BigQuery, Snowflake, S3, GCS, RDS. These are commoditized, and the managed versions are mature. No need to self-host.
+- **Specialized compute on VMs or managed** — GPU training on managed ML platforms (Vertex AI, SageMaker), high-IOPS databases on optimized VMs.
+
+This **hybrid approach** balances control and speed. The platform team manages the complex stateful systems (Kafka, Spark) where K8s provides value, while offloading commodity storage to managed services.
+
+### Embedded Services — Managed by Default
+
+The **Embedded Services** archetype embeds data capabilities directly into application teams. There is no central platform team — each application team owns its own data stack.
+
+**Workload placement strategy:**
+- **Default to managed services** — Kafka (AWS MSK, Confluent Cloud), Spark (Databricks, EMR), orchestration (Cloud Composer, Step Functions), warehousing (BigQuery, Snowflake). Application teams don't have platform engineering expertise, so they use managed services to minimize operational burden.
+- **Avoid Kubernetes** — unless the application team already runs K8s for their microservices and wants to colocate data workloads. Even then, they likely use Helm charts for Airflow or lightweight operators, not custom infrastructure.
+- **VMs only for legacy** — if the team inherits an on-premises Hadoop cluster, they might keep it on VMs, but new workloads go to managed services.
+
+This archetype **optimizes for speed and autonomy** at the cost of duplication and vendor lock-in.
+
+### Federated Mesh — Hybrid, Team Choice
+
+The **Federated Mesh** archetype provides shared infrastructure (a Kubernetes cluster, monitoring, IAM) but lets teams choose how to deploy workloads on top of it.
+
+**Workload placement strategy:**
+- **Shared Kubernetes clusters** — the platform team provisions and manages K8s clusters. Teams deploy their own data workloads using operators, Helm charts, or raw manifests.
+- **Managed services as an option** — teams can still use managed Kafka, managed Spark, or managed warehouses if they prefer. The platform team provides IAM roles and network connectivity, but doesn't mandate workload placement.
+- **VMs for specialized workloads** — teams with GPU or high-performance database needs can request dedicated VMs or bare-metal nodes.
+
+This archetype **maximizes flexibility** — teams that have K8s expertise can self-host for cost and control, while teams that lack expertise can default to managed services.
+
+---
+
+## Architecture: Kubernetes-Based Data Platform
+
+Here's what a modern, Kubernetes-based data platform looks like:
+
+<MermaidDiagram chart={`graph TB
+    subgraph K8s["Kubernetes Cluster"]
+        subgraph DataInfra["data-infra namespace"]
+            Kafka["Kafka<br/>(Strimzi Operator)"]
+            Airflow["Airflow<br/>(Helm + KubernetesExecutor)"]
+            Spark["Spark Operator"]
+            Monitoring["Prometheus + Grafana"]
+        end
+        
+        subgraph TeamA["team-a namespace"]
+            SparkJobA["SparkApplication CR<br/>(data processing)"]
+            AirflowDAGA["Airflow DAG pods"]
+        end
+        
+        subgraph TeamB["team-b namespace"]
+            SparkJobB["SparkApplication CR<br/>(ML training)"]
+            FlinkJobB["Flink job"]
+        end
+    end
+    
+    subgraph Managed["Managed Cloud Services"]
+        S3["Object Storage<br/>(S3, GCS)"]
+        BQ["Data Warehouse<br/>(BigQuery, Snowflake)"]
+        RDS["Databases<br/>(RDS, Cloud SQL)"]
+    end
+    
+    TeamA --> Kafka
+    TeamB --> Kafka
+    SparkJobA --> S3
+    SparkJobB --> S3
+    Airflow --> Spark
+    Airflow --> BQ
+    Monitoring -.monitors.-> Kafka
+    Monitoring -.monitors.-> Airflow
+    Monitoring -.monitors.-> SparkJobA
+    
+    style K8s fill:#f0f9ff,stroke:#0284c7
+    style DataInfra fill:#dbeafe,stroke:#3b82f6
+    style TeamA fill:#ecfccb,stroke:#84cc16
+    style TeamB fill:#fef3c7,stroke:#f59e0b
+    style Managed fill:#fce7f3,stroke:#ec4899
+`} />
+
+**Key design choices:**
+
+1. **Core data infrastructure runs on K8s** — Kafka (Strimzi), Airflow (Helm + KubernetesExecutor), Spark Operator, Prometheus. These are shared services provisioned by the platform team in the `data-infra` namespace.
+
+2. **Teams submit workloads as Kubernetes resources** — teams create `SparkApplication` CRs, deploy Airflow DAGs, or submit Flink jobs. The operators handle scheduling, resource allocation, and lifecycle management.
+
+3. **Data storage is managed** — S3/GCS for object storage, BigQuery/Snowflake for warehousing, RDS/Cloud SQL for operational databases. No need to self-host these — the managed versions are mature and cost-effective at scale.
+
+4. **Namespace isolation** — each team gets its own namespace with RBAC policies, resource quotas, and network policies. Teams can't access each other's pods or secrets.
+
+5. **Observability is centralized** — Prometheus scrapes metrics from all workloads, Grafana provides dashboards, and logs are aggregated to a central logging backend (e.g., Loki, CloudWatch, Stackdriver).
+
+This architecture **balances control and simplicity** — the platform team manages the complex stateful systems, while teams consume them through high-level APIs (CRs, Helm values).
+
+---
+
+## Decision Flowchart: Managed vs K8s vs VM
+
+Use this flowchart to guide workload placement for any component:
+
+<MermaidDiagram chart={`graph TD
+    Start["New workload:<br/>Kafka, Spark, Airflow, etc."] --> Q1{Do we have a mature<br/>managed service?}
+    
+    Q1 -- Yes --> Q2{Is the team small<br/>or lacking K8s expertise?}
+    Q1 -- No --> Q3{Do we have specific<br/>performance needs?}
+    
+    Q2 -- Yes --> Managed["Use managed service"]
+    Q2 -- No --> Q4{Multi-cloud or<br/>data sovereignty?}
+    
+    Q4 -- Yes --> K8s["Self-host on K8s"]
+    Q4 -- No --> Q5{Cost at scale<br/>a concern?}
+    
+    Q5 -- Yes --> K8s
+    Q5 -- No --> Managed
+    
+    Q3 -- Yes GPU/IOPS --> VM["Use VM or bare-metal"]
+    Q3 -- No --> Q6{Do we have<br/>K8s expertise?}
+    
+    Q6 -- Yes --> K8s
+    Q6 -- No --> Managed
+    
+    style Managed fill:#d1fae5,stroke:#10b981
+    style K8s fill:#dbeafe,stroke:#3b82f6
+    style VM fill:#fef3c7,stroke:#f59e0b
+`} />
+
+---
+
+## Failure Modes
+
+Workload placement decisions fail in predictable ways:
+
+### 1. Premature Kubernetes Adoption
+
+**Symptom:** A small team (< 5 engineers) decides to run everything on Kubernetes "for learning" or "because it's the future." Six months later, they're still debugging pod evictions, RBAC policies, and certificate rotation instead of shipping data products.
+
+**Root cause:** Overestimating team capacity and underestimating Kubernetes operational complexity.
+
+**Fix:** Start with managed services. Adopt Kubernetes only when you have:
+- A dedicated platform engineer with K8s expertise
+- Scale that justifies the operational investment (e.g., > 10 Spark jobs per day, > 1 TB Kafka per day)
+- A clear multi-cloud or cost-optimization driver
+
+### 2. Managed Service Lock-In
+
+**Symptom:** The company builds its entire platform on AWS-native services (Kinesis, Glue, Redshift, Step Functions). Two years later, they want to migrate to GCP for cost reasons, but the migration is infeasible — every pipeline is tightly coupled to AWS-specific APIs.
+
+**Root cause:** Defaulting to managed services without considering portability.
+
+**Fix:** For core infrastructure (message bus, orchestration, compute), prefer open-source tools (Kafka over Kinesis, Airflow over Step Functions) even if you run them as managed services (AWS MSK, Cloud Composer). For storage, accept vendor lock-in — S3 and BigQuery are commodities with mature ecosystems.
+
+### 3. Kubernetes Without a Platform Team
+
+**Symptom:** The company adopts Kubernetes for data workloads but doesn't hire platform engineers. Application teams are expected to learn K8s, write Helm charts, and debug pod scheduling on their own. Productivity drops.
+
+**Root cause:** Treating Kubernetes as "just another deployment target" instead of a platform that requires dedicated ownership.
+
+**Fix:** If you adopt Kubernetes, either:
+- Hire a platform team to own the K8s clusters, operators, and golden paths
+- Use a managed Kubernetes service (GKE Autopilot, EKS Fargate) to offload node management
+- Stick to managed services until you can afford a platform team
+
+### 4. VM Sprawl
+
+**Symptom:** Every workload runs on a dedicated VM. The team has 50 VMs for 10 workloads, each with manual configuration, no autoscaling, and inconsistent monitoring.
+
+**Root cause:** Avoiding Kubernetes and managed services without a clear reason.
+
+**Fix:** Consolidate workloads onto Kubernetes or migrate to managed services. VMs should be reserved for:
+- GPU workloads that require specific hardware
+- Legacy systems that can't be containerized
+- High-performance databases where K8s overhead is unacceptable
+
+---
+
+## Summary
+
+Kubernetes is **one deployment option** for data workloads, not a universal answer. The best platforms make **workload-by-workload decisions** using a clear framework:
+
+1. **Evaluate managed services first** — fastest time to production, lowest operational burden, best choice for small teams or mature commodity services (warehousing, object storage).
+
+2. **Choose Kubernetes when you need control** — multi-cloud portability, cost optimization at scale, data sovereignty, or performance tuning. Requires platform engineering expertise and operational investment.
+
+3. **Use VMs or bare-metal for specialized needs** — GPU training, high-IOPS databases, legacy integration, or when K8s abstraction overhead is unacceptable.
+
+4. **Map to your platform archetype:**
+   - **Centralized Platform** — K8s for core infra (Kafka, Airflow, Spark), managed for storage (BigQuery, S3)
+   - **Embedded Services** — managed by default, avoid Kubernetes unless teams have expertise
+   - **Federated Mesh** — shared K8s clusters, teams choose managed vs self-hosted
+
+5. **Avoid failure modes** — premature K8s adoption, managed lock-in, K8s without a platform team, VM sprawl.
+
+The right workload placement strategy depends on your team size, scale, multi-cloud requirements, and cost structure. Don't default to Kubernetes because it's popular — default to **the simplest solution that meets your constraints**.
+
+> **Key Takeaway:** Kubernetes is not a destination — it's a tool in the toolbox. Use it when the trade-offs (control, portability, cost) justify the operational investment. For everything else, managed services win.

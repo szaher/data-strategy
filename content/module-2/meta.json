@@ -1,0 +1,53 @@
+{
+  "id": 2,
+  "title": "Platform Foundations — Cloud, Kubernetes, Security & FinOps",
+  "description": "Workload placement, tenancy, IAM, secrets, network controls, cost allocation, resilience",
+  "color": "#4fd1c5",
+  "lessons": [
+    {
+      "slug": "01-why-platform-foundations-matter",
+      "title": "Why Platform Foundations Matter",
+      "description": "The platform as a product; golden paths, templates, self-service APIs, and paved-road developer experience",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-kubernetes-as-data-platform-runtime",
+      "title": "Kubernetes as Data Platform Runtime",
+      "description": "Workload placement and operating-model decisions; managed service vs self-hosted on Kubernetes vs VM/bare-metal",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-security-identity-and-network-controls",
+      "title": "Security, Identity & Network Controls",
+      "description": "Workload identity, IAM, secrets management, encryption, tenant isolation, network policies",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-finops-and-cost-allocation",
+      "title": "FinOps & Cost Allocation",
+      "description": "Tagging, showback/chargeback, rightsizing, unit economics per pipeline run, TB, query, and AI request",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-resilience-and-disaster-recovery",
+      "title": "Resilience & Disaster Recovery",
+      "description": "HA patterns, failure domains, service-tiered RPO/RTO, restore testing, disaster-recovery exercises",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "sequence"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

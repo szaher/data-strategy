@@ -1,0 +1,504 @@
+---
+title: "Feature Engineering Pipelines"
+quiz:
+  - question: "What does point-in-time correctness ensure in feature pipelines?"
+    options:
+      - "Features are computed using only data available at the prediction time"
+      - "All feature computations finish within a specific time window"
+      - "Features are ordered chronologically in the database"
+      - "Batch and streaming pipelines run simultaneously"
+    correctIndex: 0
+  - question: "Which scenario is best suited for streaming feature computation?"
+    options:
+      - "Historical customer segmentation analysis"
+      - "Real-time fraud detection scoring"
+      - "Monthly sales aggregations"
+      - "Annual data warehouse reporting"
+    correctIndex: 1
+  - question: "What happens when you use current data instead of historical data for training features?"
+    options:
+      - "Training performance improves but production fails"
+      - "The model trains faster with better accuracy"
+      - "Future leakage contaminates the training set"
+      - "Feature dependencies break in production"
+    correctIndex: 2
+---
+
+## The Feature Computation Problem
+
+You've built a powerful ML model for credit risk scoring. During training, you compute `days_since_last_payment` by querying the current state of the transactions table. The model achieves 95% accuracy on your holdout set. You deploy to production and accuracy drops to 72% within the first week.
+
+**What went wrong?** During training, you computed features using data as it exists *today*, not as it existed *when the prediction was made*. When scoring a customer from six months ago, you included transactions that happened *after* that date. Your model learned to "peek into the future" during training but can't do that in production.
+
+This is **future leakage**, and it's one of the most common — and most expensive — bugs in production ML systems. The fix requires **point-in-time correctness**: computing features using only data that was available at prediction time.
+
+But point-in-time correctness is just one challenge in feature engineering pipelines. You also need to decide between batch and streaming computation, handle backfilling when feature logic changes, and manage dependencies between features. This lesson covers the architecture patterns that make feature pipelines reliable, consistent, and production-ready.
+
+## Batch Feature Computation
+
+**Batch feature pipelines** compute features on a recurring schedule (hourly, daily, weekly) by processing large volumes of historical data. They're the workhorse of most ML systems because they handle complex aggregations efficiently and guarantee consistency across training and serving.
+
+### When to Use Batch Features
+
+Use batch pipelines when:
+
+- **Features are time-aggregated** — weekly purchase totals, 90-day rolling averages, monthly engagement scores
+- **Computation is expensive** — joining multiple large tables, running statistical models, executing complex window functions
+- **Freshness tolerance is high** — predictions don't need features updated in real time (daily or hourly is acceptable)
+- **Data volume is large** — billions of events need to be aggregated into features for millions of entities
+
+For example, computing `customer_lifetime_value` requires aggregating all purchases, returns, and support tickets over the entire customer history. This is expensive to compute on-demand but cheap to precompute once per day in a batch pipeline.
+
+### Architecture Pattern
+
+Batch feature pipelines typically follow this structure:
+
+<MermaidDiagram chart={`graph LR
+    A[Raw Events<br/>Warehouse] --> B[Spark Job<br/>Feature Computation]
+    B --> C[Feature Store<br/>Point-in-Time Join]
+    C --> D[Training Data]
+    C --> E[Online Serving]
+    F[Feature Logic<br/>Python/SQL] --> B
+    style A fill:#daf2f2,stroke:#0066cc
+    style C fill:#daf2f2,stroke:#0066cc
+    style F fill:#fef0f0,stroke:#cc0000
+`} />
+
+The key components:
+
+- **Raw events warehouse** — historical data from Module 4 (streaming ingestion) and Module 5 (batch processing)
+- **Feature computation job** — Spark/Beam/Flink batch job that aggregates events into features
+- **Feature store** — versioned storage for computed features with point-in-time join support
+- **Feature logic repository** — versioned Python/SQL definitions of how features are computed
+
+### Example: Batch Feature Computation with Spark
+
+Here's a simplified batch feature pipeline computing user engagement scores:
+
+<CodeBlock code={`from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, count, avg, sum, datediff, current_date
+from datetime import datetime, timedelta
+
+def compute_user_engagement_features(spark, feature_date):
+    """
+    Compute user engagement features as of a specific date.
+    CRITICAL: Only use data available before feature_date.
+    """
+    # Read events up to feature_date (point-in-time correctness)
+    events = (
+        spark.table("raw_events.user_actions")
+        .filter(col("event_timestamp") < feature_date)
+    )
+    
+    # Define time windows
+    seven_days_ago = feature_date - timedelta(days=7)
+    thirty_days_ago = feature_date - timedelta(days=30)
+    ninety_days_ago = feature_date - timedelta(days=90)
+    
+    # Compute 7-day features
+    features_7d = (
+        events
+        .filter(col("event_timestamp") >= seven_days_ago)
+        .groupBy("user_id")
+        .agg(
+            count("*").alias("events_7d"),
+            count(col("event_type") == "purchase").alias("purchases_7d"),
+            sum("revenue").alias("revenue_7d")
+        )
+    )
+    
+    # Compute 30-day features
+    features_30d = (
+        events
+        .filter(col("event_timestamp") >= thirty_days_ago)
+        .groupBy("user_id")
+        .agg(
+            count("*").alias("events_30d"),
+            avg("session_duration_seconds").alias("avg_session_duration_30d")
+        )
+    )
+    
+    # Compute 90-day features
+    features_90d = (
+        events
+        .filter(col("event_timestamp") >= ninety_days_ago)
+        .groupBy("user_id")
+        .agg(
+            datediff(current_date(), col("event_timestamp").min()).alias("days_since_first_event"),
+            datediff(current_date(), col("event_timestamp").max()).alias("days_since_last_event")
+        )
+    )
+    
+    # Join all feature sets
+    user_features = (
+        features_7d
+        .join(features_30d, on="user_id", how="outer")
+        .join(features_90d, on="user_id", how="outer")
+        .withColumn("feature_date", feature_date)
+        .fillna(0)  # Handle users with no activity in some windows
+    )
+    
+    return user_features
+
+# Run daily at 2 AM UTC
+spark = SparkSession.builder.appName("user_engagement_features").getOrCreate()
+feature_date = datetime.utcnow().date()
+features = compute_user_engagement_features(spark, feature_date)
+
+# Write to feature store with point-in-time versioning
+features.write.partitionBy("feature_date").mode("append").saveAsTable("features.user_engagement")
+`} language="python" filename="batch_features.py" />
+
+**Key principles** in this example:
+
+1. **Date parameter** — the `feature_date` parameter ensures we can compute features for any historical date, not just "today"
+2. **Time-travel filter** — `filter(col("event_timestamp") < feature_date)` enforces point-in-time correctness
+3. **Versioned output** — partitioning by `feature_date` allows time-travel queries during training
+4. **Idempotent** — running the job multiple times for the same date produces identical results
+
+## Streaming Feature Computation
+
+**Streaming feature pipelines** compute features in real time as events arrive. They're essential when predictions require up-to-the-second data or when batch latency is unacceptable.
+
+### When to Use Streaming Features
+
+Use streaming pipelines when:
+
+- **Freshness is critical** — fraud detection, real-time bidding, live content ranking
+- **Features are event-triggered** — "time since last login", "count of failed password attempts in last 5 minutes"
+- **Data volume is moderate** — streaming systems handle high throughput but struggle with complex multi-way joins
+- **Computation is incremental** — features can be updated with each new event rather than recomputed from scratch
+
+For example, detecting account takeover requires knowing how many login attempts failed in the last 60 seconds. Computing this in a daily batch job is useless — by the time the batch runs, the account is already compromised.
+
+### Architecture Pattern
+
+Streaming feature pipelines typically use Flink (from Module 5) or similar stream processors:
+
+<MermaidDiagram chart={`graph LR
+    A[Event Stream<br/>Kafka/Pub/Sub] --> B[Flink Job<br/>Windowed Aggregation]
+    B --> C[Feature Cache<br/>Redis/Bigtable]
+    C --> D[Online Serving<br/>Low-Latency Reads]
+    E[Feature Logic<br/>Java/Python] --> B
+    style A fill:#daf2f2,stroke:#0066cc
+    style C fill:#daf2f2,stroke:#0066cc
+    style E fill:#fef0f0,stroke:#cc0000
+`} />
+
+The critical difference from batch: streaming features are written to a **low-latency cache** (Redis, Bigtable, DynamoDB) rather than a warehouse, because serving latency must be sub-100ms.
+
+### Example: Streaming Feature Computation with Flink
+
+<CodeBlock code={`from pyflink.datastream import StreamExecutionEnvironment
+from pyflink.table import StreamTableEnvironment, EnvironmentSettings
+from pyflink.table.window import Tumble
+
+def create_streaming_features():
+    env = StreamExecutionEnvironment.get_execution_environment()
+    settings = EnvironmentSettings.new_instance().in_streaming_mode().build()
+    table_env = StreamTableEnvironment.create(env, environment_settings=settings)
+    
+    # Define source: login events from Kafka
+    table_env.execute_sql("""
+        CREATE TABLE login_events (
+            user_id STRING,
+            event_time TIMESTAMP(3),
+            login_success BOOLEAN,
+            ip_address STRING,
+            WATERMARK FOR event_time AS event_time - INTERVAL '5' SECOND
+        ) WITH (
+            'connector' = 'kafka',
+            'topic' = 'login_events',
+            'properties.bootstrap.servers' = 'kafka:9092',
+            'scan.startup.mode' = 'latest-offset',
+            'format' = 'json'
+        )
+    """)
+    
+    # Define sink: streaming features to Redis
+    table_env.execute_sql("""
+        CREATE TABLE streaming_features (
+            user_id STRING,
+            window_start TIMESTAMP(3),
+            failed_logins_5m BIGINT,
+            total_logins_5m BIGINT,
+            unique_ips_5m BIGINT,
+            PRIMARY KEY (user_id) NOT ENFORCED
+        ) WITH (
+            'connector' = 'redis',
+            'host' = 'redis',
+            'port' = '6379',
+            'command' = 'HSET'
+        )
+    """)
+    
+    # Compute 5-minute tumbling window features
+    table_env.execute_sql("""
+        INSERT INTO streaming_features
+        SELECT
+            user_id,
+            TUMBLE_START(event_time, INTERVAL '5' MINUTE) AS window_start,
+            SUM(CASE WHEN login_success = FALSE THEN 1 ELSE 0 END) AS failed_logins_5m,
+            COUNT(*) AS total_logins_5m,
+            COUNT(DISTINCT ip_address) AS unique_ips_5m
+        FROM login_events
+        GROUP BY user_id, TUMBLE(event_time, INTERVAL '5' MINUTE)
+    """)
+
+create_streaming_features()
+`} language="python" filename="streaming_features.py" />
+
+**Key principles** in streaming features:
+
+1. **Watermarks** — handle late-arriving events by defining acceptable delay bounds
+2. **Windowing** — tumbling, sliding, or session windows define aggregation boundaries
+3. **Low-latency sink** — Redis/Bigtable for sub-100ms reads at serving time
+4. **State management** — Flink checkpoints ensure exactly-once processing guarantees
+
+## Point-in-Time Correctness
+
+**Point-in-time correctness** is the single most important property of feature pipelines. It means: *when computing features for a training example at time T, use only data that was available before T*.
+
+### Why Point-in-Time Correctness Matters
+
+Consider a fraud detection model trained on historical transactions. For each transaction at time T, you compute `avg_transaction_amount_30d` — the average transaction amount in the 30 days before T.
+
+**Wrong approach** (future leakage):
+
+<CodeBlock code={`# WRONG: Computes average using ALL data up to current time
+SELECT
+    t.transaction_id,
+    AVG(t2.amount) AS avg_transaction_amount_30d
+FROM transactions t
+JOIN transactions t2
+    ON t.user_id = t2.user_id
+    AND t2.timestamp BETWEEN t.timestamp - INTERVAL '30 days' AND CURRENT_TIMESTAMP()
+GROUP BY t.transaction_id
+`} language="sql" filename="wrong_features.sql" />
+
+This query uses transactions that happened *after* `t.timestamp`, leaking future information into training.
+
+**Correct approach** (point-in-time join):
+
+<CodeBlock code={`# CORRECT: Computes average using only data before prediction time
+SELECT
+    t.transaction_id,
+    AVG(t2.amount) AS avg_transaction_amount_30d
+FROM transactions t
+JOIN transactions t2
+    ON t.user_id = t2.user_id
+    AND t2.timestamp BETWEEN t.timestamp - INTERVAL '30 days' AND t.timestamp
+GROUP BY t.transaction_id
+`} language="sql" filename="correct_features.sql" />
+
+This query ensures that for a transaction at time T, we compute features using only data from `[T-30d, T]`.
+
+### Point-in-Time Join Sequence
+
+Here's how point-in-time joins work in a feature store:
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant T as Training Job
+    participant F as Feature Store
+    participant W as Data Warehouse
+    
+    T->>F: Request features for transaction_id=123 at timestamp=2024-01-15T10:30:00
+    F->>W: Query: SELECT * FROM features WHERE entity_id=user_456 AND feature_timestamp <= 2024-01-15T10:30:00 ORDER BY feature_timestamp DESC LIMIT 1
+    W-->>F: Return feature row with timestamp=2024-01-15T08:00:00
+    F-->>T: Return features computed as of 08:00 (2.5 hours before prediction)
+    
+    Note over T,W: Feature store ensures we use the LATEST features<br/>available BEFORE the prediction time, never after
+`} />
+
+The feature store maintains versioned feature values partitioned by `feature_timestamp`. When training, we query for the latest version before the prediction timestamp.
+
+## Backfilling Features
+
+**Backfilling** is the process of recomputing historical features when feature logic changes. It's essential for maintaining point-in-time correctness when you improve feature definitions.
+
+### When Backfilling is Necessary
+
+You need to backfill when:
+
+- **Feature logic changes** — you fix a bug or improve the computation method
+- **New features are added** — you need historical values for existing training examples
+- **Data corrections occur** — upstream data was corrected and features need recomputation
+- **Model retraining** — you want to retrain on historical data with new feature definitions
+
+### Backfill Workflow
+
+<MermaidDiagram chart={`graph TD
+    A[Feature Logic Change] --> B{Affects Historical Data?}
+    B -->|Yes| C[Determine Backfill Date Range]
+    C --> D[Run Batch Job for Each Historical Date]
+    D --> E[Write Versioned Features]
+    E --> F[Validate Consistency]
+    F --> G[Update Feature Metadata]
+    B -->|No| H[Deploy to Production]
+    
+    style C fill:#fef0f0,stroke:#cc0000
+    style F fill:#fef0f0,stroke:#cc0000
+`} />
+
+**Backfill example**:
+
+<CodeBlock code={`from datetime import datetime, timedelta
+
+def backfill_features(start_date, end_date, feature_computation_fn):
+    """
+    Backfill features for a date range.
+    Runs the same batch job for each day in the range.
+    """
+    current_date = start_date
+    
+    while current_date <= end_date:
+        print(f"Backfilling features for {current_date}")
+        
+        # Run the same batch job used for daily production runs
+        features = feature_computation_fn(spark, current_date)
+        
+        # Write with versioning (will overwrite if already exists)
+        features.write.partitionBy("feature_date").mode("overwrite").saveAsTable("features.user_engagement")
+        
+        current_date += timedelta(days=1)
+    
+    print(f"Backfill complete: {start_date} to {end_date}")
+
+# Example: Backfill 90 days of features
+backfill_features(
+    start_date=datetime(2024, 1, 1),
+    end_date=datetime(2024, 3, 31),
+    feature_computation_fn=compute_user_engagement_features
+)
+`} language="python" filename="backfill.py" />
+
+**Critical backfill principle**: use the *same computation logic* for backfilling and daily production runs. Never write separate backfill code — it will inevitably diverge and introduce training-serving skew.
+
+## Feature Dependencies
+
+**Feature dependencies** occur when one feature computation requires the output of another feature. Managing these dependencies correctly prevents circular logic and ensures features are computed in the right order.
+
+### Dependency DAG
+
+Feature dependencies form a **directed acyclic graph (DAG)**:
+
+<MermaidDiagram chart={`graph TD
+    A[Raw Events] --> B[user_total_purchases]
+    A --> C[user_total_revenue]
+    B --> D[user_avg_purchase_value]
+    C --> D
+    A --> E[user_login_count]
+    E --> F[user_avg_session_duration]
+    A --> F
+    D --> G[user_engagement_score]
+    F --> G
+    
+    style A fill:#daf2f2,stroke:#0066cc
+    style G fill:#fef0f0,stroke:#cc0000
+`} />
+
+In this example:
+
+- `user_avg_purchase_value` depends on `user_total_purchases` and `user_total_revenue`
+- `user_engagement_score` depends on `user_avg_purchase_value` and `user_avg_session_duration`
+- All features ultimately derive from raw events
+
+### Managing Dependencies in Production
+
+**Best practice**: Use an orchestrator like Airflow or Dagster to encode dependencies explicitly:
+
+<CodeBlock code={`from airflow import DAG
+from airflow.operators.python import PythonOperator
+from datetime import datetime, timedelta
+
+default_args = {
+    'owner': 'ml-platform',
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5),
+}
+
+with DAG(
+    'daily_feature_pipeline',
+    default_args=default_args,
+    schedule_interval='0 2 * * *',  # Run daily at 2 AM UTC
+    start_date=datetime(2024, 1, 1),
+    catchup=False,
+) as dag:
+    
+    # Layer 1: Base features (no dependencies)
+    compute_purchase_features = PythonOperator(
+        task_id='compute_purchase_features',
+        python_callable=run_purchase_features,
+    )
+    
+    compute_login_features = PythonOperator(
+        task_id='compute_login_features',
+        python_callable=run_login_features,
+    )
+    
+    # Layer 2: Derived features (depend on Layer 1)
+    compute_engagement_score = PythonOperator(
+        task_id='compute_engagement_score',
+        python_callable=run_engagement_score,
+    )
+    
+    # Define dependencies
+    [compute_purchase_features, compute_login_features] >> compute_engagement_score
+`} language="python" filename="feature_dag.py" />
+
+The orchestrator ensures that `compute_engagement_score` runs only after its dependencies complete successfully.
+
+## Batch vs. Streaming Decision Framework
+
+How do you decide whether a feature should be computed in batch or streaming?
+
+| **Dimension**              | **Batch**                                | **Streaming**                          |
+|----------------------------|------------------------------------------|----------------------------------------|
+| **Freshness requirement**  | Hours to days acceptable                 | Seconds to minutes required            |
+| **Computation complexity** | Complex multi-way joins, expensive aggregations | Simple event-driven updates           |
+| **Data volume**            | Billions of events, TB-scale             | High throughput but moderate state     |
+| **Use case**               | Training data, daily model updates       | Real-time serving, fraud detection     |
+| **Consistency guarantees** | Strong (exactly-once by design)          | Requires careful checkpointing         |
+| **Cost**                   | Lower (batch efficiency)                 | Higher (always-on infrastructure)      |
+
+**Hybrid approach**: Use batch for training features and streaming for serving features. Store both in the feature store, with streaming features overriding batch features when available.
+
+## Failure Modes
+
+### Future Leakage
+
+**Problem**: Training uses data that wouldn't be available at prediction time.
+
+**Symptoms**: Training accuracy is suspiciously high, production accuracy is much lower, models that "know the answer" before it happens.
+
+**Fix**: Enforce point-in-time joins in all feature computation. Audit training pipelines to ensure `feature_timestamp <= prediction_timestamp`.
+
+### Stale Features
+
+**Problem**: Batch features are computed daily but production requires fresher data.
+
+**Symptoms**: Model degrades during the day and recovers after nightly batch run. Time-of-day effects dominate predictions.
+
+**Fix**: Identify time-sensitive features and compute them in streaming instead. Use hybrid batch + streaming architecture.
+
+### Backfill Gaps
+
+**Problem**: Feature logic changes but historical features aren't backfilled.
+
+**Symptoms**: Training on recent data works well, but model degrades when trained on older data. Feature distributions shift discontinuously at the logic change date.
+
+**Fix**: Always backfill when feature logic changes. Validate that feature distributions are consistent before and after the change date.
+
+### Circular Dependencies
+
+**Problem**: Feature A depends on Feature B, which depends on Feature A.
+
+**Symptoms**: Orchestrator deadlocks or features never compute. Infinite loops in backfill jobs.
+
+**Fix**: Draw the dependency DAG before implementing features. Use topological sort to detect cycles.
+
+## Summary
+
+Feature engineering pipelines ensure that the features used for training match the features available at serving time. **Batch pipelines** handle complex aggregations efficiently but have higher latency. **Streaming pipelines** provide real-time features but require careful state management. **Point-in-time correctness** prevents future leakage by ensuring features use only data available before prediction time. **Backfilling** recomputes historical features when logic changes. **Feature dependencies** form a DAG that must be managed explicitly to prevent circular logic.
+
+The hardest part of feature engineering isn't writing the aggregation logic — it's ensuring that training and serving use identical feature values, which requires versioned storage, point-in-time joins, and disciplined orchestration. Get this wrong and your production model will silently degrade, no matter how good your algorithm is.

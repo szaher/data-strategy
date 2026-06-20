@@ -1,0 +1,464 @@
+---
+title: "Databases on the Data Platform"
+quiz:
+  - question: "Why should you NOT run analytics queries directly against your OLTP database?"
+    options:
+      - "Analytics queries are too complex for PostgreSQL to handle efficiently"
+      - "OLTP databases use row-oriented storage which scans full rows for every aggregation, degrading transactional performance"
+      - "Analytics queries require more memory than OLTP databases can allocate"
+      - "OLTP databases cannot execute JOIN operations needed for analytics"
+    correctIndex: 1
+  - question: "What is the primary purpose of connection pooling in a data platform?"
+    options:
+      - "To cache query results for faster responses"
+      - "To distribute queries across multiple database servers"
+      - "To reuse database connections instead of forking a new process for each connection, preventing resource exhaustion"
+      - "To automatically retry failed queries"
+    correctIndex: 2
+  - question: "When choosing between managed PostgreSQL (Cloud SQL/RDS) and operator-based deployment (CloudNativePG), which factor most strongly favors the operator approach?"
+    options:
+      - "Need for automatic security patching and maintenance"
+      - "Requirement for multi-region replication and custom topology control"
+      - "Preference for lower operational complexity"
+      - "Need for built-in connection pooling"
+    correctIndex: 1
+---
+
+## Overview
+
+Every data platform needs **operational databases** — persistent stores for live transactions, application state, and metadata. While your lakehouse handles analytical workloads, your operational databases power the real-time systems that write data *into* the platform and read enriched data *out* of it.
+
+In Module 2, you learned where to place workloads across your infrastructure. In this lesson, you'll see how **PostgreSQL** — the database of choice for modern data platforms — fits into that framework. You'll understand the critical distinction between **OLTP** (online transaction processing) and **OLAP** (online analytical processing), why running analytics queries against operational databases causes failures, and how to architect database infrastructure that serves both operational and analytical needs without compromising either.
+
+This lesson covers:
+
+- PostgreSQL as the operational database standard (and why)
+- OLTP vs OLAP workload design and the consequences of mixing them
+- Connection pooling and why it's non-negotiable at scale
+- Replication topologies for high availability and analytics offload
+- Backup, restore, and disaster recovery patterns
+- Managed vs operator-based deployment (mapping to Module 2's decision framework)
+- Workload isolation strategies to protect operational performance
+
+By the end, you'll know how to deploy, configure, and operate PostgreSQL as the transactional backbone of your data platform — and how to safely extract data from it into your lakehouse without degrading production systems.
+
+## PostgreSQL: The Operational Database Standard
+
+**PostgreSQL** is the default choice for operational databases on modern data platforms. It's open-source, battle-tested across decades of production deployments, and **extensible** in ways that make it uniquely suited for data platform use cases:
+
+- **PostGIS** adds geospatial types and functions (critical for location-based analytics)
+- **pgvector** enables vector similarity search (embedding storage for AI workloads)
+- **TimescaleDB** optimizes time-series data (IoT, observability, metrics)
+- **pg_partman** automates table partitioning (managing retention policies at scale)
+
+PostgreSQL's ecosystem is unmatched. Every major cloud provider offers managed PostgreSQL. Kubernetes operators (CloudNativePG, Zalando, Crunchy) bring cloud-native deployment patterns. CDC tools (Debezium, pglogical, Airbyte) stream changes into your lakehouse. The tooling you need already exists.
+
+Contrast this with MySQL, which has a narrower extension ecosystem and weaker support for complex analytical queries (window functions, CTEs, lateral joins). MySQL is common in legacy web applications, but for new data platform deployments, PostgreSQL is the engineering default.
+
+> **Why not use MySQL?** MySQL is a solid OLTP database, but PostgreSQL's extensibility, richer SQL dialect, and better support for analytical query patterns make it the better choice when your operational database must also support reporting views, ETL queries, and CDC pipelines. If you inherit a MySQL deployment, the architectural patterns in this lesson still apply — just recognize you'll have fewer extension options.
+
+## OLTP vs OLAP: Two Fundamentally Different Workloads
+
+The first architectural mistake you must avoid: **running analytics queries against your OLTP database**. To understand why this fails, you need to see how OLTP and OLAP workloads differ at a fundamental level.
+
+### OLTP: Online Transaction Processing
+
+**OLTP databases** handle many small, concurrent transactions. Think of an e-commerce checkout, a user login, an inventory update. Each operation touches a few rows, runs in milliseconds, and requires strong consistency.
+
+OLTP characteristics:
+
+- **Row-oriented storage** — optimized for reading and writing complete rows
+- **Normalized schemas** — 3NF or BCNF, minimal data duplication
+- **Point lookups and small range scans** — `SELECT * FROM orders WHERE id = 12345`
+- **Low latency** — p99 latency measured in single-digit milliseconds
+- **High concurrency** — thousands of simultaneous connections
+- **ACID guarantees** — strict consistency, isolation, durability
+
+PostgreSQL stores data in **8KB pages**. When you query a single row, the database reads the entire page containing that row. Row-oriented storage is efficient for this: all columns for a given row are colocated, so a single page read retrieves the full record.
+
+### OLAP: Online Analytical Processing
+
+**OLAP workloads** scan millions of rows, compute aggregations, and produce summary reports. Think of a revenue dashboard, a churn analysis, a machine learning feature extraction query. Each operation reads large fractions of a table, runs for seconds or minutes, and prioritizes throughput over latency.
+
+OLAP characteristics:
+
+- **Columnar storage** — optimized for reading specific columns across many rows
+- **Denormalized schemas** — star/snowflake schemas, pre-joined dimensions
+- **Full table scans and large aggregations** — `SELECT region, SUM(revenue) FROM sales GROUP BY region`
+- **High throughput** — measured in GB/s scanned, not request count
+- **Low concurrency** — a few heavy queries at a time
+- **Relaxed consistency** — eventual consistency is acceptable for reporting
+
+Columnar databases (BigQuery, Snowflake, ClickHouse) store data column-by-column. When you query `SUM(revenue)`, the database reads *only* the `revenue` column, skipping all other columns. Compression is dramatically better (consecutive values in a column are often similar), and cache efficiency is higher (you're not loading unused columns into memory).
+
+### The Fatal Mismatch: Analytics on OLTP
+
+When you run an OLAP query against a PostgreSQL OLTP database, you force the database to:
+
+1. **Scan full rows** even though you only need a few columns — wasting I/O and memory
+2. **Compete with transactional workload** for CPU, memory, and disk bandwidth
+3. **Hold locks** during long scans, blocking writes and increasing transaction latency
+4. **Exhaust connection pools** with long-running queries, starving operational traffic
+
+The result: **degraded operational performance**. Your checkout page slows down. Your API times out. Your transaction throughput drops. And the analytics query still runs slowly because PostgreSQL wasn't designed for this workload.
+
+<MermaidDiagram chart={`graph LR
+    subgraph OLTP["OLTP Workload"]
+        T1[Transaction 1<br/>INSERT order]
+        T2[Transaction 2<br/>UPDATE inventory]
+        T3[Transaction 3<br/>SELECT user profile]
+    end
+    subgraph OLAP["OLAP Workload"]
+        A1[Analytics Query<br/>SUM revenue by region<br/>scan 10M rows]
+    end
+    DB[(PostgreSQL<br/>OLTP Database)]
+    T1 --> DB
+    T2 --> DB
+    T3 --> DB
+    A1 --> DB
+    DB -.->|Shared Resources| Conflict[Resource Contention<br/>Lock Conflicts<br/>Degraded Latency]
+    style Conflict fill:#fee,stroke:#c33
+    style OLTP fill:#e8f5e9,stroke:#4caf50
+    style OLAP fill:#fff3e0,stroke:#ff9800
+`} />
+
+### The Correct Pattern: CDC to Lakehouse
+
+The solution is **change data capture (CDC)** — stream database changes into your lakehouse, then run analytics queries there. This pattern separates concerns:
+
+- **Operational database** handles OLTP workload (low latency, high concurrency)
+- **Lakehouse** handles OLAP workload (columnar storage, large scans)
+- **CDC pipeline** keeps the lakehouse up-to-date (near real-time replication)
+
+You'll learn CDC in detail in Module 4. For now, recognize that the architectural boundary between OLTP and OLAP is enforced by infrastructure: your operational database does not serve analytical queries directly.
+
+> **When is it acceptable to run analytics on the OLTP database?** Short answer: almost never in production. The only exception is lightweight reporting queries (single-table aggregations, small result sets) against a **read replica** that is explicitly dedicated to reporting workload and isolated from operational traffic. Even then, you should plan to migrate those queries to the lakehouse as your data volume grows.
+
+## Connection Pooling: Why PostgreSQL Forks Matter
+
+PostgreSQL uses a **process-per-connection model**. Every client connection spawns a new backend process. Each process consumes memory (work_mem, shared buffers, connection overhead). At 100 connections, this is manageable. At 1,000 connections, you exhaust system resources.
+
+Data platforms have many connection sources:
+
+- **Application servers** (each instance holds a pool of connections)
+- **ETL jobs** (Airflow tasks, dbt runs, data pipelines)
+- **BI tools** (dashboards, notebooks, ad-hoc queries)
+- **Operational services** (metadata catalogs, orchestrators, monitoring agents)
+
+Without connection pooling, you will hit PostgreSQL's `max_connections` limit (default: 100, often tuned to 200-500). Once you hit the limit, new connections are rejected. Your application crashes.
+
+### PgBouncer: Connection Pool Multiplexing
+
+**PgBouncer** is a lightweight connection pooler that sits between clients and PostgreSQL. Clients connect to PgBouncer (which can handle thousands of connections). PgBouncer maintains a smaller pool of connections to PostgreSQL (matching the database's actual capacity) and multiplexes client queries across those backend connections.
+
+PgBouncer operates in three modes:
+
+- **Session pooling** — a backend connection is assigned to a client for the duration of the client's session (default, safest)
+- **Transaction pooling** — a backend connection is returned to the pool after each transaction (higher multiplexing, incompatible with prepared statements)
+- **Statement pooling** — a backend connection is returned after each statement (rarely used, breaks transactions)
+
+For data platform workloads, **transaction pooling** is ideal. Most ETL and application queries are autocommit or explicit transactions. You can pool aggressively (1,000 client connections → 50 backend connections) without breaking semantics.
+
+<MermaidDiagram chart={`graph LR
+    subgraph Clients["Client Connections"]
+        C1[App Server 1<br/>20 connections]
+        C2[App Server 2<br/>20 connections]
+        C3[Airflow<br/>10 connections]
+        C4[dbt<br/>5 connections]
+    end
+    PGB[PgBouncer<br/>Transaction Pool<br/>1000 client connections<br/>50 backend connections]
+    PG[(PostgreSQL<br/>max_connections=100)]
+    C1 --> PGB
+    C2 --> PGB
+    C3 --> PGB
+    C4 --> PGB
+    PGB --> PG
+    style PGB fill:#e3f2fd,stroke:#1976d2
+    style PG fill:#f3e5f5,stroke:#7b1fa2
+`} />
+
+### Pool Sizing: Right-Sizing Backend Connections
+
+How many backend connections should PostgreSQL handle? The formula depends on available CPU cores and workload mix.
+
+A common heuristic:
+
+```
+max_connections = (num_cores * 2) + effective_spindle_count
+```
+
+For a cloud VM with 8 vCPUs and SSD storage (effectively infinite spindles):
+
+```
+max_connections = (8 * 2) + 10 = 26
+```
+
+This is *much* smaller than the default `max_connections = 100`. The reason: PostgreSQL backend processes compete for CPU. Beyond 2x cores, you induce context switching overhead. The database gets slower, not faster.
+
+Set PgBouncer's `default_pool_size` to match this calculated limit. Set `max_client_conn` to the sum of all expected client connections across your platform (easily 1,000+).
+
+> **Connection pooling is not optional.** If you deploy PostgreSQL without a connection pooler on a data platform, you will experience connection exhaustion outages. PgBouncer (or pgpool, pgcat, or your cloud provider's built-in pooler) is a mandatory component.
+
+## Replication Topologies: High Availability and Analytics Offload
+
+PostgreSQL supports two replication mechanisms:
+
+1. **Streaming replication** — physical replication of WAL (write-ahead log) records
+2. **Logical replication** — table-level replication of row changes
+
+### Streaming Replication: Sync and Async
+
+**Streaming replication** replicates the entire database. A primary server writes WAL records to disk and streams them to one or more standby servers. Standby servers apply the WAL and maintain an exact byte-for-byte replica.
+
+Replication can be **synchronous** or **asynchronous**:
+
+- **Synchronous replication** — the primary waits for at least one standby to acknowledge WAL receipt before committing a transaction (higher durability, higher latency)
+- **Asynchronous replication** — the primary commits immediately and streams WAL in the background (lower latency, potential data loss if primary fails before WAL replicates)
+
+For operational databases on a data platform, **asynchronous replication with at least one standby** is the default. You get high availability (automatic failover to standby if primary fails) without adding synchronous replication latency to every transaction.
+
+### Read Replicas for Analytics Offload
+
+Read replicas (standby servers that accept read-only queries) let you offload reporting queries from the primary database. This is the *least bad* way to run analytics queries against PostgreSQL — you're not competing with operational traffic, and the replica can lag slightly without impacting transactions.
+
+However, read replicas do NOT solve the fundamental OLTP/OLAP mismatch. You're still scanning row-oriented storage. The query is still slow. The replica still consumes resources. This is a **temporary pattern** for small-scale reporting until you implement CDC to your lakehouse.
+
+### Logical Replication: CDC Foundation
+
+**Logical replication** streams row-level changes (INSERT, UPDATE, DELETE) from specific tables to subscribers. This is the foundation for **change data capture**. Tools like Debezium, Airbyte, and pglogical use logical replication to stream changes into Kafka, Pub/Sub, or directly into your lakehouse.
+
+Logical replication is covered in Module 4 (Data Ingestion). For now, recognize that enabling logical replication requires configuration:
+
+```sql
+-- postgresql.conf
+wal_level = logical
+max_replication_slots = 10
+max_wal_senders = 10
+```
+
+You'll create replication slots for each CDC pipeline to track its position in the WAL stream.
+
+<MermaidDiagram chart={`graph TD
+    Primary[(PostgreSQL Primary<br/>OLTP workload)]
+    Standby1[(Standby Replica 1<br/>Async streaming replication)]
+    Standby2[(Standby Replica 2<br/>Read replica for reports)]
+    CDC[CDC Pipeline<br/>Logical replication]
+    Lake[(Lakehouse<br/>OLAP workload)]
+    Primary -->|WAL stream<br/>async| Standby1
+    Primary -->|WAL stream<br/>async| Standby2
+    Primary -->|Logical replication<br/>row changes| CDC
+    CDC --> Lake
+    Standby2 -.->|Reporting queries<br/>temporary pattern| Reports[Internal Dashboards]
+    style Primary fill:#e8f5e9,stroke:#4caf50
+    style Lake fill:#fff3e0,stroke:#ff9800
+    style CDC fill:#e3f2fd,stroke:#1976d2
+`} />
+
+## Backup, Restore, and Disaster Recovery
+
+Backups are non-negotiable. You will experience data loss events — accidental `DELETE`, application bugs, corruption, malicious actions. The question is whether you can recover.
+
+### Two Backup Strategies
+
+PostgreSQL supports two backup approaches:
+
+1. **Logical backups** — `pg_dump` exports SQL statements to recreate the database
+2. **Physical backups** — continuous archiving of WAL files for point-in-time recovery (PITR)
+
+**pg_dump** is simple but limited:
+
+- Backs up a consistent snapshot of the database
+- Produces a SQL file you can restore with `psql`
+- Slow for large databases (multi-hour dumps for TB-scale data)
+- No point-in-time recovery — you can only restore to the moment the dump started
+
+**Continuous archiving** (WAL archiving + base backups) enables PITR:
+
+- Automated base backups (full database snapshot) run on a schedule (daily, weekly)
+- WAL files are continuously archived to object storage (S3, GCS)
+- To recover, restore the base backup and replay WAL files up to the desired recovery point
+- You can recover to any point in time between the base backup and the last archived WAL
+
+For data platform operational databases, **continuous archiving is mandatory**. You need PITR to recover from application bugs (e.g., a batch job that corrupts data at 3:00 AM — you restore to 2:59 AM).
+
+### Backup Verification and Recovery Testing
+
+Backups you haven't tested are not backups — they're hope. You must verify:
+
+1. **Backup completion** — monitor backup jobs, alert on failure
+2. **Backup integrity** — checksum verification, test restores to staging
+3. **Recovery procedures** — document and drill recovery steps, measure RTO (recovery time objective)
+
+Module 2 Lesson 5 (Resilience and Disaster Recovery) introduced the concept of **recovery testing as a scheduled drill**. For databases, this means:
+
+- Monthly restore tests to a non-production environment
+- Validation that restored data matches expected state
+- Measurement of recovery time (can you restore a 1 TB database in under 4 hours?)
+
+If you cannot meet your RTO with your current backup strategy, you need a different strategy (smaller, more frequent base backups; faster storage; parallel restore tooling).
+
+> **Retention policies:** Operational databases typically retain daily backups for 30 days, weekly backups for 90 days, and monthly backups for 1 year. WAL archives are retained for the same duration as the oldest base backup. Retention is driven by compliance requirements (GDPR, SOX, HIPAA) and the cost of storage. Document your retention policy and enforce it with automated lifecycle rules in object storage.
+
+## Managed vs Operator-Based Deployment
+
+When deploying PostgreSQL, you have two architectural choices:
+
+1. **Managed services** — Cloud SQL (GCP), RDS (AWS), Azure Database for PostgreSQL
+2. **Operator-based deployment** — CloudNativePG, Zalando Postgres Operator, Crunchy Operator on Kubernetes
+
+This decision maps directly to Module 2's workload placement framework. Recall the decision criteria:
+
+- **Operational complexity** — who manages backups, failover, upgrades?
+- **Control** — do you need custom replication topologies, extensions, kernel tuning?
+- **Cost** — managed services charge per hour; operator-based runs on your existing cluster
+- **Portability** — can you move workloads across clouds?
+
+### Managed PostgreSQL: Cloud SQL, RDS
+
+Managed services handle:
+
+- Automated backups and PITR
+- Automated failover (primary-to-standby promotion)
+- OS and PostgreSQL security patches
+- Connection pooling (Cloud SQL Proxy, RDS Proxy)
+- Monitoring dashboards and alerting
+
+You configure the database via API or console, but you do NOT manage the underlying VMs, storage, or replication.
+
+**When to choose managed:**
+
+- You want minimal operational overhead
+- Your team is small or lacks deep PostgreSQL expertise
+- You prioritize high availability and managed failover
+- Single-cloud deployment (no multi-cloud portability requirement)
+
+**Limitations:**
+
+- Extension support varies (Cloud SQL supports most extensions; RDS has restrictions)
+- Limited control over replication topology (you cannot customize WAL streaming parameters)
+- Vendor lock-in (migrating from RDS to GCP requires significant re-architecture)
+- Higher cost (managed services charge 2-3x the cost of equivalent compute + storage)
+
+### Operator-Based Deployment: CloudNativePG
+
+Kubernetes operators manage PostgreSQL clusters declaratively. You define a `Cluster` custom resource, and the operator handles:
+
+- Pod scheduling and persistence (StatefulSets + PVCs)
+- Replication topology (primary + N replicas)
+- Automated failover (via Kubernetes leader election)
+- Backup scheduling (pgBackRest, Barman)
+- Rolling upgrades (PostgreSQL minor version updates)
+
+Example CloudNativePG cluster definition:
+
+<CodeBlock code={`apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: data-platform-db
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "2GB"
+      work_mem: "16MB"
+      wal_level: "logical"
+  storage:
+    size: 500Gi
+    storageClass: ssd-retain
+  backup:
+    barmanObjectStore:
+      destinationPath: gs://data-platform-backups/postgres
+      googleCredentials:
+        gkeEnvironment: true
+    retentionPolicy: "30d"
+  monitoring:
+    enablePodMonitor: true
+`} language="yaml" filename="postgres-cluster.yaml" />
+
+**When to choose operator-based:**
+
+- You already run Kubernetes and want to consolidate operational patterns
+- You need custom replication topologies (multi-region, cascading replicas)
+- You require specific PostgreSQL extensions or kernel tuning
+- You want multi-cloud portability (same manifest runs on GKE, EKS, AKS)
+- Cost optimization (you're already paying for Kubernetes nodes)
+
+**Operational cost:**
+
+- You must manage the Kubernetes cluster itself
+- You must monitor and troubleshoot operator behavior (pod restarts, PVC expansion, failover edge cases)
+- You must implement your own connection pooling (deploy PgBouncer as a sidecar or separate service)
+
+### Decision Map
+
+| Requirement                     | Managed Service | Operator-Based |
+|---------------------------------|-----------------|----------------|
+| Minimal ops overhead            | ✓               |                |
+| Custom replication topology     |                 | ✓              |
+| Specific extension requirements |                 | ✓              |
+| Multi-cloud portability         |                 | ✓              |
+| Cost optimization               |                 | ✓              |
+| Small team, limited PG expertise| ✓               |                |
+
+Most early-stage data platforms start with managed PostgreSQL and migrate to operator-based deployment as they scale and need finer control.
+
+## Workload Isolation: Protecting Operational Performance
+
+Even with CDC pipelines feeding your lakehouse, you will still have multiple workloads hitting your operational database:
+
+- **Transactional traffic** (user-facing APIs, real-time writes)
+- **ETL queries** (metadata extraction, schema introspection, incremental sync jobs)
+- **Operational reporting** (admin dashboards, health checks)
+
+To prevent one workload from starving others, you need **workload isolation**:
+
+### Connection Pool Segmentation
+
+Configure separate PgBouncer pools for each workload class:
+
+```ini
+[databases]
+app_db = host=postgres-primary port=5432 dbname=platform pool_size=30
+etl_db = host=postgres-primary port=5432 dbname=platform pool_size=10
+reporting_db = host=postgres-replica port=5432 dbname=platform pool_size=5
+```
+
+Application traffic connects to `app_db` (30 backend connections). ETL traffic connects to `etl_db` (10 backend connections). Reporting connects to `reporting_db` (routed to a read replica, 5 backend connections).
+
+This ensures that a runaway ETL job cannot exhaust all backend connections and starve application traffic.
+
+### Read Replica Routing
+
+Route all read-only workloads (reporting, dashboards, ad-hoc queries) to read replicas. This offloads the primary database and reduces replication lag impact (if the replica lags, it only affects reporting, not operational traffic).
+
+Many cloud providers offer automatic read replica routing (RDS read endpoint, Cloud SQL read replica connection string). If you're using operator-based deployment, implement routing in your application layer (connection string per workload) or via a service mesh (Istio, Linkerd).
+
+### Resource Limits and Statement Timeouts
+
+Set per-role resource limits in PostgreSQL:
+
+```sql
+CREATE ROLE etl_user WITH LOGIN PASSWORD '...';
+ALTER ROLE etl_user SET statement_timeout = '600s';  -- 10-minute max query time
+ALTER ROLE etl_user SET work_mem = '256MB';
+```
+
+This prevents long-running ETL queries from consuming unbounded memory or running indefinitely.
+
+For critical transactional roles, set lower `statement_timeout` values (e.g., 5 seconds for API queries) to fail fast and surface performance regressions.
+
+## Summary
+
+Operational databases are the transactional backbone of your data platform. **PostgreSQL** is the engineering default — extensible, battle-tested, and supported by a rich ecosystem of CDC, monitoring, and deployment tooling.
+
+The most critical architectural principle: **OLTP and OLAP workloads must be separated**. Running analytics queries against your operational database degrades transactional performance, exhausts resources, and fails to leverage the columnar storage optimizations that make OLAP workloads fast. The correct pattern is **CDC to lakehouse** — stream changes into your lakehouse and run analytics there.
+
+**Connection pooling** (PgBouncer) is mandatory. PostgreSQL's process-per-connection model cannot scale to the connection counts typical of data platforms. Pool sizing should match available CPU cores, not arbitrary defaults.
+
+**Replication** provides high availability (async streaming replication to standby) and a temporary pattern for analytics offload (read replicas). **Logical replication** enables CDC pipelines. **Backups** must support point-in-time recovery (continuous WAL archiving), and you must test restores regularly.
+
+The choice between **managed PostgreSQL** (Cloud SQL, RDS) and **operator-based deployment** (CloudNativePG) maps to Module 2's workload placement framework. Managed services minimize operational overhead. Operator-based deployments offer control, portability, and cost optimization — at the expense of increased operational complexity.
+
+In the next lesson, you'll learn **table design patterns** — how to structure schemas, partitioning strategies, indexing, and data modeling for both operational and analytical workloads. You'll see how decisions made in database schema design ripple into downstream lakehouse performance.

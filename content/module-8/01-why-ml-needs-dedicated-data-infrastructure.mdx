@@ -1,0 +1,331 @@
+---
+title: "Why ML Needs Dedicated Data Infrastructure"
+quiz:
+  - question: "What is training-serving skew in ML systems?"
+    options:
+      - "When feature logic differs between training and production environments"
+      - "When models are trained on biased datasets"
+      - "When training takes longer than serving"
+      - "When model versions don't match between environments"
+    correctIndex: 0
+  - question: "Why can't general-purpose data pipelines solve ML-specific data problems?"
+    options:
+      - "They lack GPU acceleration"
+      - "They don't handle point-in-time correctness or feature versioning"
+      - "They can't process unstructured data"
+      - "They're too slow for real-time predictions"
+    correctIndex: 1
+  - question: "Which of these is a data problem that breaks ML systems?"
+    options:
+      - "Insufficient model capacity"
+      - "Label leakage from future data in training features"
+      - "Overfitting on the validation set"
+      - "Hyperparameter tuning taking too long"
+    correctIndex: 1
+---
+
+## The Notebook-to-Production Gap
+
+Your data scientist ships a model with 94% accuracy in the notebook. Two weeks later, production accuracy is 68%, user complaints are flooding in, and nobody knows why. The model file didn't change. The inference code is identical. The data pipeline is running fine.
+
+**The problem is the features.**
+
+The training notebook computed `user_last_30d_purchases` by scanning all historical data. The production system computes the same feature from a real-time aggregation that's missing three days of data due to a backfill gap. Same feature name, same SQL logic, different results. This is **training-serving skew** — the silent killer of ML systems.
+
+General-purpose data infrastructure moves data from sources to warehouses. ML data infrastructure ensures that **features used for training are identical to features used for serving**, that **training labels never leak future information**, and that **every prediction is reproducible** months later when you need to debug a regulatory complaint.
+
+## Training-Serving Skew: Same Name, Different Feature
+
+Training-serving skew happens when the feature computation logic diverges between training and production environments. Your notebook uses a batch job that joins three tables with complex window functions. Your serving API calls a microservice that maintains a materialized view updated every hour. Both claim to compute `user_engagement_score`, but they produce different values.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Training["Training Environment"]
+        A1[Historical Data Warehouse] --> B1[Batch Feature Job]
+        B1 --> C1["user_engagement_score = 0.87"]
+        C1 --> D1[Training Dataset]
+    end
+    
+    subgraph Serving["Production Serving"]
+        A2[Real-time Database] --> B2[Feature API]
+        B2 --> C2["user_engagement_score = 0.62"]
+        C2 --> D2[Model Prediction]
+    end
+    
+    D1 -.->|Different Values| D2
+    
+    style Training fill:#fef0f0,stroke:#c53030
+    style Serving fill:#fef0f0,stroke:#c53030
+    style C1 fill:#fff5f5,stroke:#c53030
+    style C2 fill:#fff5f5,stroke:#c53030
+`} />
+
+Common causes of training-serving skew:
+
+- **Different data sources** — training reads from the warehouse, serving reads from a Redis cache populated by a separate ETL job
+- **Different time windows** — training uses `last_30_days`, serving uses `last_7_days` because the cache only retains a week
+- **Different aggregation logic** — training uses exact timestamps, serving rounds to the nearest hour for cache efficiency
+- **Different null handling** — training fills missing values with the global mean, serving fills with zero
+- **Different feature encoding** — training uses one-hot encoding with 500 categories, serving uses a smaller vocabulary that drops rare categories
+
+When a data scientist builds features in a notebook, they have complete access to all historical data. When the same features run in production, they operate under **real-time constraints** — limited memory, strict latency budgets, and incomplete data. The path of least resistance is to reimplement the feature logic "close enough" for production. This creates skew.
+
+## Feature Consistency: The Hidden Dependency Graph
+
+Every ML model depends on dozens or hundreds of features. Each feature depends on upstream data sources, transformation logic, and business rules. When you change a feature definition, you break every model that depends on it — unless you track those dependencies.
+
+Your revenue forecasting model uses `customer_lifetime_value` as a feature. A data engineer refactors the CLV calculation to fix a currency conversion bug. The new logic is more correct, but it changes the feature distribution. Your model was trained on the old, buggy distribution. Predictions are now garbage.
+
+**Feature consistency** means:
+
+1. **Definition consistency** — the same feature name always refers to the same computation logic
+2. **Version consistency** — you can reproduce any historical feature value exactly as it was computed at training time
+3. **Environment consistency** — training, validation, and serving all use the same feature implementation
+4. **Schema consistency** — feature data types, units, and encodings don't drift over time
+
+General-purpose data pipelines track table schemas. ML data infrastructure tracks **feature schemas** — not just column types, but the transformation logic, dependencies, and version history of every feature. Without this, you can't debug a production prediction six months later when a regulator asks why your credit scoring model denied a loan.
+
+## The Gap Between Notebooks and Production Predictions
+
+Data scientists work in notebooks because they're interactive, flexible, and forgiving. Production ML systems work in APIs, batch jobs, and streaming pipelines because they're reliable, scalable, and auditable. The gap between these two worlds is where most ML projects die.
+
+In the notebook:
+- You have all the data
+- You can rerun cells to fix mistakes
+- You can inspect intermediate results
+- You control the execution environment
+- You work with pandas DataFrames
+
+In production:
+- You have streaming data with missing values and late arrivals
+- You must serve predictions in milliseconds
+- Intermediate results are invisible
+- You run in a distributed system with partial failures
+- You work with database queries, API calls, and cache lookups
+
+<MermaidDiagram chart={`flowchart LR
+    A[Notebook Feature Engineering] --> B{Production Serving}
+    B -->|Reimplement in API| C[Training-Serving Skew]
+    B -->|Batch Feature Store| D[Stale Features]
+    B -->|Real-time Feature Store| E[Complex Infrastructure]
+    B -->|No Feature Store| F[Manual Feature Code]
+    
+    C --> G[Model Degradation]
+    D --> G
+    F --> G
+    E --> H[Consistent Features]
+    
+    style A fill:#ebf8ff,stroke:#3182ce
+    style C fill:#fef0f0,stroke:#c53030
+    style D fill:#fef0f0,stroke:#c53030
+    style F fill:#fef0f0,stroke:#c53030
+    style E fill:#f0fff4,stroke:#38a169
+    style H fill:#f0fff4,stroke:#38a169
+`} />
+
+Bridging this gap requires **ML data infrastructure** — a layer between raw data and model predictions that handles:
+
+- **Feature definition** — write feature logic once, use it in training and serving
+- **Feature computation** — batch jobs for training, real-time APIs for serving, same code
+- **Feature storage** — offline store for training data, online store for low-latency serving
+- **Feature versioning** — track which feature version was used for each model
+- **Point-in-time correctness** — ensure training features only use data available at that point in time (no label leakage)
+
+Without this layer, every team reimplements the same infrastructure poorly. With it, you build once and use it for every model.
+
+## The Data Problems That Break ML
+
+Most ML failures are data failures dressed up as model failures. Your model isn't underperforming because the architecture is wrong — it's underperforming because the features are broken.
+
+### Feature Freshness
+
+Your fraud detection model uses `user_failed_login_attempts_last_hour` as a feature. In training, this was computed from complete historical logs. In production, it's computed from a Kafka stream that's currently experiencing a 20-minute lag due to a network partition.
+
+The model sees zero failed login attempts for accounts that actually have fifteen. It flags the wrong users. The problem isn't the model — it's the **feature freshness**.
+
+### Point-in-Time Correctness
+
+You're training a customer churn model. You want to predict whether a customer will churn in the next 30 days based on their behavior in the previous 30 days. You join customer activity data to your training labels.
+
+The join is written as:
+
+```sql
+SELECT 
+    user_id,
+    churned,
+    total_purchases_last_30d
+FROM labels
+JOIN features USING (user_id)
+```
+
+This looks innocent. It's catastrophically wrong.
+
+The `total_purchases_last_30d` feature is computed from the entire historical dataset, including purchases that happened **after** the label date. You've leaked the future into your training data. Your model learns that customers who made purchases after you tried to predict their churn didn't churn. This is **label leakage**.
+
+**Point-in-time correctness** means: for every training example, the feature values only use data that existed at the point in time when the label was generated. If you're predicting whether a user will churn on 2024-03-15, the features can only use data from before 2024-03-15.
+
+General-purpose data warehouses don't enforce this. ML data infrastructure does.
+
+### Feature Reproducibility
+
+A model you deployed six months ago is under regulatory review. The auditor asks: "Why did this model deny this specific loan application?" You need to reproduce the exact feature values that were fed into the model at prediction time.
+
+Your feature pipeline has been updated fifteen times since then. The upstream data source schema changed. The feature transformation logic was refactored. The cache evicted all data older than 90 days. You cannot reproduce the prediction.
+
+**Feature reproducibility** means: you can reconstruct the exact feature values used for any historical prediction, even years later. This requires:
+
+- **Feature versioning** — track which version of each feature was used
+- **Data lineage** — know which upstream data sources contributed to each feature
+- **Immutable feature snapshots** — archive feature values at prediction time
+- **Transformation code versioning** — tie feature versions to transformation code commits
+
+Without this, you cannot debug production predictions, audit model decisions, or comply with regulations like GDPR that require explainability.
+
+### Training-Serving Data Drift
+
+Your model is trained on three months of data from Q4 2025. It's now Q2 2026. User behavior has changed. The feature distribution has shifted. The model's assumptions are stale.
+
+**Data drift** is when the statistical properties of your features change over time. This is different from training-serving skew (which is an implementation bug) — drift is a real-world phenomenon.
+
+ML data infrastructure monitors for drift by:
+
+- Comparing feature distributions between training and serving
+- Detecting outliers and anomalies in production features
+- Alerting when feature statistics exceed thresholds
+- Triggering model retraining when drift is detected
+
+General-purpose data quality tools check for schema violations and null rates. ML data infrastructure checks for **statistical drift** — mean shifts, variance changes, distribution divergence.
+
+## Why General-Purpose Data Infrastructure Isn't Enough
+
+You built a modern data platform with Kafka, Spark, dbt, and Snowflake. You have real-time ingestion, batch transformation, data quality checks, and a semantic layer. Why do you still need ML-specific infrastructure?
+
+Because general-purpose data infrastructure solves different problems:
+
+| **General Data Infrastructure** | **ML Data Infrastructure** |
+|----------------------------------|----------------------------|
+| Move data from sources to destinations | Ensure training-serving consistency |
+| Transform data into analytics-ready tables | Compute features for model training and serving |
+| Enforce schema and data quality | Enforce point-in-time correctness |
+| Optimize for ad-hoc queries | Optimize for low-latency feature serving |
+| Track table lineage | Track feature lineage and versioning |
+| Serve dashboards and reports | Serve model predictions |
+
+General-purpose pipelines are **table-centric**. ML pipelines are **feature-centric**. A table can change schema, add columns, and reprocess history without breaking reports. A feature cannot — changing a feature breaks every model that depends on it.
+
+General-purpose pipelines are **eventually consistent**. ML pipelines are **point-in-time consistent**. A report showing yesterday's revenue can be recomputed today with today's data. A training dataset cannot — it must use only the data that existed when each label was generated.
+
+General-purpose pipelines are **optimized for throughput**. ML serving pipelines are **optimized for latency**. A batch ETL job can take six hours. A feature lookup for a real-time prediction must complete in 10 milliseconds.
+
+## The Decision Framework: When Do You Need ML Data Infrastructure?
+
+Not every ML project needs a feature store, point-in-time joins, and versioned feature pipelines. If you're running models in notebooks for internal analytics, you don't. If you're deploying models to production that make business-critical decisions at scale, you do.
+
+**You need ML data infrastructure when:**
+
+1. **You deploy models to production** — training-serving consistency becomes mandatory
+2. **You reuse features across models** — feature definitions need central management
+3. **You serve predictions at scale** — low-latency feature lookup is a hard requirement
+4. **You need to reproduce predictions** — regulatory, debugging, or audit requirements demand reproducibility
+5. **You have multiple data scientists** — shared feature definitions prevent duplication and divergence
+
+**You can skip ML data infrastructure when:**
+
+1. **Models run in notebooks** — no production serving means no training-serving skew
+2. **Each model is a one-off experiment** — no feature reuse means no need for centralization
+3. **Predictions are batch-only** — you can compute all features in a batch job alongside the predictions
+4. **The team is one person** — no coordination problems, no divergence risk
+5. **The model is low-stakes** — if predictions are wrong, the business impact is minimal
+
+The transition point is when you move from **exploration** (notebooks, experiments, internal tools) to **production** (APIs, batch jobs, business-critical decisions). That's when training-serving skew, feature versioning, and point-in-time correctness stop being nice-to-haves and become requirements.
+
+## Failure Modes: What Breaks When You Skip ML Data Infrastructure
+
+### Training-Serving Skew
+
+Your fraud detection model has 92% precision in offline evaluation. In production, precision is 54%. Fraud analysts are drowning in false positives. You spend three weeks debugging before discovering that the `avg_transaction_amount_7d` feature uses a 7-day rolling window in training but a 24-hour window in production due to a cache size limit.
+
+**Fix:** Centralized feature definitions that enforce the same logic in training and serving.
+
+### Feature Inconsistency
+
+You deploy a customer churn model to production. Two weeks later, a data engineer refactors the `customer_tenure_days` calculation to fix a timezone bug. The model starts predicting nonsense because it was trained on the buggy version. Nobody connected the feature change to the model degradation because there's no dependency tracking.
+
+**Fix:** Feature versioning that ties each model to the specific feature versions it was trained on.
+
+### Unreproducible Training
+
+Your model is audited six months after deployment. The auditor asks for the training dataset. You rerun the feature pipeline with the same date range, but the results are different because upstream data sources were backfilled, dimension tables were updated, and transformation logic was refactored. You cannot reproduce the training data.
+
+**Fix:** Immutable training dataset snapshots and feature lineage tracking.
+
+### Label Leakage
+
+Your next-purchase prediction model achieves 98% accuracy in training. In production, it performs at random (50%). You discover that the `user_total_purchases` feature was computed from the entire dataset, including purchases that happened after the label date. The model learned to predict the past, not the future.
+
+**Fix:** Point-in-time joins that enforce temporal consistency between features and labels.
+
+### Stale Features
+
+Your real-time recommendation model uses `user_last_clicked_category` as a feature. The feature is computed from a batch job that runs every six hours. A user clicks on "laptops" at 9 AM. At 9:30 AM, they search for laptops and get recommended headphones because the feature still says their last click was "headphones" from yesterday.
+
+**Fix:** Real-time feature computation or a hybrid architecture with online and offline feature stores.
+
+## The Path Forward
+
+ML data infrastructure sits between your general-purpose data platform and your models. It ingests data from your warehouse, computes features with point-in-time correctness, stores them for training and serving, and serves them with low latency.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Sources["Data Sources"]
+        A1[Application Database]
+        A2[Event Stream]
+        A3[External APIs]
+    end
+    
+    subgraph Platform["General Data Platform"]
+        B1[Data Warehouse]
+        B2[Data Lake]
+        B3[Real-time Pipeline]
+    end
+    
+    subgraph MLInfra["ML Data Infrastructure"]
+        C1[Feature Definitions]
+        C2[Feature Computation]
+        C3[Offline Feature Store]
+        C4[Online Feature Store]
+        C5[Point-in-Time Joins]
+    end
+    
+    subgraph ML["ML Systems"]
+        D1[Model Training]
+        D2[Model Serving]
+        D3[Model Monitoring]
+    end
+    
+    A1 --> B1
+    A2 --> B3
+    A3 --> B2
+    
+    B1 --> C2
+    B2 --> C2
+    B3 --> C2
+    
+    C1 --> C2
+    C2 --> C3
+    C2 --> C4
+    
+    C3 --> C5
+    C5 --> D1
+    C4 --> D2
+    
+    D1 --> D3
+    D2 --> D3
+    
+    style Sources fill:#f7fafc,stroke:#2d3748
+    style Platform fill:#ebf8ff,stroke:#3182ce
+    style MLInfra fill:#f0fff4,stroke:#38a169
+    style ML fill:#fef5e7,stroke:#d69e2e
+`} />
+
+In the next lessons, we'll build this infrastructure: feature definitions, offline and online stores, point-in-time joins, and monitoring for drift and skew. The goal is not to add complexity — it's to make ML production systems as reliable as the rest of your data platform.
+
+> **Key Insight:** ML data problems look like model problems until you measure feature consistency, freshness, and correctness. Most "bad models" are good models fed bad features.

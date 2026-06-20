@@ -1,0 +1,53 @@
+{
+  "id": 4,
+  "title": "Ingestion, Events & Change Data Capture",
+  "description": "Batch ingestion, Kafka, event design, CDC/Debezium, schema evolution, contracts",
+  "color": "#b794f4",
+  "lessons": [
+    {
+      "slug": "01-why-data-movement-architecture-matters",
+      "title": "Why Data Movement Architecture Matters",
+      "description": "Push vs pull, batch vs streaming ingestion; events alongside APIs, commands, batch extracts, and query federation",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-apache-kafka-on-kubernetes",
+      "title": "Apache Kafka on Kubernetes",
+      "description": "Strimzi operator, topics, partitions, consumer groups, at-least-once with idempotent consumers, production topology",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture", "sequence"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-event-design-and-schema-contracts",
+      "title": "Event Design & Schema Contracts",
+      "description": "Schema compatibility, semantic compatibility, and data contracts as three distinct concerns",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["flowchart", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-change-data-capture-with-debezium",
+      "title": "Change Data Capture with Debezium",
+      "description": "Log-based CDC; four patterns: dual write, transactional outbox, log-based CDC, event sourcing",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["sequence", "architecture"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-comparing-ingestion-and-streaming-platforms",
+      "title": "Comparing Ingestion & Streaming Platforms",
+      "description": "Kafka vs Redpanda vs Pulsar vs NATS vs cloud-native; decision framework for ordering, latency, and cost",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

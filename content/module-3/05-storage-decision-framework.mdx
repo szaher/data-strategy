@@ -1,0 +1,419 @@
+---
+title: "Storage Decision Framework"
+quiz:
+  - question: "Which storage type is best suited for high-IOPS workloads requiring single-attach access?"
+    options:
+      - "Object storage (S3/GCS)"
+      - "Block storage (EBS/persistent disk)"
+      - "File storage (NFS/EFS)"
+      - "Database storage (PostgreSQL)"
+    correctIndex: 1
+  - question: "When should you consider self-hosted storage over managed cloud storage?"
+    options:
+      - "Data sovereignty requirements or air-gapped environments"
+      - "Small-scale deployments with minimal data"
+      - "Teams without operational expertise"
+      - "When you need the latest features immediately"
+    correctIndex: 0
+  - question: "For a RAG system, where should you store the raw source documents before chunking and embedding?"
+    options:
+      - "Vector database (Milvus/Weaviate)"
+      - "Search engine (Elasticsearch)"
+      - "Object storage (S3/GCS)"
+      - "Document store (MongoDB)"
+    correctIndex: 2
+---
+
+## Overview
+
+You've learned the **storage primitives** (block, object, database), the **data lake pattern** (object storage as the foundation), **relational databases** for transactional workloads, and **schema design** patterns (partitioning, retention, normalization). But when faced with a real data platform architecture, the hardest question remains: **which storage system should I choose for each piece of data?**
+
+The answer depends on **access patterns**, **cost constraints**, **operational complexity**, and **durability requirements**. This lesson provides a **decision framework** and a **storage decision matrix** to help you map every data type in your platform to the right storage choice.
+
+By the end of this lesson, you'll have a **repeatable decision process** and a **practical matrix** you can use to design your own data platform's storage layer.
+
+## The Problem: Ad-Hoc Storage Choices
+
+Most data platforms evolve organically. Teams pick storage systems based on **familiarity**, **vendor relationships**, or **the latest Hacker News trend** rather than a systematic decision process.
+
+This leads to:
+
+- **Storage sprawl** — ten different systems with overlapping capabilities
+- **Cost explosion** — storing the same data in multiple places "just in case"
+- **Operational burden** — managing backups, upgrades, and monitoring for every system
+- **Inconsistent patterns** — different teams choosing different tools for the same use case
+
+A **decision framework** prevents this chaos by establishing **clear criteria** for storage selection and **default choices** for common scenarios.
+
+## The Default: Access-Pattern-Driven Storage
+
+The single most important question when choosing storage is: **How will this data be accessed?**
+
+Here's the fundamental decision tree:
+
+<MermaidDiagram chart={`graph TD
+    Start[New Data Type] --> Q1{Access Pattern?}
+    
+    Q1 -->|Random Reads/Writes<br/>Single Process| Block[Block Storage<br/>EBS, Persistent Disk]
+    Q1 -->|Random Reads/Writes<br/>Multiple Processes| File[File Storage<br/>NFS, EFS]
+    Q1 -->|Write Once<br/>Read Many| Object[Object Storage<br/>S3, GCS]
+    Q1 -->|Structured Queries<br/>Transactions| Database[Database<br/>PostgreSQL, MySQL]
+    
+    Block --> Use1[VM Disks<br/>Database Storage<br/>High-IOPS Apps]
+    File --> Use2[Shared Workspaces<br/>Legacy Apps<br/>Home Directories]
+    Object --> Use3[Data Lake<br/>Backups<br/>Unstructured Data]
+    Database --> Q2{Data Structure?}
+    
+    Q2 -->|Relational<br/>ACID Required| Relational[Relational DB<br/>PostgreSQL]
+    Q2 -->|Semi-Structured<br/>Flexible Schema| Document[Document Store<br/>MongoDB]
+    Q2 -->|Full-Text Search<br/>Log Analytics| Search[Search Engine<br/>Elasticsearch]
+    Q2 -->|Embeddings<br/>Semantic Search| Vector[Vector Database<br/>pgvector, Milvus]
+    
+    Relational --> Use4[Transactional Data<br/>Reporting<br/>Operational Systems]
+    Document --> Use5[Content Management<br/>User Profiles<br/>Catalogs]
+    Search --> Use6[Log Aggregation<br/>Product Search<br/>Document Retrieval]
+    Vector --> Use7[AI Applications<br/>RAG Systems<br/>Recommendation]
+    
+    style Start fill:#e0f0ff,stroke:#0066cc
+    style Block fill:#d4f4dd,stroke:#00aa44
+    style File fill:#d4f4dd,stroke:#00aa44
+    style Object fill:#d4f4dd,stroke:#00aa44
+    style Database fill:#d4f4dd,stroke:#00aa44
+    style Relational fill:#fff4e6,stroke:#ff9900
+    style Document fill:#fff4e6,stroke:#ff9900
+    style Search fill:#fff4e6,stroke:#ff9900
+    style Vector fill:#fff4e6,stroke:#ff9900
+`} />
+
+### Block Storage: High-IOPS, Single-Attach Workloads
+
+**Block storage** (AWS EBS, GCP Persistent Disk, Azure Disk Storage) provides raw block-level access to storage volumes. It's the foundation for:
+
+- **Virtual machine disks** — the root filesystem for every VM
+- **Database storage** — PostgreSQL, MySQL, MongoDB all run on block storage
+- **High-IOPS applications** — anything that needs low-latency random access
+
+**Key characteristics:**
+- **Single-attach** — one volume attaches to one instance (or a few in multi-attach mode)
+- **High IOPS** — supports tens of thousands of IOPS for databases
+- **Snapshots** — point-in-time backups with incremental storage
+- **Expensive** — priced per GB-month plus IOPS provisioning
+
+**When to use:** You need **sub-millisecond latency** for **random reads and writes** from a **single compute instance**.
+
+**When NOT to use:** You need to share data across many processes (use file storage or object storage).
+
+### Object Storage: Scalable, Immutable Data Lake
+
+**Object storage** (AWS S3, GCP GCS, Azure Blob Storage) is the **foundation of modern data platforms**. It's designed for **write-once, read-many** workloads at **massive scale**.
+
+**Key characteristics:**
+- **Infinite scale** — billions of objects, exabytes of data
+- **HTTP API** — accessible from any language, any platform
+- **Immutable versioning** — objects are append-only by default
+- **Cheap** — ~$0.02/GB-month for standard storage, ~$0.001/GB-month for archive
+- **No server** — fully managed, no instances to patch or upgrade
+
+**When to use:** You're storing **unstructured data**, **analytics datasets**, **ML training data**, **backups**, or building a **data lake**.
+
+**When NOT to use:** You need **ACID transactions**, **mutable updates**, or **sub-10ms latency** (object storage is optimized for throughput, not latency).
+
+### File Storage: Shared Access, Legacy Apps
+
+**File storage** (AWS EFS, GCP Filestore, NFS) provides a **POSIX filesystem** shared across **multiple instances**.
+
+**Key characteristics:**
+- **Shared access** — hundreds of instances can mount the same filesystem
+- **POSIX semantics** — standard file operations (open, read, write, close)
+- **Legacy compatibility** — works with apps that expect `/mnt/shared`
+- **More expensive than object storage** — priced for concurrent access
+
+**When to use:** You have **legacy applications** that require a **shared filesystem**, or you need **low-latency shared access** for workloads like **media rendering** or **scientific computing**.
+
+**When NOT to use:** You can refactor the app to use object storage (which is cheaper and more scalable).
+
+### Database: Structured Queries, Transactions, Relationships
+
+**Databases** provide **structured storage** with **query engines** and **ACID transactions**. But "database" is not a single category — there are four major types:
+
+**1. Relational databases (PostgreSQL, MySQL):**
+- **ACID transactions** — guaranteed consistency for financial data, user accounts
+- **SQL queries** — expressive query language with joins, aggregations
+- **Schema enforcement** — columns, types, constraints validated at write time
+- **Use cases:** Operational systems, transactional data, reporting
+
+**2. Document stores (MongoDB, Couchbase):**
+- **Flexible schema** — JSON documents with varying structure
+- **Embedded relationships** — denormalization for fast reads
+- **Horizontal scaling** — sharding across nodes
+- **Use cases:** Content management, user profiles, catalogs
+
+**3. Search engines (Elasticsearch, OpenSearch):**
+- **Full-text search** — inverted indexes for keyword queries
+- **Aggregations** — faceted search, analytics on log data
+- **Near real-time indexing** — data available within seconds
+- **Use cases:** Log analytics, product search, document retrieval
+
+**4. Vector databases (pgvector, Milvus, Weaviate):**
+- **Embedding storage** — high-dimensional vectors (384, 768, 1536 dimensions)
+- **Similarity search** — k-NN queries for semantic search
+- **Hybrid search** — combines vector similarity with metadata filters
+- **Use cases:** AI applications, RAG systems, recommendation engines
+
+> **Important:** Vector databases are **specialized storage** for AI workloads. The RAG design patterns, embedding strategies, and retrieval pipelines are covered in **Module 9: AI & ML Capabilities**. For now, understand that vector databases are chosen when your data includes **embeddings** and you need **semantic similarity search**.
+
+## Managed vs Self-Hosted Decision
+
+For every storage type, you face a second decision: **managed cloud service** or **self-hosted open source**?
+
+This is the same **workload placement framework** from Module 2, applied to storage:
+
+**Managed cloud storage:**
+- **Pros:** Zero operational overhead, automatic scaling, built-in backups, SLA guarantees
+- **Cons:** Vendor lock-in, egress costs, less control over configuration
+- **Best for:** Teams prioritizing **speed of iteration** over **cost optimization**
+
+**Self-hosted storage:**
+- **Pros:** Full control, no vendor lock-in, cost savings at scale, air-gap compatibility
+- **Cons:** Operational burden (backups, upgrades, monitoring), slower feature adoption
+- **Best for:** **Data sovereignty requirements**, **air-gapped environments**, or **cost-sensitive workloads at scale** (100TB+)
+
+**Examples:**
+
+| Storage Type      | Managed Cloud         | Self-Hosted Open Source       |
+|-------------------|-----------------------|-------------------------------|
+| **Object Storage**| S3, GCS, Azure Blob   | MinIO, Ceph                   |
+| **Relational DB** | Cloud SQL, RDS        | CloudNativePG, Vitess         |
+| **Search Engine** | Elastic Cloud         | OpenSearch on Kubernetes      |
+| **Vector DB**     | Pinecone, Weaviate Cloud | pgvector, Milvus on Kubernetes |
+
+> **Tip:** Start with managed services to **validate the use case**. Migrate to self-hosted when you have **operational expertise** and **cost justification** (typically when storage costs exceed $10K/month).
+
+## The Storage Decision Matrix
+
+Here's the **practical artifact** from this lesson — a matrix mapping **every data type** in a modern data platform to a **storage choice**.
+
+This matrix is based on the **recurring scenario** from Module 1: an e-commerce platform with **operational data**, **analytics**, **ML features**, and **AI-powered search**.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Operational["Operational Layer"]
+        Transactional[Transactional Data<br/>Orders, Customers, Inventory]
+        CDC[Change Data Capture<br/>Event Stream]
+    end
+    
+    subgraph Analytics["Analytics Layer"]
+        Raw[Raw Event Data<br/>Parquet Files]
+        Processed[Processed Analytics<br/>Lakehouse Tables]
+        Metrics[Real-Time Metrics<br/>Aggregations]
+    end
+    
+    subgraph ML["ML Layer"]
+        Features[ML Features<br/>Training & Serving]
+        Models[Model Artifacts<br/>Weights, Configs]
+        Embeddings[Product Embeddings<br/>Semantic Search]
+    end
+    
+    subgraph AI["AI Layer"]
+        Documents[Raw Documents<br/>Product Descriptions]
+        Vectors[Vector Embeddings<br/>Chunks]
+        SearchIndex[Search Index<br/>Hybrid Retrieval]
+    end
+    
+    Transactional --> Storage1[PostgreSQL<br/>Cloud SQL]
+    CDC --> Storage2[Kafka Topics<br/>→ Object Storage]
+    Raw --> Storage3[Object Storage<br/>S3/GCS]
+    Processed --> Storage4[Lakehouse<br/>Object Storage + Catalog]
+    Metrics --> Storage5[Redis<br/>Time-Series DB]
+    Features --> Storage6[Feature Store<br/>Redis + Object Storage]
+    Models --> Storage7[Object Storage<br/>Versioned Buckets]
+    Embeddings --> Storage8[pgvector<br/>PostgreSQL Extension]
+    Documents --> Storage9[Object Storage<br/>S3/GCS]
+    Vectors --> Storage10[Vector Database<br/>pgvector or Milvus]
+    SearchIndex --> Storage11[Elasticsearch<br/>or OpenSearch]
+    
+    style Operational fill:#e0f0ff,stroke:#0066cc
+    style Analytics fill:#d4f4dd,stroke:#00aa44
+    style ML fill:#fff4e6,stroke:#ff9900
+    style AI fill:#f9e6ff,stroke:#9900cc
+    style Storage1 fill:#fef0f0,stroke:#cc0000
+    style Storage2 fill:#fef0f0,stroke:#cc0000
+    style Storage3 fill:#fef0f0,stroke:#cc0000
+    style Storage4 fill:#fef0f0,stroke:#cc0000
+    style Storage5 fill:#fef0f0,stroke:#cc0000
+    style Storage6 fill:#fef0f0,stroke:#cc0000
+    style Storage7 fill:#fef0f0,stroke:#cc0000
+    style Storage8 fill:#fef0f0,stroke:#cc0000
+    style Storage9 fill:#fef0f0,stroke:#cc0000
+    style Storage10 fill:#fef0f0,stroke:#cc0000
+    style Storage11 fill:#fef0f0,stroke:#cc0000
+`} />
+
+**Matrix Rationale:**
+
+1. **Transactional Data → PostgreSQL**
+   - **Why:** ACID transactions, schema enforcement, SQL queries
+   - **Alternative:** MySQL (less advanced features), CockroachDB (global scale)
+
+2. **CDC Events → Kafka → Object Storage**
+   - **Why:** Kafka for real-time streaming (Module 4), object storage for long-term retention
+   - **Alternative:** Direct to object storage for batch-only pipelines
+
+3. **Raw Event Data → Object Storage (Parquet)**
+   - **Why:** Cheap, scalable, columnar format for analytics
+   - **Alternative:** Avro for schema evolution, JSON for debugging
+
+4. **Processed Analytics → Lakehouse (Object Storage + Catalog)**
+   - **Why:** Combines data lake scalability with table semantics (Module 6)
+   - **Alternative:** Data warehouse (Snowflake, BigQuery) for query performance
+
+5. **Real-Time Metrics → Redis (Time-Series DB)**
+   - **Why:** Sub-millisecond latency for dashboards, in-memory aggregations
+   - **Alternative:** Prometheus for metrics, InfluxDB for time-series
+
+6. **ML Features → Feature Store (Redis + Object Storage)**
+   - **Why:** Low-latency serving (Redis), historical training data (object storage)
+   - **Alternative:** DynamoDB, Cassandra for distributed serving (Module 8)
+
+7. **Model Artifacts → Object Storage (Versioned Buckets)**
+   - **Why:** Large binary files, versioning for rollback, cheap storage
+   - **Alternative:** MLflow Model Registry (adds metadata tracking)
+
+8. **Product Embeddings → pgvector (PostgreSQL Extension)**
+   - **Why:** Keeps embeddings co-located with transactional data, no new database
+   - **Alternative:** Dedicated vector DB (Milvus, Weaviate) for scale (100M+ vectors)
+
+9. **Raw Documents → Object Storage**
+   - **Why:** Source documents for RAG pipelines stored as files (PDF, HTML, Markdown)
+   - **Alternative:** Document store (MongoDB) if you need metadata queries
+
+10. **Vector Embeddings → Vector Database (pgvector or Milvus)**
+    - **Why:** Similarity search for RAG retrieval, hybrid search with metadata filters
+    - **Alternative:** Elasticsearch with dense_vector (combines search + vectors)
+
+11. **Search Index → Elasticsearch/OpenSearch**
+    - **Why:** Full-text search, faceted navigation, log analytics
+    - **Alternative:** Algolia (managed), Typesense (lightweight self-hosted)
+
+> **Important:** This matrix is a **starting point**, not a rigid prescription. Your choices will vary based on **scale**, **team expertise**, **cost constraints**, and **existing infrastructure**.
+
+## Cost, Performance, Durability Tradeoffs
+
+Choosing storage is not just about **features** — it's about **tradeoffs** between cost, performance, and durability.
+
+### Cost: More Than $/GB
+
+Storage costs have **three dimensions**:
+
+1. **Storage cost ($/GB-month):** The headline number, but often the smallest component
+2. **Access cost ($/query or $/retrieval):** Data warehouse queries can cost $5/TB scanned
+3. **Egress cost ($/GB):** Moving data out of cloud storage can cost $0.08-0.12/GB
+
+**Example:** Storing 10TB in S3 Standard costs **$230/month**. But if you download that 10TB once, egress costs **$900**. If you query it with Athena and scan all 10TB, that's another **$50** per query.
+
+**Optimization strategies:**
+- **Use lifecycle policies** to move cold data to cheaper storage tiers (S3 Glacier, GCS Archive)
+- **Partition data** to minimize query scans (covered in L04)
+- **Cache frequently accessed data** in Redis or CloudFront
+- **Use columnar formats** (Parquet, ORC) to reduce scan costs by 10-100x
+
+### Performance: Latency vs Throughput
+
+Storage systems optimize for **different performance characteristics**:
+
+- **Block storage:** Low latency (sub-ms), moderate throughput (hundreds of MB/s)
+- **Object storage:** Higher latency (10-50ms), massive throughput (GB/s per bucket)
+- **File storage:** Shared latency (1-10ms), limited throughput (GB/s shared across clients)
+- **Database:** Query latency depends on indexes, caching, and data size
+
+**When performance matters:**
+- **Operational systems:** Sub-100ms p99 latency requires **in-memory caching** (Redis) or **SSDs** (block storage)
+- **Analytics:** Throughput matters more than latency — **columnar formats** and **parallelization** win
+- **AI inference:** Embedding retrieval needs **sub-50ms p99** — use **pgvector** or **dedicated vector DBs**
+
+### Durability: How Many Nines?
+
+**Durability** is the probability that data will **not be lost** over a given time period.
+
+- **S3 Standard:** 99.999999999% durability (11 nines) — expect to lose 1 object per 10 billion per year
+- **GCS Standard:** Same 11 nines guarantee
+- **Block storage:** 99.999% durability (5 nines) — 100x more likely to lose data than object storage
+- **Self-hosted:** Depends on your backup strategy and operational maturity
+
+**When durability matters:**
+- **Financial data, compliance records:** Use object storage with **versioning** and **cross-region replication**
+- **Operational databases:** Take **continuous backups** to object storage (WAL archiving for PostgreSQL)
+- **ML models, analytics:** Object storage is sufficient — models can be retrained, analytics can be recomputed
+
+> **Warning:** Durability is **not the same as availability**. S3 Standard has 99.99% availability (4 nines) — it will be **unavailable** for ~50 minutes per year. Durability means data won't be **lost**, but it might be **temporarily inaccessible**.
+
+## Failure Modes: Common Storage Anti-Patterns
+
+Here are the most common **mistakes** teams make when choosing storage:
+
+### 1. One-Size-Fits-All Storage
+
+**Symptom:** "We put everything in PostgreSQL" or "We put everything in S3."
+
+**Why it fails:** No storage system is optimal for all access patterns. PostgreSQL is terrible for unstructured data. Object storage is terrible for transactions.
+
+**Fix:** Use the **decision matrix** to map each data type to the right storage.
+
+### 2. Ignoring Operational Cost
+
+**Symptom:** Choosing a self-hosted solution to "save money" without accounting for **operational overhead**.
+
+**Why it fails:** Self-hosting MinIO saves $200/month on storage but costs **$10K/month** in engineer time for backups, upgrades, and monitoring.
+
+**Fix:** Calculate **total cost of ownership (TCO)** — storage cost + operational cost + opportunity cost.
+
+### 3. Premature Vector Database Adoption
+
+**Symptom:** Deploying a dedicated vector database (Milvus, Weaviate) before understanding the **scale** and **retrieval pattern**.
+
+**Why it fails:** **pgvector** (PostgreSQL extension) handles **10M vectors** with **sub-50ms retrieval**. Most teams never exceed this.
+
+**Fix:** Start with **pgvector**. Migrate to a dedicated vector DB only when you hit **scale limits** (100M+ vectors) or need **advanced filtering** that pgvector doesn't support.
+
+### 4. Skipping Lifecycle Policies
+
+**Symptom:** Storing **cold data** (accessed once per year) in **S3 Standard** (hot storage pricing).
+
+**Why it fails:** You pay **$23/TB-month** for data that should cost **$1/TB-month** in S3 Glacier.
+
+**Fix:** Set up **lifecycle policies** to automatically transition objects to cheaper tiers after 90 days (S3 Intelligent-Tiering automates this).
+
+### 5. Ignoring Egress Costs
+
+**Symptom:** Building a data platform on AWS, then querying it from **Google Cloud** for analytics.
+
+**Why it fails:** Cross-cloud egress costs **$0.08-0.12/GB**. Scanning **100TB/month** costs **$8K-12K/month** just in egress.
+
+**Fix:** Keep **data and compute in the same cloud region**. Use **data replication** only when absolutely necessary.
+
+## Bridge to Module 4: Data Movement
+
+You now have a **storage decision framework** and a **decision matrix** mapping every data type to the right storage system. But a data platform is not just **static storage** — it's about **moving data** between systems.
+
+**Module 4: Data Movement & Integration** will answer:
+
+- How do we **move data from PostgreSQL to the data lake**? (Change Data Capture)
+- How do we **stream events in real time**? (Kafka, Pub/Sub)
+- How do we **orchestrate batch pipelines**? (Airflow, Temporal)
+- How do we **transform data as it moves**? (dbt, Spark)
+
+The storage layer is the **foundation**. Data movement is the **circulatory system** that connects these storage systems into a **unified data platform**.
+
+## Summary
+
+This lesson provided a **systematic decision framework** for choosing storage systems. You learned:
+
+1. **The decision tree** — choosing between block, object, file, and database storage based on **access patterns**
+2. **Managed vs self-hosted** — reusing the Module 2 workload placement framework for storage
+3. **Document, search, and vector storage** — where each fits in the decision tree
+4. **The storage decision matrix** — a practical mapping of every data type in a modern platform to a storage choice
+5. **Cost, performance, durability tradeoffs** — not just $/GB but $/query, $/access, and operational overhead
+6. **Common failure modes** — one-size-fits-all storage, ignoring operational cost, premature vector DB adoption
+
+The **learner artifact** from this module is the **storage decision matrix** — a tool you can customize for your own data platform.
+
+In **Module 4**, we'll shift from **where data lives** to **how data moves** — exploring CDC, Kafka, Airflow, and the pipelines that connect these storage systems into a unified platform.

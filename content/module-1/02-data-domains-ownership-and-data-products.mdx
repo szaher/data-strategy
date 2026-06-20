@@ -1,0 +1,347 @@
+---
+title: "Data Domains, Ownership & Data Products"
+quiz:
+  - question: "In a hybrid ownership model, who owns data quality SLAs for a specific domain's data products?"
+    options:
+      - "The central platform team owns all quality SLAs across domains"
+      - "Domain teams own quality for their data products within platform guardrails"
+      - "A dedicated data governance committee owns all SLAs"
+      - "Quality SLAs are optional in hybrid models"
+    correctIndex: 1
+  - question: "What distinguishes a data product from a raw table or dataset?"
+    options:
+      - "It uses a specific file format like Parquet"
+      - "It has managed ownership, schema contract, quality SLAs, and discoverability"
+      - "It exists in the lakehouse layer rather than raw storage"
+      - "It serves machine learning use cases only"
+    correctIndex: 1
+  - question: "When should you consider a fully federated (data mesh) operating model?"
+    options:
+      - "You have a small team with limited engineering capacity"
+      - "You have mature domain teams, strong engineering culture, and clear domain boundaries"
+      - "You want to minimize coordination overhead across teams"
+      - "You need to consolidate all data engineering into one team"
+    correctIndex: 1
+---
+
+## Overview
+
+As we saw in Why Data Strategy Matters, the recurring integration scenario follows a familiar path: source systems change, CDC captures those changes, processing pipelines transform data, the lakehouse stores it, ML models and RAG systems consume it, and observability monitors the entire flow. But this technical flow raises a critical question: **who owns what?**
+
+Without clear ownership, data becomes orphaned. Tables accumulate in warehouses with no one responsible for quality, freshness, or documentation. Downstream consumers find datasets with cryptic column names and no contract guaranteeing stability. When a business metric suddenly changes, no one knows who to ask. AI teams build training datasets that duplicate or contradict other teams' work. The platform becomes a data junkyard rather than a data product catalog.
+
+This lesson explores three ownership models — **centralized**, **federated (data mesh)**, and **hybrid** — and positions data mesh as a set of useful **principles** rather than a one-size-fits-all operating model. We'll define what makes a **data product** more than just a table, examine how to organize data around **business domains** instead of technology layers, and clarify who owns the data that feeds AI systems. The goal is to build accountability into your platform architecture so every dataset has a clear owner, a quality contract, and a discoverable interface.
+
+## The City Planning Analogy: Domains vs. Layers
+
+Think of data architecture like city planning. The traditional approach organizes by **technology layers** — equivalent to grouping a city by building types: all houses together, all shops together, all offices together. Residents spend their day commuting between zones. There's no cohesive neighborhood, just functional sprawl.
+
+**Domain-driven data design** organizes around **business domains** instead — like planning a city with distinct neighborhoods. Each neighborhood (domain) has its own identity, clear boundaries, and everything a resident needs: housing, shops, schools, parks. Neighborhoods interact through well-defined streets and transit lines, but each maintains internal autonomy.
+
+In data terms, a domain is a coherent area of the business: **Customers**, **Orders**, **Inventory**, **Finance**, **Marketing Campaigns**. Rather than organizing your data platform by layers (bronze/silver/gold, raw/curated/consumption), you organize by domain. The **Customer domain** owns everything related to customer data: raw ingestion from CRM, transformation into profiles, quality checks, access policies, and the consumption-ready data products that other teams use.
+
+This shift has profound implications:
+
+- **Ownership follows expertise** — the team that understands customers best owns customer data end-to-end
+- **Changes stay local** — a new field in the Orders domain doesn't ripple across unrelated domains
+- **Discoverability improves** — consumers search by business concept ("customer churn risk") rather than technical artifact ("silver_layer_table_47")
+- **Accountability is clear** — when a dashboard breaks, you know which domain team to contact
+
+The boundary between domains is never perfect — customers interact with orders, inventory affects shipments — but clear domain boundaries with explicit interfaces prevent the chaotic coupling that plagues layer-based architectures.
+
+> **Tip:** Domain boundaries should align with organizational structure and business language, not database schemas or technology stacks.
+
+## Three Ownership Models Compared
+
+Domain-driven design tells you **what** to organize around, but it doesn't specify **who** owns the work. Three ownership models have emerged in modern data platforms.
+
+### Centralized Ownership
+
+One **central platform team** owns everything: ingestion pipelines, transformations, quality checks, data products, access controls, and documentation. Domain teams (marketing, sales, finance) are consumers only — they request new data or changes through tickets.
+
+**Advantages:**
+- **Consistency** — one team enforces standards, naming conventions, and tooling choices
+- **Efficiency at small scale** — a single team can move fast without coordination overhead
+- **Easier hiring** — you need deep data engineering talent in one place, not distributed
+
+**Disadvantages:**
+- **Bottleneck at scale** — the central team becomes a ticket queue; domain teams wait weeks for simple changes
+- **Context loss** — platform engineers don't understand the business nuances of every domain
+- **Accountability gaps** — domain teams blame the platform for bad data; the platform blames domains for unclear requirements
+
+**When it works:** Small companies (< 50 people), early-stage platforms, teams where data engineering talent is scarce and concentrated in one group.
+
+### Federated Ownership (Data Mesh)
+
+Each **domain team** owns its data products end-to-end: ingestion, transformation, quality, documentation, and serving. There is no central data team — instead, a platform team provides **self-service infrastructure** (compute, storage, orchestration, observability) that domain teams use to build and operate their own data products. Governance is **federated** through a cross-functional group that sets standards without owning execution.
+
+This is the **data mesh** model popularized by Zhamak Dehghani. It treats data as a product, domains as product teams, and the platform as an enabler rather than a gatekeeper.
+
+**Advantages:**
+- **Scalability** — no central bottleneck; domain teams move independently
+- **Deep context** — domain teams understand their business logic, data semantics, and consumer needs
+- **Ownership clarity** — the team that produces the data owns its quality
+
+**Disadvantages:**
+- **High coordination cost** — cross-domain data products require negotiation and shared standards
+- **Requires mature engineering culture** — domain teams need data engineering skills, DevOps practices, and product thinking
+- **Risk of fragmentation** — without strong governance, domains drift into incompatible schemas, tools, and quality bars
+
+**When it works:** Large organizations (500+ people), mature engineering teams with embedded data skills, clear domain boundaries with stable interfaces, strong cultural commitment to platform thinking.
+
+> **Warning:** Data mesh is often oversold as a universal solution. Many organizations attempt it prematurely, discover domain teams lack the skills or bandwidth to own data products, and end up with orphaned datasets and quality collapse.
+
+### Hybrid Ownership (Recommended)
+
+The **hybrid model** combines the strengths of centralized and federated approaches. A **central platform team** provides:
+- **Infrastructure and tooling** — orchestration, storage, compute, observability, lineage tracking
+- **Standards and guardrails** — schema registry, data quality framework, access control patterns, documentation templates
+- **Shared services** — common transformations (PII masking, address normalization), data catalog, governance enforcement
+
+**Domain teams** own their **data products** within these guardrails:
+- They define schemas, transformation logic, and quality SLAs for their domain
+- They use platform-provided tooling rather than building custom infrastructure
+- They operate within governance policies (access controls, retention, compliance) enforced by the platform
+
+This is the **most successful model** in practice. It balances autonomy (domain teams control their roadmap) with consistency (platform sets the foundation). It works because:
+- **Platform team scales through leverage** — they build reusable infrastructure, not bespoke pipelines
+- **Domain teams focus on business logic** — they don't need to become Kubernetes experts
+- **Governance is embedded** — policies are enforced by tooling, not manual audits
+
+**Failure mode to avoid:** The platform team drifts back into centralized ownership by becoming the only team allowed to deploy pipelines or modify schemas. Guard against this by measuring **domain team autonomy** (can they ship a new data product in < 1 week?) and **platform adoption** (are domain teams using self-service tools or filing tickets?).
+
+<MermaidDiagram chart={`graph TB
+    subgraph Platform["Central Platform Team"]
+        Infra[Infrastructure<br/>Orchestration, Storage, Compute]
+        Standards[Standards & Guardrails<br/>Schema Registry, Quality Framework]
+        Shared[Shared Services<br/>PII Masking, Catalog, Lineage]
+    end
+    
+    subgraph Domain1["Customer Domain Team"]
+        DP1[Customer Profile<br/>Data Product]
+        DP2[Customer Events<br/>Data Product]
+    end
+    
+    subgraph Domain2["Order Domain Team"]
+        DP3[Order History<br/>Data Product]
+        DP4[Order Analytics<br/>Data Product]
+    end
+    
+    subgraph Governance["Shared Governance"]
+        Policies[Access, Retention,<br/>Compliance Policies]
+    end
+    
+    Infra --> DP1
+    Infra --> DP2
+    Infra --> DP3
+    Infra --> DP4
+    
+    Standards --> DP1
+    Standards --> DP2
+    Standards --> DP3
+    Standards --> DP4
+    
+    Shared --> DP1
+    Shared --> DP3
+    
+    Governance --> Platform
+    Governance --> Domain1
+    Governance --> Domain2
+    
+    style Platform fill:#e0f0ff,stroke:#0066cc
+    style Domain1 fill:#f0ffe0,stroke:#66cc00
+    style Domain2 fill:#f0ffe0,stroke:#66cc00
+    style Governance fill:#fff0e0,stroke:#cc9900
+`} />
+
+## What Makes a Data Product
+
+A **data product** is not just a table in a database. It's a **managed asset** with clear ownership and a consumption contract. Treating data as a product means applying product thinking: who are the consumers? What do they need? How do we measure success?
+
+A well-defined data product includes:
+
+### 1. Owner
+A **named team or individual** responsible for the data product's availability, quality, and evolution. Not "the data team" — a specific domain team with a Slack channel, on-call rotation, and roadmap.
+
+### 2. Interface / Schema
+A **published schema** that consumers can depend on. Changes follow **semantic versioning**: backward-compatible additions are minor versions, breaking changes are major versions with migration paths. The schema is registered in a **schema registry** (e.g., Confluent Schema Registry, AWS Glue, Databricks Unity Catalog) so consumers get compile-time or ingest-time validation.
+
+### 3. Quality Contract
+**Service-level objectives (SLOs)** for:
+- **Freshness** — "updated every 6 hours" or "real-time with < 5 min lag"
+- **Completeness** — "no missing primary keys" or "< 1% null values in critical columns"
+- **Accuracy** — "matches source system within 0.01%" or "passes referential integrity checks"
+
+These are **monitored** (not just documented) with alerts when SLOs are breached. Consumers know what to expect, and owners know when they've violated the contract.
+
+### 4. Access Policy
+**Who can read** the data product? Row-level or column-level restrictions? Is PII masked for non-privileged users? Access policies are **enforced at the platform level** (Unity Catalog, BigQuery IAM, Snowflake RBAC) so domain teams can't bypass them.
+
+### 5. Documentation
+**Human-readable description** of what the data product represents, how it's produced, common use cases, and known limitations. Includes **field-level descriptions** (not just "customer_id" but "unique identifier for customer, stable across CRM migrations"). Discoverable in a **data catalog** (Atlan, Alation, DataHub).
+
+### 6. Discoverability
+The data product appears in a **searchable catalog** tagged with business terms, domain, owner contact, and lineage. Consumers can search "customer churn risk" and find the relevant data product without knowing table names or file paths.
+
+### 7. Lineage
+**Upstream and downstream dependencies** are tracked automatically. Consumers know where the data comes from (source systems, transformations). Owners know who depends on them (dashboards, ML models, other data products). When a breaking change is proposed, impact analysis is automated.
+
+> **Tip:** Start with the interface and quality contract. These are the hardest to retrofit and provide the most immediate value to consumers.
+
+## AI Data Ownership
+
+AI introduces new data ownership questions. Training datasets, embedding corpora, retrieval sources, and model-consumption data products blur traditional boundaries.
+
+### Training Datasets
+A **training dataset** for a churn prediction model might combine customer profiles, order history, support tickets, and product usage logs. **Who owns it?**
+
+**Anti-pattern:** The ML team extracts raw data from each domain, joins it in a notebook, and trains a model. Six months later, the schema changes, the notebook breaks, and no one knows how to fix it.
+
+**Better pattern:** The ML team treats the training dataset as a **data product** owned by a cross-functional team (ML + domain representatives). The product has a schema, quality contract (balanced classes, no data leakage), and lineage to upstream domain products. When an upstream schema changes, the training dataset owner is notified and updates the join logic.
+
+### Embedding Corpora
+RAG systems embed documents, code snippets, or knowledge base articles into vector stores. **Who owns the corpus?**
+
+**Anti-pattern:** Every team builds its own embedding pipeline, duplicating work and fragmenting the knowledge base. The same document is embedded five different ways with incompatible chunking strategies.
+
+**Better pattern:** A **Knowledge Domain team** owns a curated **embedding corpus data product**. They define chunking strategy, embedding model version, metadata schema, and quality checks (no empty chunks, deduplication). Other teams consume this data product rather than rebuilding it.
+
+### Retrieval Sources
+An LLM-powered feature might retrieve from customer profiles, order history, and product catalogs. **Who ensures those sources stay RAG-compatible?**
+
+**Anti-pattern:** Domain teams own customer profiles for analytics but don't consider RAG use cases. Text fields are truncated, timestamps lack timezone context, and related entities aren't linked in a way that enables coherent retrieval.
+
+**Better pattern:** RAG requirements are captured in the **quality contract** of domain data products. Customer profiles include a "summary" field suitable for semantic search, timestamps are ISO 8601 with timezone, and related orders are linked by stable IDs. The RAG team consumes these products as-is rather than transforming them.
+
+### Model-Consumption Data Products
+A deployed model needs **inference-time features** — the same transformations applied during training, now served in real-time. **Who owns feature serving?**
+
+**Anti-pattern:** The ML team owns training features (batch) and the application team owns inference features (real-time). Logic drifts, predictions degrade, and no one notices until customers complain.
+
+**Better pattern:** A **Feature Store** (Feast, Tecton, SageMaker Feature Store) provides a unified data product for both training and inference. Domain teams contribute features following the feature store's schema and quality contract. The ML team consumes features rather than reimplementing them.
+
+<MermaidDiagram chart={`flowchart LR
+    subgraph Customer["Customer Domain"]
+        CP[Customer Profile<br/>Data Product]
+    end
+    
+    subgraph Order["Order Domain"]
+        OH[Order History<br/>Data Product]
+    end
+    
+    subgraph Knowledge["Knowledge Domain"]
+        EC[Embedding Corpus<br/>Data Product]
+    end
+    
+    subgraph ML["ML Domain"]
+        TD[Training Dataset<br/>Data Product]
+        FS[Feature Store<br/>Data Product]
+    end
+    
+    CP --> Analytics[Analytics Dashboard]
+    CP --> FS
+    CP --> RAG[RAG Retrieval]
+    
+    OH --> Analytics
+    OH --> FS
+    OH --> RAG
+    
+    EC --> RAG
+    
+    FS --> TD
+    FS --> Inference[Real-Time Inference]
+    
+    TD --> Model[ML Model Training]
+    
+    style Customer fill:#f0ffe0,stroke:#66cc00
+    style Order fill:#f0ffe0,stroke:#66cc00
+    style Knowledge fill:#f0ffe0,stroke:#66cc00
+    style ML fill:#ffe0f0,stroke:#cc0066
+    style Analytics fill:#e0f0ff,stroke:#0066cc
+    style RAG fill:#e0f0ff,stroke:#0066cc
+    style Inference fill:#e0f0ff,stroke:#0066cc
+`} />
+
+## Recurring Scenario: Customer Profile Data Product
+
+Let's ground this in the recurring integration scenario. The **Customer Domain team** owns a **Customer Profile data product** that flows through the platform:
+
+1. **Source:** Customer records in Salesforce CRM
+2. **CDC:** Debezium captures inserts/updates/deletes
+3. **Processing:** Domain-owned pipeline joins CRM data with web activity logs, computes enrichment fields (lifetime value, churn risk score), and validates quality (no duplicate emails, valid zip codes)
+4. **Lakehouse:** Customer Profile table in Delta Lake, registered in Unity Catalog with row-level access controls (PII masked for analysts)
+5. **Consumption:**
+   - **Analytics dashboard** queries aggregated metrics (customers by region, churn distribution)
+   - **ML feature store** serves real-time churn risk scores to the retention campaign system
+   - **RAG retrieval** embeds customer summaries for a support chatbot
+6. **Observability:** Lineage tracks dependencies, freshness monitors alert when CDC lag exceeds 10 minutes, quality checks fail if duplicate emails appear
+
+The **Customer Domain team** owns the entire flow. They define the schema, set quality SLOs, approve access requests, and respond to incidents. The **Platform team** provides the infrastructure (Kafka for CDC, Databricks for processing, Unity Catalog for governance) and shared services (PII masking functions, lineage tracking). The **Governance committee** sets policies (PII retention = 2 years, Europe region must stay in EU), which the platform enforces automatically.
+
+When the analytics team wants a new field ("customer acquisition channel"), they file a request with the Customer Domain team, not the platform team. When the ML team's feature store breaks due to a schema change, they contact the Customer Domain team, who checks the lineage graph to understand impact and coordinates the migration.
+
+This is **hybrid ownership** in action: autonomy where it matters (domain logic), consistency where it counts (governance, infrastructure).
+
+## Decision Framework: Choosing Your Operating Model
+
+How do you decide between centralized, federated, and hybrid?
+
+### Choose Centralized If:
+- Team size < 50 people
+- Data engineering talent is concentrated in one team
+- Domains are not yet well-defined or boundaries are unstable
+- Speed of iteration matters more than scale
+- You're willing to accept the bottleneck in exchange for simplicity
+
+**Risk:** You'll outgrow this model. Plan the transition to hybrid before the central team becomes overwhelmed.
+
+### Choose Federated (Data Mesh) If:
+- Organization size > 500 people
+- Domain teams have strong engineering culture and data skills
+- Domains have clear boundaries and stable interfaces
+- Leadership supports multi-quarter investment in platform and organizational change
+- You can afford the coordination cost in exchange for scale
+
+**Risk:** Premature adoption leads to orphaned datasets and quality collapse. Many organizations underestimate the maturity required.
+
+### Choose Hybrid If:
+- You need to scale beyond a central team but domain teams lack full data engineering capacity
+- You want domain ownership with platform-enforced consistency
+- You're willing to invest in self-service infrastructure
+- You value pragmatism over ideological purity
+
+**Risk:** The platform team drifts back into centralized ownership. Measure domain autonomy and intervene when bottlenecks reappear.
+
+> **Tip:** Most successful platforms start centralized, transition to hybrid around 100-200 people, and consider federated only at 500+ with proven domain maturity.
+
+## Failure Modes to Avoid
+
+### Accountability Gaps
+**Symptom:** Datasets exist with no clear owner. When quality degrades, domain teams blame the platform; the platform blames domains.
+
+**Fix:** Every data product in the catalog must have a named owner (team + contact). Governance policy: unowned datasets are deleted after 90 days.
+
+### Conflicting Definitions
+**Symptom:** Three teams define "active customer" differently. Reports disagree, executives lose trust in data.
+
+**Fix:** Business terms are standardized in a **business glossary** (owned by governance) and enforced through the data catalog. Domain teams implement the glossary definitions in their data products.
+
+### Shadow IT
+**Symptom:** Domain teams bypass the platform by building custom pipelines in Airflow, Lambda, or notebooks. Platform loses visibility and governance.
+
+**Fix:** Platform tooling must be **easier than the alternative**. If domain teams prefer Airflow, integrate Airflow into the platform rather than banning it. Governance through enablement, not prohibition.
+
+### Premature Mesh
+**Symptom:** You adopt data mesh principles before domain teams have the skills or bandwidth. Data products are abandoned, quality collapses, and leadership loses faith.
+
+**Fix:** Acknowledge data mesh as a **maturity target**, not a starting point. Build platform self-service and domain skills in **hybrid mode** first. Transition to full federation only when domain teams demonstrate consistent ownership.
+
+## Summary
+
+Data domains organize around business concepts (Customers, Orders, Inventory) rather than technology layers, bringing ownership close to expertise. Three operating models — **centralized**, **federated (data mesh)**, and **hybrid** — define who owns what. Centralized works at small scale but bottlenecks. Federated (data mesh) scales but requires mature teams and strong governance. Hybrid combines platform-provided infrastructure with domain-owned data products, making it the most successful model in practice.
+
+A **data product** is more than a table: it has an owner, schema contract, quality SLAs, access policy, documentation, and discoverable lineage. AI introduces new ownership challenges around training datasets, embedding corpora, retrieval sources, and feature stores — all of which benefit from treating data as a product with clear contracts.
+
+The recurring scenario — a Customer Profile data product feeding analytics, ML, and RAG — demonstrates hybrid ownership in action: domain teams own logic and quality, the platform provides infrastructure and enforcement, and governance sets policies that apply uniformly.
+
+Choose your operating model based on team size, engineering maturity, and domain boundaries. Avoid accountability gaps, conflicting definitions, shadow IT, and premature data mesh adoption. Remember: data mesh is a set of **principles** (domain ownership, data as a product, self-service platform, federated governance), not a rigid blueprint. Apply the principles that fit your organization's maturity and scale.

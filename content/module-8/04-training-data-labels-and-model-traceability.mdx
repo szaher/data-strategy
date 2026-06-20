@@ -1,0 +1,520 @@
+---
+title: "Training Data, Labels & Model Traceability"
+---
+
+## The Reproducibility Crisis in ML
+
+You retrain a fraud detection model every week. On March 15, it achieves 94% accuracy. On March 22, using "the same pipeline," accuracy drops to 89%. Your VP demands an explanation. You can't provide one because you don't know what changed. Was it new fraud patterns in the wild? A data quality issue? A code change? Or did the training dataset itself evolve in ways you didn't track?
+
+**This is the reproducibility crisis in machine learning**. Unlike traditional software, where the code defines behavior, ML systems are shaped by three moving parts: code, data, and hyperparameters. Code versioning is solved (Git). Hyperparameter tracking is solved (MLflow, Weights & Biases). **Data versioning is not solved** — most organizations treat training data as ephemeral, regenerated on each run from the latest snapshot of production tables.
+
+The consequence: **you cannot reproduce a model**. You cannot debug performance regressions. You cannot audit what data influenced a high-stakes prediction. You cannot comply with data regulations that require lineage from prediction back to training examples.
+
+This lesson shows how to solve the data versioning problem using **Iceberg table snapshots**, manage **label quality and bias**, and establish **end-to-end lineage** from raw data through training to deployed models.
+
+---
+
+## Dataset Versioning with Iceberg Snapshots
+
+Iceberg tables (Module 6) support **time-travel**: every write creates an immutable snapshot, and you can query any historical version of the table. This property turns Iceberg into a **native dataset versioning system** for ML.
+
+### How Snapshot-Based Versioning Works
+
+When you write to an Iceberg table, Iceberg:
+1. Writes new data files to object storage (immutable Parquet files)
+2. Creates a new manifest file listing all current data files
+3. Atomically updates the table metadata to point to the new manifest
+4. Preserves the old manifest and metadata as a snapshot
+
+Each snapshot has a unique **snapshot ID** and **timestamp**. You can query any snapshot as if it were the current table state:
+
+<CodeBlock code={`-- Query the table as of a specific snapshot
+SELECT * FROM fraud_training_data
+VERSION AS OF 8723649182374
+
+-- Query the table as of a specific timestamp
+SELECT * FROM fraud_training_data
+TIMESTAMP AS OF '2026-06-15 08:00:00'
+
+-- List all available snapshots
+SELECT * FROM fraud_training_data.snapshots
+ORDER BY committed_at DESC
+LIMIT 10;
+`} language="sql" filename="iceberg_time_travel.sql" />
+
+This means **you can pin a training job to a specific snapshot**, making the input dataset reproducible forever (subject to retention policies).
+
+### Training Data Versioning Pattern
+
+The canonical pattern for ML dataset versioning:
+
+1. **Feature engineering pipeline** writes to an Iceberg table (e.g., `ml_features.fraud_training`)
+2. **Training job** queries the table, records the snapshot ID used, and logs it to the model registry
+3. **Model registry** stores: model binary, hyperparameters, code version, **and the exact Iceberg snapshot ID**
+4. **Reproduction** queries the same snapshot to regenerate the exact training dataset
+
+<MermaidDiagram chart={`graph TD
+    A[Raw Events] -->|ETL Pipeline| B[Feature Table<br/>Iceberg]
+    B -->|Snapshot 8723649182374<br/>2026-06-15 08:00| C[Training Job]
+    B -->|Snapshot 8723649182380<br/>2026-06-16 08:00| D[Next Training Run]
+    C -->|Logs snapshot ID| E[Model Registry]
+    E -->|fraud_v47<br/>snapshot: 8723649182374| F[Deployed Model]
+    E -->|Reproduce| G[Query Snapshot]
+    G -->|Same Data| H[Retrain]
+    
+    style B fill:#ebf8ff,stroke:#3182ce
+    style E fill:#fef5e7,stroke:#f39c12
+    style F fill:#e8f5e9,stroke:#66bb6a
+`} />
+
+### Implementation: Snapshot Tracking in MLflow
+
+<CodeBlock code={`import mlflow
+from pyspark.sql import SparkSession
+
+# Initialize Spark with Iceberg support
+spark = SparkSession.builder \\
+    .config("spark.sql.catalog.prod", "org.apache.iceberg.spark.SparkCatalog") \\
+    .config("spark.sql.catalog.prod.type", "hive") \\
+    .getOrCreate()
+
+# Query current snapshot metadata
+snapshot_df = spark.sql("""
+    SELECT snapshot_id, committed_at
+    FROM prod.ml_features.fraud_training.snapshots
+    ORDER BY committed_at DESC
+    LIMIT 1
+""")
+current_snapshot = snapshot_df.collect()[0]
+snapshot_id = current_snapshot['snapshot_id']
+snapshot_time = current_snapshot['committed_at']
+
+# Load training data from this snapshot
+training_data = spark.sql(f"""
+    SELECT * FROM prod.ml_features.fraud_training
+    VERSION AS OF {snapshot_id}
+""")
+
+# Train model
+X = training_data.select("features").toPandas()
+y = training_data.select("label").toPandas()
+model = train_xgboost(X, y)
+
+# Log model with dataset snapshot metadata
+with mlflow.start_run() as run:
+    mlflow.log_param("iceberg_snapshot_id", snapshot_id)
+    mlflow.log_param("iceberg_snapshot_time", snapshot_time)
+    mlflow.log_param("feature_table", "prod.ml_features.fraud_training")
+    mlflow.sklearn.log_model(model, "model")
+    mlflow.set_tag("training_dataset_version", f"snapshot-{snapshot_id}")
+
+print(f"Trained model with snapshot {snapshot_id} from {snapshot_time}")
+`} language="python" filename="train_with_snapshot.py" />
+
+Now, when you deploy `fraud_v47`, the model registry knows it was trained on **snapshot 8723649182374 of prod.ml_features.fraud_training**. Six months later, you can reproduce the exact training dataset by querying that snapshot.
+
+### Retention and Cleanup
+
+Iceberg snapshots are cheap (they share data files via manifest references), but **not free**. Old snapshots hold references to data files, preventing them from being garbage-collected. You must configure **snapshot retention policies**:
+
+<CodeBlock code={`-- Expire snapshots older than 30 days
+CALL prod.system.expire_snapshots(
+    table => 'ml_features.fraud_training',
+    older_than => TIMESTAMP '2026-05-19 00:00:00',
+    retain_last => 10  -- Always keep last 10 snapshots
+);
+
+-- Run garbage collection to delete unreferenced data files
+CALL prod.system.remove_orphan_files(
+    table => 'ml_features.fraud_training',
+    older_than => TIMESTAMP '2026-05-12 00:00:00'
+);
+`} language="sql" filename="snapshot_retention.sql" />
+
+**Best practice**: retain snapshots for at least as long as models trained on them are in production. If your model deployment cycle is 7 days, retain 30–60 days of snapshots to cover rollbacks and audits.
+
+---
+
+## Label Management: Quality, Workflow, and Bias
+
+Training data is not just features — it's **features + labels**. In supervised learning, label quality directly determines model quality. Garbage labels → garbage predictions.
+
+### Label Sources
+
+Labels come from:
+1. **Implicit feedback** — user clicked, user purchased, user churned (inferred from event data)
+2. **Explicit feedback** — user rated 5 stars, user flagged as spam (direct signal)
+3. **Human annotation** — analysts label medical images, fraud investigators label transactions
+4. **Proxy labels** — future outcome used as ground truth (e.g., transaction confirmed fraudulent 30 days later)
+
+Each source has different quality profiles. Implicit feedback is abundant but noisy. Human annotation is expensive but precise. Proxy labels introduce **label lag** (you must wait 30 days to label fraud).
+
+### Label Quality Dimensions
+
+High-quality labels are:
+- **Accurate** — the label reflects ground truth
+- **Consistent** — different annotators assign the same label to the same example
+- **Complete** — all training examples have labels (no missing labels)
+- **Timely** — labels arrive quickly enough to retrain models before the world changes
+- **Representative** — label distribution matches production distribution (no label shift)
+
+Low-quality labels cause **label noise**, which degrades model accuracy and introduces bias.
+
+### Annotation Workflow Example
+
+For human-annotated datasets (e.g., image classification, content moderation):
+
+<MermaidDiagram chart={`graph LR
+    A[Unlabeled Data<br/>Sample] --> B[Label UI<br/>Annotation Tool]
+    B --> C{Quality Check}
+    C -->|Pass| D[Labeled Dataset<br/>Iceberg Table]
+    C -->|Fail| E[Review Queue]
+    E --> B
+    D --> F[Training Pipeline]
+    
+    subgraph Quality["Quality Assurance"]
+        C
+        E
+        G[Inter-Rater<br/>Agreement]
+    end
+    
+    style B fill:#ebf8ff,stroke:#3182ce
+    style D fill:#e8f5e9,stroke:#66bb6a
+    style Quality fill:#fef5e7,stroke:#f39c12
+`} />
+
+**Inter-rater agreement** measures consistency: if three annotators label the same image, do they agree? Track Cohen's kappa or Fleiss' kappa. If agreement is low (<0.6), your labeling instructions are ambiguous or the task is too subjective.
+
+**Gold-standard examples**: embed known-correct examples into the annotation queue. If an annotator mislabels a gold example, flag them for retraining.
+
+### Annotation Tools
+
+- **Label Studio** (open-source) — supports images, text, audio, video; integrates with ML pipelines
+- **Prodigy** (commercial) — active learning workflow, tight integration with spaCy
+- **Amazon SageMaker Ground Truth** — managed service, supports crowdsourcing
+- **Scale AI**, **Labelbox** — enterprise annotation platforms with managed workforce
+
+Store labeled data in **Iceberg tables** with columns: `example_id`, `features`, `label`, `annotator_id`, `annotation_timestamp`, `label_confidence`. This enables label versioning and lineage tracking.
+
+---
+
+## Data Splits: Train, Validation, Test
+
+After labeling, you partition data into **train/validation/test splits**:
+
+- **Training set** (70–80%) — used to fit model parameters
+- **Validation set** (10–15%) — used to tune hyperparameters and select models
+- **Test set** (10–15%) — held out until final evaluation; simulates unseen production data
+
+### Why Separate Splits Matter
+
+If you tune hyperparameters on the test set, you **overfit to the test set**. Test accuracy becomes an optimistic estimate of production accuracy. The test set must remain untouched until you've frozen the model architecture and hyperparameters.
+
+### Stratified Splitting for Imbalanced Data
+
+In fraud detection, 99% of transactions are legitimate, 1% are fraud. A random split might produce a test set with zero fraud examples. **Stratified splitting** ensures each split has the same class distribution as the overall dataset:
+
+<CodeBlock code={`from sklearn.model_selection import train_test_split
+
+# Stratified split: preserves class distribution
+X_train, X_temp, y_train, y_temp = train_test_split(
+    features, labels, test_size=0.3, stratify=labels, random_state=42
+)
+
+X_val, X_test, y_val, y_test = train_test_split(
+    X_temp, y_temp, test_size=0.5, stratify=y_temp, random_state=42
+)
+
+print(f"Train fraud rate: {y_train.mean():.3f}")
+print(f"Val fraud rate: {y_val.mean():.3f}")
+print(f"Test fraud rate: {y_test.mean():.3f}")
+# All three should print ~0.010 (1%)
+`} language="python" filename="stratified_split.py" />
+
+**Random seed** (`random_state=42`) makes splits reproducible. Always log the random seed with your model metadata.
+
+### Time-Based Splitting for Temporal Data
+
+For time-series or event data, **do not shuffle**. Models must predict the future, not interpolate the past. Use time-based splits:
+
+- Train: Jan 1 – May 31
+- Validation: June 1 – June 30
+- Test: July 1 – July 31
+
+This simulates production deployment: train on past data, predict future outcomes.
+
+---
+
+## Bias Detection at the Data Layer
+
+Bias in ML models often originates in **biased training data**. Before you train, audit the dataset for:
+
+### Class Imbalance
+
+**Definition**: One class dominates the dataset (e.g., 99% legitimate transactions, 1% fraud).
+
+**Impact**: Model learns to predict the majority class exclusively. In fraud detection, a model that always predicts "legitimate" achieves 99% accuracy but catches zero fraud.
+
+**Detection**:
+<CodeBlock code={`import pandas as pd
+
+# Check class distribution
+class_counts = df['label'].value_counts()
+class_ratios = df['label'].value_counts(normalize=True)
+print(class_counts)
+print(class_ratios)
+
+# Flag severe imbalance
+minority_ratio = class_ratios.min()
+if minority_ratio < 0.05:
+    print(f"WARNING: Severe class imbalance ({minority_ratio:.2%} minority class)")
+`} language="python" filename="detect_class_imbalance.py" />
+
+**Mitigation**: Resampling (SMOTE, undersampling majority class), class weighting, or anomaly detection algorithms designed for imbalance.
+
+### Demographic Bias in Features
+
+**Definition**: Protected attributes (race, gender, age) or their proxies (zip code, first name) appear in features.
+
+**Impact**: Model learns discriminatory patterns. A credit model trained on biased historical data perpetuates historical discrimination.
+
+**Detection**:
+- Audit feature importance: do demographic features rank high?
+- Measure disparate impact: does model performance differ across demographic groups?
+- Check for proxy features: zip code correlates with race, first name correlates with gender
+
+**Mitigation**: Drop protected attributes, use fairness-aware training algorithms (e.g., equalized odds), or apply bias correction in post-processing.
+
+### Data Representation Bias
+
+**Definition**: Training data under-represents or over-represents certain populations.
+
+**Example**: A medical image dataset with 90% images from one hospital produces a model that fails on images from other hospitals (distribution shift).
+
+**Detection**:
+<CodeBlock code={`# Check feature distribution across subgroups
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Compare age distribution in training data vs production
+sns.histplot(data=train_df, x='age', label='Training', kde=True)
+sns.histplot(data=prod_df, x='age', label='Production', kde=True)
+plt.legend()
+plt.title('Age Distribution: Training vs Production')
+plt.show()
+
+# Statistical test for distribution shift
+from scipy.stats import ks_2samp
+stat, p_value = ks_2samp(train_df['age'], prod_df['age'])
+if p_value < 0.05:
+    print(f"WARNING: Age distribution differs (p={p_value:.4f})")
+`} language="python" filename="detect_representation_bias.py" />
+
+**Mitigation**: Oversample under-represented groups, use domain adaptation techniques, or collect more diverse training data.
+
+---
+
+## Training-Data Lineage: End-to-End Traceability
+
+The final piece: **lineage from raw data → features → training dataset → model → prediction**.
+
+### The Lineage Chain
+
+<MermaidDiagram chart={`flowchart TD
+    A[Raw Event Log<br/>user_events.transactions] --> B[Feature Pipeline<br/>Spark Job]
+    B --> C[Feature Table<br/>ml_features.fraud_training<br/>Snapshot 8723649182374]
+    C --> D[Training Job<br/>fraud_model_v47]
+    D --> E[Model Registry<br/>MLflow]
+    E --> F[Deployed Model<br/>Production Serving]
+    F --> G[Prediction Request]
+    G --> H[Prediction + Lineage<br/>model: fraud_v47<br/>snapshot: 8723649182374]
+    
+    E -.->|Lineage Query| I[Data Catalog]
+    I -.->|Trace Back| C
+    I -.->|Trace Back| A
+    
+    style C fill:#ebf8ff,stroke:#3182ce
+    style E fill:#fef5e7,stroke:#f39c12
+    style F fill:#e8f5e9,stroke:#66bb6a
+`} />
+
+### Lineage Metadata to Track
+
+For each deployed model, record:
+
+1. **Input data**:
+   - Iceberg table name and snapshot ID
+   - Query used to select training examples
+   - Time range of training data
+   - Number of examples, class distribution
+
+2. **Feature definitions**:
+   - Feature store (Feast) feature views used
+   - Feature transformation code version (Git SHA)
+   - Feature schema (names, types, statistics)
+
+3. **Training process**:
+   - Training code version (Git SHA)
+   - Hyperparameters (learning rate, tree depth, etc.)
+   - Training duration, hardware used
+   - Validation metrics (accuracy, AUC, F1)
+
+4. **Model artifact**:
+   - Model binary (serialized model file)
+   - Model framework and version (XGBoost 1.7.0, PyTorch 2.0)
+   - Model signature (input/output schema)
+
+5. **Deployment**:
+   - Deployment timestamp, environment (staging/prod)
+   - Serving infrastructure version
+   - Monitoring dashboard links
+
+### Lineage Enforcement
+
+**Automated lineage capture** in the training pipeline:
+
+<CodeBlock code={`import mlflow
+import json
+from datetime import datetime
+
+def log_training_lineage(
+    snapshot_id: int,
+    feature_table: str,
+    feature_views: list,
+    git_sha: str,
+    training_query: str,
+    train_size: int,
+    val_size: int,
+    test_size: int,
+    class_distribution: dict,
+):
+    """Log comprehensive lineage metadata to MLflow."""
+    with mlflow.start_run() as run:
+        # Data lineage
+        mlflow.log_param("iceberg_snapshot_id", snapshot_id)
+        mlflow.log_param("feature_table", feature_table)
+        mlflow.log_param("train_size", train_size)
+        mlflow.log_param("val_size", val_size)
+        mlflow.log_param("test_size", test_size)
+        mlflow.log_dict(class_distribution, "class_distribution.json")
+        
+        # Feature lineage
+        mlflow.log_param("feature_views", ",".join(feature_views))
+        mlflow.log_param("git_sha", git_sha)
+        
+        # Training query for reproducibility
+        mlflow.log_text(training_query, "training_query.sql")
+        
+        # Timestamp
+        mlflow.log_param("training_timestamp", datetime.utcnow().isoformat())
+        
+        # Tag for easy search
+        mlflow.set_tag("lineage_version", "v2")
+        mlflow.set_tag("snapshot_id", str(snapshot_id))
+
+# Usage
+log_training_lineage(
+    snapshot_id=8723649182374,
+    feature_table="prod.ml_features.fraud_training",
+    feature_views=["transaction_features", "user_features"],
+    git_sha="a3f5e29",
+    training_query="SELECT * FROM fraud_training WHERE ts < '2026-06-15'",
+    train_size=1_000_000,
+    val_size=150_000,
+    test_size=150_000,
+    class_distribution={"legitimate": 0.99, "fraud": 0.01}
+)
+`} language="python" filename="log_lineage.py" />
+
+Now, when a regulator asks "What data was used to train the model that flagged this transaction?", you query MLflow:
+
+```python
+run = mlflow.get_run(run_id)
+snapshot_id = run.data.params["iceberg_snapshot_id"]
+feature_table = run.data.params["feature_table"]
+
+# Reconstruct exact training dataset
+training_data = spark.sql(f"""
+    SELECT * FROM {feature_table}
+    VERSION AS OF {snapshot_id}
+""")
+```
+
+This is **full reproducibility**: from prediction back to raw training examples.
+
+---
+
+## Decision Framework: When Dataset Versioning Matters Most
+
+Not every ML use case requires Iceberg snapshot tracking. Use this framework:
+
+### High Priority (Must Have)
+
+- **Regulated domains** (finance, healthcare) — auditors demand lineage
+- **High-stakes predictions** (credit scoring, medical diagnosis) — you must explain why a model made a decision
+- **Models retrained frequently** (daily/weekly) — you need to debug performance regressions
+- **Models with long production lifetimes** (deployed for 6+ months) — you may need to reproduce training years later
+
+### Medium Priority (Nice to Have)
+
+- **Experimentation-heavy teams** — data scientists compare models trained on different dataset versions
+- **Collaborative ML** — multiple teams share the same feature tables, need to coordinate versions
+- **Models with seasonal patterns** — you want to retrain on the same calendar period each year
+
+### Low Priority (Optional)
+
+- **One-off models** (train once, deploy forever) — reproducibility less critical
+- **Rapid prototyping** (experiments, proofs-of-concept) — versioning overhead slows iteration
+- **Models trained on static datasets** (dataset never changes) — snapshot tracking redundant
+
+---
+
+## Failure Modes and How to Avoid Them
+
+### Failure Mode 1: Label Leakage
+
+**What happens**: Training data includes features derived from the label or future information unavailable at prediction time.
+
+**Example**: Fraud model trained on `transaction_disputed_within_30_days` (a label proxy) but also includes `days_until_dispute` as a feature. At prediction time, `days_until_dispute` is unknown — the model fails.
+
+**How to avoid**: Audit features for **temporal leakage**. Ensure all features use only information available before the prediction timestamp. Use **point-in-time correctness** (Module 8 Lesson 2).
+
+### Failure Mode 2: Biased Data Splits
+
+**What happens**: Test set is not representative of production data. Model performs well on test, poorly in production.
+
+**Example**: You split data randomly, but production data has a time trend. Test set contains examples from 2025; production is 2026. Model fails on distribution shift.
+
+**How to avoid**: Use **time-based splits** for temporal data. For non-temporal data, check that test set demographics match production.
+
+### Failure Mode 3: Lineage Gaps
+
+**What happens**: Lineage metadata is incomplete or inaccurate. You cannot trace a prediction back to training data.
+
+**Example**: Training script logs snapshot ID to MLflow, but a later retraining overwrites the metadata without incrementing the model version. You lose lineage for the first model.
+
+**How to avoid**: **Never overwrite lineage metadata**. Use immutable model versioning (MLflow model versions, not run IDs). Automate lineage capture in training pipelines — manual logging invites human error.
+
+### Failure Mode 4: Snapshot Expiration
+
+**What happens**: You expire Iceberg snapshots too aggressively. Six months later, you try to reproduce a model, but the snapshot is gone.
+
+**Example**: Retention policy expires snapshots older than 30 days, but model deployments last 90 days. You cannot reproduce a deployed model.
+
+**How to avoid**: **Align snapshot retention with model deployment lifetime**. If models deploy for 90 days, retain snapshots for at least 90 days (better: 180 days for rollback margin). Pin critical snapshots indefinitely (tag them, exclude from expiration).
+
+---
+
+## Key Takeaways
+
+**Dataset versioning with Iceberg snapshots** makes training data reproducible. Log the snapshot ID with every trained model, and you can reconstruct the exact dataset months or years later.
+
+**Label quality determines model quality**. Invest in annotation workflows, measure inter-rater agreement, and audit for label noise and bias.
+
+**Data splits must reflect production conditions**. Use stratified splits for imbalanced data, time-based splits for temporal data, and always hold out a test set until final evaluation.
+
+**Bias detection starts at the data layer**. Check for class imbalance, demographic bias in features, and data representation gaps before training.
+
+**End-to-end lineage** — from raw events to predictions — is non-negotiable for regulated domains and high-stakes ML. Automate lineage capture in training pipelines and store metadata in the model registry.
+
+When you combine dataset versioning, label management, and lineage tracking, you transform ML from a black-box process into an **auditable, reproducible, debuggable system**. This is the foundation for trustworthy AI.

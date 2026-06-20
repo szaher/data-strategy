@@ -1,0 +1,574 @@
+---
+title: "Governance, Privacy & Policy Enforcement"
+quiz:
+  - question: "What is the primary challenge with PII governance in modern data platforms?"
+    options:
+      - "PII is always encrypted"
+      - "PII must be identified, protected, and its usage tracked across data flows (correct)"
+      - "PII is not stored in modern systems"
+      - "PII can only be accessed by administrators"
+    correctIndex: 1
+  - question: "Why is retention and deletion propagation important?"
+    options:
+      - "It helps optimize storage performance"
+      - "It ensures compliance by removing data from all copies when required (correct)"
+      - "It speeds up analytical queries"
+      - "It prevents accidental overwrites"
+    correctIndex: 1
+  - question: "How should policy enforcement work across lakehouse, APIs, and vector retrieval?"
+    options:
+      - "Each system enforces policies independently"
+      - "Policies should be defined centrally and enforced consistently at all data access points (correct)"
+      - "Policies are only needed for APIs"
+      - "Vector databases don't require policy enforcement"
+    correctIndex: 1
+---
+
+## The Problem: Ungoverned Data Access
+
+You've built a catalog, established lineage, and deployed quality checks. Data can flow freely across your lakehouse, feature pipelines, and vector stores. Teams can discover tables, run queries, and build models. But **governance** is more than discovery — it's **enforcing who can see what, when, and for what purpose**.
+
+Consider a simple scenario: a user requests deletion under GDPR. Your system must:
+
+- Remove rows from the lakehouse table
+- Purge event logs in Kafka or Kinesis
+- Clear feature store values
+- Delete embeddings from vector indexes
+- Revoke cached query results
+- Remove derived aggregates and snapshots
+
+If deletion is not **propagated** across all copies, you are not compliant. If PII is not **masked** for analysts who don't need it, you expose the organization to risk. If data can flow across regional boundaries without enforcement, you violate residency requirements.
+
+Governance is the **policy enforcement layer** that sits on top of your infrastructure IAM. Infrastructure IAM (Module 2) controls **who can deploy resources or run pipelines**. Data governance controls **who can read which rows and columns, based on tags, roles, and data sensitivity**.
+
+Without systematic enforcement, you get:
+
+- **Access drift** — permissions granted but never revoked, temporary access that becomes permanent
+- **Shadow PII** — sensitive fields copied into derived tables without masking, embedded in model training data
+- **Compliance blind spots** — regulations require deletion, but no mechanism exists to find and remove all copies
+- **Policy as documentation** — rules written in wiki pages but not enforced by code
+
+This lesson presents the **enforcement architecture** that makes governance real — not aspirational.
+
+---
+
+## Access Control at the Data Layer
+
+Infrastructure IAM says "Alice can run queries against the lakehouse." Data-layer access control says "Alice can see orders from her region, but not customer emails."
+
+### Row-Level Security
+
+**Row-level security (RLS)** filters query results based on user identity and attributes. In Trino, you define RLS rules as SQL predicates that are automatically injected into WHERE clauses.
+
+<CodeBlock code={`-- Trino row filter for regional access control
+CREATE ROW FILTER orders_region_filter ON lakehouse.sales.orders
+FOR analyst_role
+AS region = current_user_region();
+
+-- When an analyst queries:
+SELECT * FROM lakehouse.sales.orders;
+
+-- Trino rewrites it as:
+SELECT * FROM lakehouse.sales.orders
+WHERE region = current_user_region();
+`} language="sql" filename="trino-rls.sql" />
+
+The `current_user_region()` function reads from a user attributes table or LDAP metadata. Every query is automatically scoped to the user's region — no need to remember to add the filter.
+
+### Column-Level Security
+
+**Column-level security** hides specific columns based on role. A data scientist sees `order_id, product_id, quantity`, but not `customer_email, customer_phone`.
+
+<CodeBlock code={`-- Trino column mask for PII fields
+CREATE COLUMN MASK pii_mask ON lakehouse.sales.orders.customer_email
+FOR analyst_role
+RETURNS 'REDACTED';
+
+CREATE COLUMN MASK phone_mask ON lakehouse.sales.orders.customer_phone
+FOR analyst_role
+RETURNS NULL;
+`} language="sql" filename="trino-column-mask.sql" />
+
+When an analyst queries `SELECT * FROM orders`, the result includes `customer_email` as `'REDACTED'` and `customer_phone` as `NULL`. The schema is visible, but the data is not.
+
+### Tag-Based Security
+
+Tag-based access control (TBAC) is more flexible than role-based access control (RBAC). Instead of granting permissions to individual tables, you **tag** columns with sensitivity labels (`pii`, `confidential`, `public`) and grant permissions based on tags.
+
+**Example policy:**
+
+- Analysts can see columns tagged `public` or `confidential`
+- Data scientists can see `public`, `confidential`, and `pii` in aggregated form (counts, averages) but not raw values
+- Compliance officers can see everything
+
+Tags propagate through lineage. If a derived table is created from a column tagged `pii`, the derived column inherits the tag unless explicitly overridden.
+
+**Tag enforcement in Trino:**
+
+<CodeBlock code={`-- Tag column as PII in Hive Metastore or Iceberg
+ALTER TABLE lakehouse.sales.orders
+SET COLUMN customer_email TAGS ('pii');
+
+-- Policy: mask PII for analysts
+CREATE COLUMN MASK auto_pii_mask ON *
+FOR analyst_role
+WHERE has_tag(column, 'pii')
+RETURNS 'REDACTED';
+`} language="sql" filename="tag-based-masking.sql" />
+
+This is **policy as code** — the masking rule is defined once and applies to all columns tagged `pii`, across all tables.
+
+---
+
+## PII Detection and Masking
+
+PII doesn't always arrive with a label. A CSV upload might contain phone numbers in a column named `contact_info`. An LLM-generated dataset might include synthetic addresses that look real.
+
+### Automated PII Scanning
+
+Use regex patterns, named entity recognition (NER), or specialized libraries (e.g., Presidio, AWS Macie) to scan new data for:
+
+- Email addresses
+- Phone numbers
+- Credit card numbers
+- Social Security Numbers
+- IP addresses
+- Street addresses
+- Names (via NER)
+
+<CodeBlock code={`from presidio_analyzer import AnalyzerEngine
+from presidio_anonymizer import AnonymizerEngine
+
+analyzer = AnalyzerEngine()
+anonymizer = AnonymizerEngine()
+
+text = "Contact John Doe at john.doe@example.com or 555-1234"
+
+# Detect PII
+results = analyzer.analyze(text=text, language='en')
+
+# results:
+# [type: PERSON, start: 8, end: 16, score: 0.85,
+#  type: EMAIL_ADDRESS, start: 20, end: 41, score: 1.0,
+#  type: PHONE_NUMBER, start: 45, end: 53, score: 0.75]
+
+# Mask detected PII
+anonymized = anonymizer.anonymize(text=text, analyzer_results=results)
+print(anonymized.text)
+# Output: "Contact <PERSON> at <EMAIL_ADDRESS> or <PHONE_NUMBER>"
+`} language="python" filename="pii-detection.py" />
+
+Run this as a **pre-ingestion step** — scan incoming data, tag columns that contain PII, and apply masking policies before data lands in the lakehouse.
+
+### Dynamic Masking vs Static Masking
+
+**Dynamic masking** applies transformations at query time. The raw data remains unchanged on disk, but queries return masked values based on the user's role.
+
+- **Pro:** One copy of data, different views for different roles
+- **Con:** Query-time overhead; masking logic must be implemented in every query engine (Trino, Spark, API layer)
+
+**Static masking** writes masked data to a separate table or partition.
+
+- **Pro:** No query-time overhead; simpler to enforce
+- **Con:** Duplicates data; masking rules are baked in, not dynamic
+
+**Recommendation:** Use **dynamic masking** for interactive analytics (Trino, Presto) and **static masking** for bulk exports or model training datasets.
+
+### Tokenization
+
+Tokenization replaces sensitive values with random tokens, stored in a separate secure vault. The lakehouse contains tokens; the vault maps tokens back to real values.
+
+**Example:**
+
+| customer_id | email_token       |
+|-------------|-------------------|
+| 1001        | `tok_a3f9d2c1`    |
+| 1002        | `tok_7b8e4f3a`    |
+
+A privileged service can call the vault to detokenize, but analysts querying the lakehouse see only tokens.
+
+---
+
+## Data Residency and Cross-Border Transfers
+
+**Data residency** means data must be stored in a specific geographic region. GDPR requires EU citizen data to remain in the EU unless adequate safeguards are in place. China's Personal Information Protection Law (PIPL) restricts cross-border transfers.
+
+### Enforcement Points
+
+1. **Storage partitioning:** Use Iceberg's partitioning to store EU data in S3 EU buckets and US data in S3 US buckets.
+
+<CodeBlock code={`CREATE TABLE lakehouse.sales.orders (
+  order_id BIGINT,
+  customer_id BIGINT,
+  region STRING,
+  order_date DATE,
+  amount DECIMAL(10,2)
+)
+PARTITIONED BY (region)
+LOCATION 's3://lakehouse-{region}/orders/';
+`} language="sql" filename="partitioned-residency.sql" />
+
+When data is written with `region='eu'`, it lands in `s3://lakehouse-eu/orders/region=eu/`. Storage is physically separated.
+
+2. **Query-time enforcement:** If a US analyst queries EU data, reject the query or return masked results.
+
+3. **Cross-region replication controls:** Disable automatic replication across regions. If replication is required for disaster recovery, ensure it complies with data transfer agreements (e.g., EU-US Data Privacy Framework).
+
+---
+
+## GDPR Retention and Deletion Propagation
+
+Regulations impose **retention limits** (how long data can be kept) and **deletion rights** (users can request erasure). The hard part is **propagation** — ensuring deletion happens everywhere.
+
+### The Deletion Challenge
+
+Data flows through many systems:
+
+1. **Raw ingestion:** Kafka topic or Kinesis stream
+2. **Lakehouse staging:** Raw Iceberg table
+3. **Transformed tables:** Cleaned, joined, aggregated
+4. **Feature store:** Pre-computed features for ML models
+5. **Vector embeddings:** User profiles embedded for semantic search
+6. **Model training datasets:** Static snapshots used to train models
+7. **Cached query results:** Materialized views or BI dashboards
+
+A deletion request must propagate across all of these. If you delete from the lakehouse but not from embeddings, a user's data is still retrievable via vector search.
+
+### Deletion Propagation Flowchart
+
+<MermaidDiagram chart={`flowchart TD
+    A[Deletion Request] --> B[Identify User ID or PII Key]
+    B --> C[Query Lineage Graph]
+    C --> D{Data Exists in Which Systems?}
+    
+    D --> E1[Lakehouse Tables]
+    D --> E2[Event Streams]
+    D --> E3[Feature Store]
+    D --> E4[Vector Indexes]
+    D --> E5[Cached Results]
+    
+    E1 --> F1[DELETE FROM lakehouse.orders WHERE customer_id=X]
+    E2 --> F2[Tombstone Event in Kafka Compacted Topic]
+    E3 --> F3[Feature Store API: delete_user_features]
+    E4 --> F4[Vector DB: delete_by_metadata customer_id=X]
+    E5 --> F5[Invalidate Cached Views]
+    
+    F1 --> G[Log Deletion in Audit Trail]
+    F2 --> G
+    F3 --> G
+    F4 --> G
+    F5 --> G
+    
+    G --> H[Mark Request as Complete]
+    
+    style A fill:#fef0f0,stroke:#cc0000
+    style H fill:#e0f0e0,stroke:#00cc00
+`} />
+
+**Key steps:**
+
+1. **Identify all copies:** Use lineage to find every table, view, and dataset derived from the source.
+2. **Delete from each system:** Execute system-specific deletion commands (SQL DELETE, vector DB API, cache invalidation).
+3. **Verify deletion:** Re-query to confirm data is gone.
+4. **Audit log:** Record what was deleted, when, and by whom.
+
+### Retention Enforcement
+
+Define retention policies as metadata tags or catalog attributes:
+
+<CodeBlock code={`{
+  "table": "lakehouse.logs.web_events",
+  "retention_days": 90,
+  "deletion_policy": "hard_delete"
+}
+`} language="json" filename="retention-policy.json" />
+
+Run a **retention enforcement job** (e.g., Airflow DAG) that:
+
+1. Queries the catalog for tables with `retention_days` set
+2. Deletes partitions older than the retention threshold
+3. Logs deletions for compliance audit
+
+---
+
+## Policy-as-Code with Open Policy Agent (OPA)
+
+**Open Policy Agent (OPA)** is a declarative policy engine. You write policies in **Rego**, a logic programming language, and OPA evaluates access requests against those policies.
+
+### OPA Architecture
+
+<MermaidDiagram chart={`graph LR
+    A[API Request] --> B[Authorization Middleware]
+    B --> C{OPA Policy Engine}
+    C --> D[Rego Policy Files]
+    C --> E[User Attributes from LDAP]
+    C --> F[Data Tags from Catalog]
+    
+    C --> G{Allow or Deny?}
+    G -->|Allow| H[Execute Request]
+    G -->|Deny| I[Return 403 Forbidden]
+    
+    style C fill:#ebf8ff,stroke:#3182ce
+    style D fill:#fef0f0,stroke:#cc0000
+    style G fill:#fef9e0,stroke:#cc9900
+`} />
+
+### Example Rego Policy
+
+<CodeBlock code={`package lakehouse.access
+
+# Default: deny all access
+default allow = false
+
+# Allow if user has 'admin' role
+allow {
+    input.user.role == "admin"
+}
+
+# Allow if user is querying their own region
+allow {
+    input.user.region == input.query.region
+}
+
+# Allow if data is tagged 'public'
+allow {
+    input.table.tags[_] == "public"
+}
+
+# Deny if data is tagged 'pii' and user is not in compliance_officer group
+deny {
+    input.table.tags[_] == "pii"
+    not user_in_group(input.user, "compliance_officer")
+}
+
+user_in_group(user, group) {
+    user.groups[_] == group
+}
+`} language="rego" filename="lakehouse-policy.rego" />
+
+**How it works:**
+
+- A query request arrives at the API or query engine
+- The authorization middleware calls OPA with `input` (user, query details, table metadata)
+- OPA evaluates all `allow` and `deny` rules
+- If any `deny` rule matches, access is denied
+- If at least one `allow` rule matches and no `deny` rule matches, access is granted
+- Otherwise, access is denied by default
+
+### Benefits of Policy-as-Code
+
+- **Versioned in Git:** Policies are code — use code review, CI/CD, and rollback
+- **Testable:** Write unit tests for policies (`test_admin_can_access_all`, `test_analyst_cannot_see_pii`)
+- **Reusable:** One policy applies across lakehouse, APIs, and vector retrieval
+- **Auditable:** Every decision is logged with input context
+
+---
+
+## Enforcement Points Across the Platform
+
+Policies must be enforced at **every data access point**. Missing one creates a bypass.
+
+### 1. Lakehouse Query Engines (Trino, Spark)
+
+- **Row-level security:** Inject filters based on user attributes
+- **Column-level masking:** Redact or hash sensitive columns
+- **OPA integration:** Call OPA before executing query; deny if policy fails
+
+### 2. APIs and Microservices
+
+- **Authorization middleware:** Every API endpoint calls OPA before returning data
+- **Field-level filtering:** Even if a query is allowed, redact fields the user shouldn't see
+
+<CodeBlock code={`from flask import Flask, request, jsonify
+from opa_client import OPAClient
+
+app = Flask(__name__)
+opa = OPAClient("http://opa:8181")
+
+@app.route('/api/orders/<int:order_id>')
+def get_order(order_id):
+    user = get_current_user(request)
+    order = db.query("SELECT * FROM orders WHERE order_id = ?", order_id)
+    
+    # Check OPA policy
+    decision = opa.evaluate(
+        policy="lakehouse.access",
+        input={
+            "user": {"id": user.id, "role": user.role, "region": user.region},
+            "resource": {"type": "order", "id": order_id, "region": order["region"]}
+        }
+    )
+    
+    if not decision["allow"]:
+        return jsonify({"error": "Forbidden"}), 403
+    
+    # Redact PII fields if user is not authorized
+    if "pii" in order["tags"] and user.role != "compliance_officer":
+        order["customer_email"] = "REDACTED"
+        order["customer_phone"] = "REDACTED"
+    
+    return jsonify(order)
+`} language="python" filename="api-authorization.py" />
+
+### 3. Vector Retrieval and Embedding Stores
+
+Vector databases (Pinecone, Weaviate, Qdrant) often lack built-in RBAC. Enforcement must happen in the application layer:
+
+- **Metadata filtering:** Store `user_id`, `region`, `tags` as metadata alongside embeddings; filter results based on user permissions
+- **PII-aware search:** Exclude embeddings derived from PII unless the user is authorized
+- **Corpus access control:** Partition vector indexes by region or sensitivity; route queries to the appropriate index
+
+<CodeBlock code={`# Query vector DB with access control
+results = vector_db.query(
+    vector=query_embedding,
+    filter={
+        "region": current_user.region,  # Only search user's region
+        "tags": {"$nin": ["pii"]} if not user_has_pii_access(current_user) else {}
+    },
+    top_k=10
+)
+`} language="python" filename="vector-access-control.py" />
+
+### 4. Model Training Pipelines
+
+ML models trained on PII must be governed:
+
+- **Training data access logs:** Record which datasets were used to train which models
+- **Model cards:** Document data sources, including whether PII was included
+- **Inference-time auditing:** Log which data influenced which prediction (hard, but required for high-stakes decisions)
+
+If a user requests deletion, you must:
+
+- Retrain models that included their data (expensive, often impractical)
+- Document that the model was trained on now-deleted data and assess risk
+- Retire the model if the deletion materially affects its behavior
+
+---
+
+## AI and Governance Cross-Cuts
+
+### PII in Training Data
+
+Embedding models trained on customer support logs may memorize PII. A vector search for "similar customer issues" might surface raw emails containing names and addresses.
+
+**Mitigation:**
+
+- Train embeddings on **masked data** — replace PII with tokens before embedding
+- Use **differential privacy** during training to prevent memorization
+- Filter training data to exclude high-PII fields
+
+### Auditability of Model Outputs
+
+A model recommends a product to a user. Why? Regulations like GDPR's "right to explanation" require you to trace the decision back to input data.
+
+**Approach:**
+
+- **Feature logging:** Log which features were used in the prediction
+- **Lineage for features:** Trace features back to source tables
+- **Explainability tools:** Use SHAP or LIME to identify which features influenced the output
+- **Deletion impact assessment:** If a user's data is deleted, identify all models that used it and assess whether they need retraining
+
+This is **hard** — most ML systems don't track data-to-prediction lineage. Start by logging feature values and model versions; extend to full lineage as maturity increases.
+
+---
+
+## Learner Artifact: Trust and Policy Architecture
+
+**Scenario:** Your recurring lakehouse platform (Module 2–6) now handles customer orders, including PII (email, phone, address). EU customers are subject to GDPR; US customers are subject to CCPA. Data scientists need aggregated views; analysts need raw data but not PII.
+
+**Design:**
+
+1. **Tag PII columns** in the catalog (`customer_email`, `customer_phone`, `customer_address` → `pii` tag)
+2. **Partition by region** (`region=eu`, `region=us`)
+3. **Row-level security:** Analysts can only see orders from their own region
+4. **Column masking:** Analysts see `customer_email` as `REDACTED`; data scientists see aggregates only
+5. **OPA policy:** Define access rules in Rego; enforce in Trino and API middleware
+6. **Deletion propagation:** Build a workflow that deletes from lakehouse, feature store, and vector embeddings when a user requests erasure
+7. **Audit log:** Record every access attempt, policy decision, and deletion event
+
+Diagram the **enforcement points** (Trino, API, vector DB) and the **deletion propagation flow** (request → lineage query → multi-system deletion → audit).
+
+This completes your **trust plane** — catalog (L04), quality (L02), lineage (L03), and now **governance** (L05).
+
+---
+
+## Decision Framework: Where to Enforce Policies
+
+**Option 1: Catalog-only governance**
+
+- Policies are documented in the catalog as metadata
+- **Pro:** Central source of truth
+- **Con:** Not enforced — users can bypass by querying storage directly
+
+**Option 2: Query engine enforcement (Trino RLS, Spark filters)**
+
+- Policies enforced at the query layer
+- **Pro:** Works for SQL analytics
+- **Con:** Doesn't cover APIs, vector retrieval, or direct S3 access
+
+**Option 3: Multi-layer enforcement (recommended)**
+
+- Policies defined centrally (OPA, catalog metadata)
+- Enforced at every access point (Trino, API middleware, vector DB application layer, S3 bucket policies)
+- **Pro:** Defense in depth — no single bypass
+- **Con:** More complex to implement and test
+
+**When to use each:**
+
+- Start with **query engine enforcement** for analytics use cases
+- Add **API enforcement** when exposing data via microservices
+- Add **vector DB filtering** when launching semantic search or RAG
+- Add **S3 bucket policies** to prevent direct storage access
+
+Test enforcement by attempting to bypass each layer — can a user who shouldn't see EU data access it via API? Via Trino? Via direct S3 read?
+
+---
+
+## Common Failure Modes
+
+### 1. Catalog-Only Governance
+
+Policies are documented but not enforced. Users query storage directly or use an API that doesn't call OPA.
+
+**Fix:** Enforce at every access point; disable direct storage access via IAM policies.
+
+### 2. Deletion Without Propagation
+
+A deletion workflow deletes from the primary lakehouse table but not from derived tables, feature stores, or embeddings.
+
+**Fix:** Use lineage to identify all downstream copies; automate deletion across all systems.
+
+### 3. PII in Embeddings
+
+Training data is masked before analytics, but embeddings are trained on raw data. PII leaks into vector search results.
+
+**Fix:** Mask or tokenize data before embedding; filter PII from training corpora.
+
+### 4. Policy Drift
+
+Policies are updated in the catalog but not propagated to enforcement points. OPA rules become stale.
+
+**Fix:** Treat policies as code — version in Git, deploy via CI/CD, test in staging before production.
+
+### 5. Incomplete Access Logs
+
+Access is logged for Trino queries but not for API calls or vector retrieval.
+
+**Fix:** Centralize access logging; emit events from every enforcement point; aggregate in a SIEM or data warehouse.
+
+---
+
+## Bridge to Module 8: Enabling AI-Driven Applications
+
+You now have a **governed, trusted data platform**:
+
+- Module 2: Infrastructure and compute orchestration
+- Module 3: Scalable ingestion and streaming
+- Module 4: Storage (lakehouse, vector, time-series)
+- Module 5: Processing (batch, stream, orchestration)
+- Module 6: Serving (APIs, caching, real-time inference)
+- Module 7: Trust (quality, lineage, catalog, governance)
+
+Module 8 applies this platform to **AI-driven applications** — RAG, agentic workflows, multi-modal reasoning, and production ML systems that are **compliant, explainable, and trustworthy**.
+
+The governance you've built here ensures that when an LLM retrieves customer data to answer a question, it respects access controls, masks PII, and logs every access for audit.

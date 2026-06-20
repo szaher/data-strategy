@@ -1,0 +1,400 @@
+---
+title: "Data Quality, Observability & Testing"
+quiz:
+  - question: "What is the primary danger of quality checks that run outside your pipeline?"
+    options:
+      - "They consume too many compute resources"
+      - "Bad data can reach production before checks detect it (correct)"
+      - "They cannot detect schema changes"
+      - "They are more expensive to operate"
+    correctIndex: 1
+  - question: "What does a freshness SLA measure?"
+    options:
+      - "How fast queries run against the data"
+      - "How many rows are added per hour"
+      - "The maximum acceptable delay between data creation and availability (correct)"
+      - "The average age of historical data"
+    correctIndex: 2
+  - question: "Which failure mode is most difficult to detect with standard monitoring?"
+    options:
+      - "Pipeline crashes with an error message"
+      - "Silent data corruption where values are wrong but schema is valid (correct)"
+      - "Schema drift that breaks downstream queries"
+      - "Complete absence of new data"
+    correctIndex: 1
+---
+
+## The Silent Corruption Problem
+
+Your pipeline runs. No errors. No warnings. Dashboards show green. But the data is **wrong**.
+
+This is **silent data corruption** — the most dangerous failure mode in data systems. The pipeline succeeded technically but failed semantically. Values are out of range, distributions have shifted, or critical rows are missing. Traditional monitoring sees success because the code executed without exception.
+
+Silent corruption happens because most data systems monitor **operations** (did the job run?) but not **outcomes** (is the data correct?). You get alerts when pipelines crash but not when they produce garbage.
+
+The solution is **quality observability** — treating data correctness as a first-class metric, monitored continuously alongside freshness and volume. You embed quality gates directly in pipelines so bad data cannot reach production. You define expectations for every dataset and fail the pipeline when those expectations are violated.
+
+This lesson covers the **default architecture** for data quality: what to check, when to check it, which frameworks to use, and the failure modes that will destroy trust if you don't address them.
+
+---
+
+## Great Expectations as the Reference Framework
+
+**Great Expectations** is the canonical open-source framework for data quality. It is not the only option, but it demonstrates the **right pattern** — codifying expectations as testable assertions and making quality verification programmatic rather than manual.
+
+Great Expectations introduces three core concepts:
+
+1. **Expectations** — assertions about your data (e.g., "column `revenue` must be positive", "column `email` must match a regex pattern", "`order_date` must not be null")
+2. **Validation Results** — structured pass/fail outputs when you test expectations against data
+3. **Data Docs** — auto-generated reports showing which expectations passed, which failed, and sample rows that violated them
+
+The framework supports over 300 built-in expectations and allows you to write custom ones. You organize expectations into **Expectation Suites** — one suite per dataset — and run them as **Checkpoints** in your pipeline.
+
+**Soda** is another popular framework that uses a YAML-based syntax rather than Python. It is conceptually similar but optimized for SQL-native teams. Soda checks are more concise but less expressive than Great Expectations for complex logic.
+
+**Monte Carlo** and **Metaplane** are commercial SaaS platforms that automate quality monitoring using ML-based anomaly detection. They infer expected distributions and alert when data deviates. These tools are powerful but expensive and black-box — you do not control the alerting logic.
+
+For most teams, the default is **Great Expectations** because it is:
+
+- Open-source and free
+- Python-native (integrates with any orchestrator)
+- Extensible (write custom expectations)
+- Produces versioned, auditable quality reports
+
+You should use Soda if your team writes SQL but not Python, or if you want simpler YAML-based configuration. You should use Monte Carlo or Metaplane if you have budget and want automated anomaly detection without writing checks manually.
+
+---
+
+## Quality Checks as an Integrated Asset-Health System
+
+Data quality is not a single dimension. You must monitor:
+
+1. **Freshness** — is the data recent enough to be useful?
+2. **Volume** — are we receiving the expected number of rows?
+3. **Schema** — have column types, names, or constraints changed unexpectedly?
+4. **Value distributions** — are numeric ranges, categorical frequencies, and null rates within normal bounds?
+5. **Custom business rules** — domain-specific invariants (e.g., "total debits must equal total credits", "every order must have a valid customer ID")
+
+These dimensions are **not independent**. A schema change often causes value distribution shifts. A freshness SLA breach may signal upstream volume drops. You cannot treat quality, freshness, and volume as separate concerns — they must be part of a **unified asset-health system**.
+
+The architecture looks like this:
+
+<MermaidDiagram chart={`graph TD
+    A[Data Source] --> B[Ingestion Pipeline]
+    B --> C{Quality Gate}
+    C -->|Pass| D[Staging Table]
+    C -->|Fail| E[Dead Letter Queue]
+    D --> F{Schema Check}
+    F -->|Match| G[Production Table]
+    F -->|Drift| H[Schema Alert]
+    G --> I[Quality Observability Dashboard]
+    H --> I
+    E --> I
+    
+    subgraph Gate["Quality Gate"]
+        C
+    end
+    
+    subgraph Monitoring["Observability Layer"]
+        I
+    end
+    
+    style Gate fill:#fef5e7,stroke:#f39c12
+    style Monitoring fill:#ebf8ff,stroke:#3182ce
+`} />
+
+The **Quality Gate** is the critical component. It runs **before** data reaches production. If expectations fail, the pipeline halts and routes bad data to a **Dead Letter Queue** for debugging. This prevents silent corruption — you cannot accidentally promote bad data.
+
+The **Schema Check** detects **schema drift** — unexpected changes in column names, types, constraints, or the presence of new columns. Schema drift is common when upstream systems change without notice. If undetected, it breaks downstream queries and models.
+
+The **Observability Dashboard** aggregates freshness SLAs, volume trends, expectation pass rates, and schema drift alerts into a single view. Teams monitor this dashboard to detect degradation before it becomes a crisis.
+
+---
+
+## Quality Gates Embedded in Pipelines
+
+The most important architectural decision is **where quality checks run**. There are two patterns:
+
+1. **Post-pipeline monitoring** — quality checks run after data is written to production tables (bad pattern)
+2. **In-pipeline quality gates** — quality checks run before data is written, and failures halt the pipeline (default pattern)
+
+Post-pipeline monitoring is **reactive**. Bad data reaches production first, then you get an alert. By the time you notice, dashboards are wrong and downstream teams are making decisions on corrupted data. You must now issue retractions, reprocess corrected data, and rebuild trust.
+
+In-pipeline quality gates are **preventive**. Bad data never reaches production. The pipeline fails at the quality gate, logs detailed diagnostics, and routes bad rows to a quarantine table for analysis. Downstream teams never see corruption.
+
+Here is a Great Expectations checkpoint running inside a pipeline:
+
+<CodeBlock code={`import great_expectations as gx
+from great_expectations.checkpoint import SimpleCheckpoint
+
+# Initialize Great Expectations context
+context = gx.get_context()
+
+# Define the checkpoint configuration
+checkpoint_config = {
+    "name": "orders_quality_gate",
+    "config_version": 1.0,
+    "class_name": "SimpleCheckpoint",
+    "validations": [
+        {
+            "batch_request": {
+                "datasource_name": "staging_db",
+                "data_connector_name": "default_inferred_data_connector_name",
+                "data_asset_name": "orders",
+            },
+            "expectation_suite_name": "orders_suite",
+        }
+    ],
+    "action_list": [
+        {
+            "name": "store_validation_result",
+            "action": {"class_name": "StoreValidationResultAction"},
+        },
+        {
+            "name": "update_data_docs",
+            "action": {"class_name": "UpdateDataDocsAction"},
+        },
+    ],
+}
+
+# Add checkpoint to context
+checkpoint = SimpleCheckpoint(**checkpoint_config)
+context.add_checkpoint(**checkpoint_config)
+
+# Run the checkpoint (this is the quality gate)
+result = checkpoint.run()
+
+# Fail the pipeline if validation fails
+if not result["success"]:
+    raise ValueError(f"Data quality check failed: {result}")
+
+# If we reach here, data passed all expectations
+# Now safe to promote to production
+promote_to_production("orders")
+`} language="python" filename="quality_gate.py" />
+
+The checkpoint runs the `orders_suite` expectation suite against the `orders` table in staging. If any expectation fails, the pipeline raises an exception and halts. The bad data remains in staging, never reaching production.
+
+The `action_list` defines post-validation actions:
+
+- **StoreValidationResultAction** — saves the validation result to a metadata store for historical tracking
+- **UpdateDataDocsAction** — regenerates the Data Docs HTML report showing which expectations passed and failed
+
+This pattern integrates quality verification directly into pipeline logic. You do not bolt on monitoring afterward — the pipeline itself enforces correctness.
+
+---
+
+## Freshness SLAs and Alerting
+
+**Freshness** is the time delay between when data is created at the source and when it becomes available for querying. Freshness matters because stale data leads to stale decisions.
+
+A **freshness SLA** defines the maximum acceptable delay. Example SLAs:
+
+- Real-time event stream: data must arrive within 5 minutes
+- Daily batch ETL: data must arrive by 8:00 AM local time
+- Monthly financial close: data must arrive within 2 business days of month-end
+
+You monitor freshness by comparing the **current timestamp** to the **maximum timestamp in the dataset**. If the gap exceeds the SLA threshold, you trigger an alert.
+
+Here is a freshness check in Great Expectations:
+
+<CodeBlock code={`import great_expectations as gx
+from datetime import datetime, timedelta
+
+context = gx.get_context()
+
+# Define a freshness expectation
+suite = context.get_expectation_suite("orders_suite")
+
+# Expect the most recent order_timestamp to be within the last 6 hours
+suite.add_expectation(
+    gx.expectations.ExpectColumnMaxToBeBetween(
+        column="order_timestamp",
+        min_value=(datetime.now() - timedelta(hours=6)).isoformat(),
+        max_value=datetime.now().isoformat(),
+        meta={
+            "notes": "Orders must arrive within 6 hours of creation (freshness SLA)"
+        },
+    )
+)
+
+context.save_expectation_suite(suite)
+`} language="python" filename="freshness_expectation.py" />
+
+This expectation compares the maximum `order_timestamp` value in the dataset to the current time. If the most recent order is older than 6 hours, the expectation fails and the pipeline halts.
+
+For batch pipelines, you often check freshness based on partition dates rather than row-level timestamps. Example: "the `date` partition for yesterday must exist by 8:00 AM today."
+
+**Freshness alerting** requires integration with your orchestrator (Airflow, Prefect, Dagster). When a freshness expectation fails, the orchestrator sends a notification to Slack, PagerDuty, or email. The alert must include:
+
+- Dataset name
+- SLA threshold
+- Actual freshness lag
+- Link to the Data Docs report showing which rows are stale
+
+Without actionable alerts, freshness SLAs are just documentation. You need real-time notification when SLAs breach so you can investigate and remediate before users notice.
+
+---
+
+## Decision Framework: Great Expectations vs Soda vs Custom
+
+Choosing a quality framework depends on team skills, infrastructure, and complexity.
+
+**Use Great Expectations if:**
+
+- Your team writes Python
+- You need custom expectations beyond SQL (e.g., regex validation, statistical tests, ML model drift checks)
+- You want programmatic quality reports (Data Docs)
+- You integrate with orchestrators like Airflow or Prefect
+
+**Use Soda if:**
+
+- Your team writes SQL but not Python
+- You prefer YAML-based configuration over code
+- You want concise, declarative checks (e.g., `freshness(order_date) < 6h`)
+- You do not need complex custom logic
+
+**Use Monte Carlo or Metaplane if:**
+
+- You have budget for SaaS tools ($10k–$100k annually)
+- You want automated anomaly detection without writing checks manually
+- You prioritize ease of setup over transparency and control
+
+**Build custom checks if:**
+
+- You have unique domain logic that does not fit existing frameworks
+- You already have a metadata system and want to extend it
+- You need sub-second latency checks in streaming pipelines (Great Expectations is batch-oriented)
+
+The **default for most teams** is Great Expectations because it is free, extensible, and integrates with any orchestrator. You should only choose Soda if your team is SQL-only, and only choose commercial tools if you have budget and want to outsource the complexity.
+
+---
+
+## Failure Modes: What Will Break If You Ignore Quality
+
+Here are the five failure modes that destroy trust if your quality architecture is weak:
+
+### 1. Silent Data Corruption
+
+**Failure mode:** Data passes schema validation but contains semantically incorrect values. Example: all sales amounts are negative due to a bug in upstream ETL logic.
+
+**Why it happens:** Pipelines only check schema, not value distributions. The data looks structurally valid but is logically wrong.
+
+**How to prevent:** Add value distribution expectations (e.g., `expect_column_values_to_be_between` for numeric ranges, `expect_column_values_to_be_in_set` for categorical fields). Run statistical profiling to detect anomalies in mean, median, percentiles.
+
+### 2. Schema Drift Undetected
+
+**Failure mode:** Upstream system adds a new column or changes a column type without notifying downstream teams. Queries break, dashboards fail, models retrain on wrong data.
+
+**Why it happens:** No schema validation layer. Pipelines assume upstream schema is stable.
+
+**How to prevent:** Use `expect_table_columns_to_match_ordered_list` or `expect_table_column_count_to_equal` to enforce exact schema contracts. Run schema drift checks before every pipeline execution. Alert when new columns appear or types change.
+
+### 3. SLA Breach Without Alerting
+
+**Failure mode:** Data arrives late, violating freshness SLA, but no one notices until dashboards are stale.
+
+**Why it happens:** Freshness checks exist but are not integrated with alerting systems. Teams monitor manually instead of receiving push notifications.
+
+**How to prevent:** Integrate freshness expectations with orchestrator alerting (Airflow sensors, Prefect states). Set up Slack/PagerDuty notifications. Establish on-call rotation for SLA breaches.
+
+### 4. False Positives Drowning Real Alerts
+
+**Failure mode:** Quality checks are too strict. They flag benign variations as failures. Teams ignore alerts because they are always false positives.
+
+**Why it happens:** Expectations are overfitted to historical data. Thresholds are too narrow (e.g., "row count must be exactly 1000" when normal range is 950–1050).
+
+**How to prevent:** Use range-based expectations instead of exact matches. Profile data over time to learn normal variation. Tune thresholds to 99th percentile bounds rather than mean. Review and adjust expectations quarterly.
+
+### 5. Quality Checks That Pass on Empty Datasets
+
+**Failure mode:** Expectations succeed when the table is empty. No alert fires. Downstream teams assume data is fine but dashboards show zero results.
+
+**Why it happens:** Checks like `expect_column_values_to_be_positive` succeed vacuously when there are no rows.
+
+**How to prevent:** Always pair value expectations with `expect_table_row_count_to_be_between`. Define minimum row count thresholds. Explicitly check for non-empty datasets before running other expectations.
+
+---
+
+## Quality Observability in Practice
+
+A complete quality observability system monitors:
+
+1. **Expectation pass rate** — percentage of datasets passing all quality checks (target: >99%)
+2. **Freshness SLA adherence** — percentage of datasets meeting freshness thresholds (target: >99.5%)
+3. **Schema drift incidents** — count of unexpected schema changes per week (target: zero)
+4. **Mean time to detection (MTTD)** — average delay between data corruption and alert (target: <15 minutes)
+5. **Mean time to resolution (MTTR)** — average delay between alert and fix (target: <2 hours)
+
+These metrics appear on a **data quality dashboard** that updates in real time. Product and data teams monitor the dashboard to detect degradation trends. Leadership reviews it weekly to assess platform health.
+
+The dashboard also tracks **data asset status** — a traffic-light indicator for every dataset:
+
+- **Green** — all expectations passed, SLA met, no schema drift
+- **Yellow** — non-critical expectation failed (warning, not blocking)
+- **Red** — critical expectation failed or SLA breached (pipeline blocked)
+
+This gives a **system-wide health snapshot** at a glance. You can drill into red assets to see which expectations failed and inspect sample rows.
+
+---
+
+## Diagram: Quality Observability Dashboard Concept
+
+<MermaidDiagram chart={`graph TD
+    A[Staging Tables] --> B[Quality Gate]
+    B -->|Pass| C[Production Tables]
+    B -->|Fail| D[Dead Letter Queue]
+    
+    C --> E[Observability Dashboard]
+    D --> E
+    
+    E --> F[Expectation Pass Rate]
+    E --> G[Freshness SLA Adherence]
+    E --> H[Schema Drift Incidents]
+    E --> I[MTTD / MTTR]
+    E --> J[Asset Health Traffic Lights]
+    
+    J --> K[Green: All Checks Passed]
+    J --> L[Yellow: Warning]
+    J --> M[Red: Critical Failure]
+    
+    F --> N[Alert: Pass Rate < 99%]
+    G --> O[Alert: SLA Breach]
+    H --> P[Alert: Schema Changed]
+    
+    subgraph Monitoring["Real-Time Monitoring"]
+        E
+        F
+        G
+        H
+        I
+        J
+    end
+    
+    subgraph Alerting["Alert Routing"]
+        N
+        O
+        P
+    end
+    
+    style Monitoring fill:#ebf8ff,stroke:#3182ce
+    style Alerting fill:#fef5e7,stroke:#f39c12
+`} />
+
+This architecture ensures that quality problems are **visible immediately** and **actionable**. You do not wait for users to report wrong numbers — the observability layer detects failures and routes alerts to the right team.
+
+---
+
+## Key Takeaways
+
+> **Quality observability is not optional.** Silent data corruption destroys trust faster than any outage. You must treat data correctness as a first-class metric and embed quality gates directly in pipelines.
+
+> **Great Expectations is the default framework.** It codifies expectations, produces auditable reports, and integrates with any orchestrator. Use Soda for SQL-native teams or commercial tools if you have budget.
+
+> **Monitor freshness, volume, schema, distributions, and business rules as a unified system.** These dimensions are interconnected. A single observability dashboard gives you system-wide health at a glance.
+
+> **Embed quality gates IN pipelines, not after.** Bad data must never reach production. The pipeline halts at the quality gate and routes failures to a quarantine table for debugging.
+
+> **Five failure modes will destroy trust:** silent corruption, schema drift undetected, SLA breach without alerting, false positives drowning real alerts, and quality checks that pass on empty datasets. Your architecture must address all five explicitly.
+
+The next lesson covers **data lineage and impact analysis** — how to trace data from source to consumption and predict the blast radius when upstream datasets change.

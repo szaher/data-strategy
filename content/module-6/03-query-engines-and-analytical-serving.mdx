@@ -1,0 +1,389 @@
+---
+title: "Query Engines & Analytical Serving"
+quiz:
+  - question: "What is Trino best used for in a lakehouse architecture?"
+    options:
+      - "Real-time transactional processing"
+      - "Federated queries across multiple data sources (correct)"
+      - "Machine learning model serving"
+      - "Data ingestion from APIs"
+    correctIndex: 1
+  - question: "When is DuckDB the better choice over Trino?"
+    options:
+      - "When you need to query data across multiple databases"
+      - "When you want a centralized SQL service"
+      - "For embedded analytics and local analytical workloads (correct)"
+      - "When you need to serve thousands of concurrent users"
+    correctIndex: 2
+  - question: "What does tenant isolation in query serving protect against?"
+    options:
+      - "Data corruption from hardware failures"
+      - "One user's queries consuming all resources and impacting others (correct)"
+      - "Network bandwidth exhaustion"
+      - "Schema incompatibility errors"
+    correctIndex: 1
+---
+
+## Overview
+
+You have built a lakehouse. You manage Iceberg tables with a REST catalog. Data sits in object storage, partitioned and optimized. Now analysts ask "how do we actually query this?" and data scientists want to read Parquet from notebooks and engineering teams need to join lakehouse data with production PostgreSQL.
+
+The answer is not one query engine — it is a **portfolio of engines**, each matched to a workload pattern. **Trino** provides distributed SQL and federated queries across the lakehouse and operational systems. **DuckDB** embeds analytical power into applications, notebooks, and CI pipelines. **Cloud warehouse engines** like BigQuery and Snowflake serve managed BI workloads with turnkey concurrency and caching.
+
+This lesson explains when to use each engine, how to place them in your architecture, and the guardrails that prevent runaway queries from overwhelming source systems. Choosing the right engine for each workload determines whether your lakehouse feels fast and accessible or slow and fragile.
+
+## The Problem: One Engine Cannot Serve All Workloads
+
+Early lakehouse deployments often standardize on a single query engine. Teams pick Trino for everything, or they send all queries through BigQuery, or they assume DuckDB can scale to production concurrency. Each choice creates friction.
+
+**Trino-only architectures** work well for distributed analytical queries — scanning terabytes of Parquet from S3, joining large Iceberg tables — but struggle with lightweight use cases. A data scientist running exploratory queries in a notebook does not need a cluster. An application embedding analytics does not want network dependencies. Spinning up Trino for every query adds latency, operational overhead, and cost.
+
+**DuckDB-only architectures** excel at single-node analytics — reading Parquet locally, processing data in Jupyter notebooks, running SQL in CI tests — but fall apart under distributed workloads. DuckDB cannot join data across multiple machines. It has no query queueing or multi-tenant resource isolation. Attempting to serve production dashboards through DuckDB results in contention, memory exhaustion, and unpredictable latency.
+
+**Warehouse-only architectures** offload all query serving to BigQuery or Snowflake. This works if all data already lives in the warehouse, but lakehouses exist precisely because teams want to decouple storage from compute. Forcing all lakehouse data back into a proprietary warehouse undoes the cost and flexibility benefits of open table formats. Federated queries from BigQuery to external sources incur egress costs and introduce schema sync lag.
+
+The underlying issue is that **query engines optimize for different tradeoffs** — distributed scale vs embedded simplicity, federated access vs data locality, managed ease vs open flexibility. Trying to force one engine to satisfy every use case results in poor performance for most of them. The solution is to deploy a portfolio of engines and route workloads to the right one.
+
+## The Default: Trino for Federation, DuckDB for Embedded Analytics
+
+Most lakehouse platforms deploy two engines by default: **Trino as the distributed federated SQL layer** and **DuckDB as the embedded analytical engine**. These two engines complement each other rather than compete.
+
+### Trino: Distributed SQL Across Multiple Data Sources
+
+**Trino** is a distributed SQL query engine originally designed to query data across Hadoop, S3, and relational databases without moving it. In a lakehouse architecture, Trino reads Iceberg tables from object storage, joins them with data still in PostgreSQL, queries Kafka topics as tables, and exposes all of it through standard SQL.
+
+The key capability is **federation** — a single SQL query that spans multiple systems. An analyst writes:
+
+<CodeBlock code={`SELECT 
+    o.order_id,
+    o.total_amount,
+    c.customer_name,
+    p.product_category
+FROM iceberg.sales.orders o
+JOIN postgresql.prod.customers c 
+    ON o.customer_id = c.id
+JOIN iceberg.analytics.products p 
+    ON o.product_id = p.id
+WHERE o.order_date >= CURRENT_DATE - INTERVAL '30' DAY
+    AND c.region = 'EMEA';
+`} language="sql" filename="federated-query.sql" />
+
+This query joins an **Iceberg table** (`iceberg.sales.orders`), a **PostgreSQL table** (`postgresql.prod.customers`), and another **Iceberg table** (`iceberg.analytics.products`) in a single statement. Trino handles the mechanics — it reads Parquet from S3 for the Iceberg tables, issues a SQL query to PostgreSQL for the customer data, and performs the join in distributed memory across the Trino cluster.
+
+Trino does not copy data into its own storage. It reads directly from the source systems. This means federated queries always see current data without replication lag. It also means **the source systems feel the load** — Trino queries can overwhelm a production PostgreSQL database if the query scans millions of rows or runs during peak traffic.
+
+Trino clusters typically run on **Kubernetes** with multiple worker nodes. A coordinator node parses SQL, plans the query, and distributes work to workers. Workers read data in parallel from object storage or source databases, perform joins and aggregations, and return results to the coordinator. This architecture scales to petabyte datasets and hundreds of concurrent queries with proper configuration.
+
+### DuckDB: In-Process Analytical Engine
+
+**DuckDB** is an embedded analytical database that runs inside the application process — no server, no network, no cluster. Think of it as SQLite for analytics rather than transactions. DuckDB reads Parquet files, Iceberg tables, CSV, and JSON directly from local disk or object storage and processes them with columnar execution and vectorized query plans.
+
+DuckDB excels at **single-node analytical workloads**:
+
+- **Notebook exploration:** Data scientists load Parquet from S3 into a Jupyter notebook with `SELECT * FROM read_parquet('s3://bucket/data/*.parquet')` and run analytical queries without deploying infrastructure.
+- **Application-embedded analytics:** A web application embeds DuckDB to power a reporting dashboard. Queries run in-process, reading cached Parquet from local disk, with sub-second latency and no external dependencies.
+- **CI testing:** Integration tests validate data pipelines by running SQL against Parquet outputs in GitHub Actions. DuckDB processes gigabytes of test data without requiring a test cluster.
+- **Local development:** Engineers develop transformations locally by querying production Iceberg snapshots with DuckDB, iterate quickly, then deploy to Trino for production scale.
+
+DuckDB does not replace distributed engines. It **complements Trino** by handling the use cases where distribution adds overhead instead of value. The decision boundary is simple: if the workload fits in memory on a single machine, DuckDB is faster and simpler. If it requires parallel execution across multiple nodes, use Trino.
+
+### When Federation Is Right vs When to Materialize
+
+Federated queries are powerful but expensive. Joining live data across systems in real-time avoids ETL pipelines and guarantees freshness, but it also means **every query re-executes the join**. If the same query runs 100 times a day, you scan the source systems 100 times. If the join involves billions of rows, you move gigabytes of data over the network for every execution.
+
+**Use federated queries** when:
+
+- **Exploration and ad-hoc analysis:** Analysts investigating a new question benefit from immediate access to live data without waiting for an ETL pipeline to be built.
+- **Low-frequency queries:** A monthly executive report that joins operational and analytical data does not justify a daily materialization pipeline.
+- **Cross-system joins with small source tables:** Joining a large Iceberg fact table with a small PostgreSQL dimension table (e.g., product metadata) works well if the dimension table is small enough to broadcast.
+- **Data freshness is critical:** Real-time dashboards that display metrics within seconds of transaction commit need federated queries to avoid replication lag.
+
+**Materialize into the lakehouse** when:
+
+- **Repeated queries against the same join:** If 50 analysts run the same customer-order join daily, build an Iceberg table with the pre-joined result and refresh it nightly.
+- **Large joins across systems:** Joining billions of rows from PostgreSQL with billions of rows in the lakehouse creates unbounded load on the source database. Ingest the PostgreSQL data into Iceberg and join within the lakehouse.
+- **Source system protection:** Production databases cannot tolerate analytical queries scanning full tables. Materialize snapshots into Iceberg to decouple analytical load from transactional workloads.
+- **Performance optimization:** Federated queries introduce network latency and source-system bottlenecks. Materialized tables in Iceberg benefit from file pruning, predicate pushdown, and columnar storage.
+
+The tradeoff is **freshness vs cost**. Federated queries give you real-time data at the cost of repeated execution. Materialized tables give you optimized performance at the cost of staleness. The right choice depends on the use case — monthly reports can tolerate daily refreshes, but fraud detection dashboards cannot.
+
+### Source-System Protection: Guardrails for Federated Queries
+
+Federated queries introduce a hidden risk: **they shift load from the lakehouse to the source systems**. A poorly written query that scans an entire PostgreSQL table can saturate CPU, exhaust connection pools, and degrade response times for production traffic. Analysts running federated queries often do not realize they are directly querying the production database.
+
+**Guardrails** protect source systems from runaway analytical queries:
+
+- **Read replicas:** Configure Trino to query PostgreSQL read replicas instead of the primary database. Analytical queries run against the replica, isolating them from production writes. Replication lag is usually acceptable for analytical workloads.
+- **Query timeouts:** Set hard time limits on federated queries (e.g., 5 minutes). Queries that exceed the timeout are killed. This prevents unbounded scans from monopolizing database connections.
+- **Row limits:** Enforce maximum row counts on federated joins (e.g., `LIMIT 1000000`). Queries that attempt to scan more rows fail with an error, forcing analysts to add filters or materialize the data.
+- **Concurrency limits:** Restrict the number of concurrent queries against each source system. Trino supports **resource groups** that enforce per-source limits — only 3 queries against PostgreSQL at a time, for example.
+- **Query review and approval:** Require federated queries that touch production databases to be reviewed before running. Use query logging to identify expensive patterns and educate teams on materialization strategies.
+
+The key principle is **treat federated queries as a privilege, not a default**. Make it easy to query the lakehouse directly, but require deliberate choices to query operational systems. Most analytical workloads should run against materialized Iceberg tables, with federation reserved for exploration and rare cross-system joins.
+
+<MermaidDiagram chart={`graph TD
+    A["Query Request"] --> B{"Workload Type?"}
+    B -->|"Distributed Analytical"| C["Trino Cluster"]
+    B -->|"Embedded / Local"| D["DuckDB In-Process"]
+    B -->|"Managed BI"| E["Cloud Warehouse (BigQuery/Snowflake)"]
+    
+    C --> F["Iceberg Tables (S3)"]
+    C --> G["PostgreSQL (Read Replica)"]
+    C --> H["Kafka Topics"]
+    
+    D --> F
+    D --> I["Local Parquet Files"]
+    
+    E --> J["Warehouse-Managed Tables"]
+    
+    subgraph "Trino Use Cases"
+        C
+        K["Federated Queries"]
+        L["Large-Scale Analytics"]
+        M["Cross-System Joins"]
+    end
+    
+    subgraph "DuckDB Use Cases"
+        D
+        N["Notebook Exploration"]
+        O["Application Analytics"]
+        P["CI Testing"]
+    end
+    
+    style C fill:#e0f0ff,stroke:#0066cc
+    style D fill:#fff4e6,stroke:#ff9800
+    style E fill:#f3e5f5,stroke:#9c27b0
+`} />
+
+## Engine Placement Decisions
+
+Choosing where to deploy each query engine determines latency, cost, and operational complexity. The decision depends on **workload characteristics** — data size, query concurrency, latency requirements, and team expertise.
+
+### Trino Cluster on Kubernetes for Shared Analytical Workloads
+
+Most production lakehouse platforms deploy **Trino as a shared cluster** on Kubernetes. The cluster runs continuously, serving queries from multiple teams and applications. Kubernetes provides autoscaling (add workers during peak hours, scale down overnight), fault tolerance (restart failed workers automatically), and resource isolation (limit memory per query).
+
+A typical Trino deployment includes:
+
+- **One coordinator node:** Parses SQL, plans queries, distributes tasks to workers, returns results to clients. The coordinator is a single point of failure — use Kubernetes liveness probes to restart it on crash.
+- **Multiple worker nodes:** Execute query fragments, read data from storage, perform joins and aggregations. Workers scale horizontally — add more workers to increase query throughput and data processing capacity.
+- **Object storage backend:** Trino reads Iceberg Parquet files directly from S3 or GCS. Workers stream data over the network rather than caching locally, which means query performance depends on object storage throughput.
+- **Hive Metastore or REST Catalog:** Trino queries the catalog to discover Iceberg table metadata (schema, partition layout, snapshot pointers). The catalog is queried for every query, so it must be fast and highly available.
+
+Trino clusters serve **concurrent queries from multiple users**. Resource groups enforce fairness — if 10 analysts submit queries simultaneously, Trino queues them and executes a limited number in parallel (e.g., 5 at a time) to prevent memory exhaustion. Query priorities allow critical dashboards to preempt exploratory queries.
+
+**When to use Trino on Kubernetes:**
+
+- You need to serve queries from dozens or hundreds of users concurrently.
+- Queries scan terabytes of data and require distributed execution across multiple machines.
+- You want to centralize query governance (logging, auditing, access control) in one place.
+- You have Kubernetes expertise and can operate the cluster reliably.
+
+**When to avoid Trino:**
+
+- Queries are infrequent (a few times per day) — the cluster sits idle most of the time, wasting cost.
+- Workloads fit in memory on a single machine — DuckDB is simpler and faster.
+- You lack Kubernetes expertise — managed warehouse engines like BigQuery require less operational overhead.
+
+### DuckDB Embedded in Applications and Notebooks
+
+**DuckDB deploys inside the application** — it is a library, not a server. A Python application imports DuckDB, connects to an in-memory or file-backed database, and runs SQL queries in the same process. This eliminates network latency, external dependencies, and operational complexity.
+
+DuckDB excels in environments where **data fits in local memory** and queries are single-threaded:
+
+- **Jupyter notebooks:** Data scientists run `import duckdb; duckdb.sql("SELECT * FROM 's3://bucket/data.parquet'")` to load data into the notebook session. Queries execute locally, using the notebook's memory and CPU.
+- **Web application dashboards:** A reporting dashboard embeds DuckDB to query pre-downloaded Parquet files cached on the application server. Queries return results in milliseconds without hitting external systems.
+- **CLI tools:** A data validation tool embeds DuckDB to run checks against Parquet outputs. The tool runs in CI without requiring a database server.
+
+DuckDB reads **Iceberg tables natively** — it understands the Iceberg metadata format and can query snapshots without Trino or Spark. This means a notebook can point DuckDB at an Iceberg table in S3 and run SQL directly:
+
+```sql
+SELECT COUNT(*) 
+FROM iceberg_scan('s3://lakehouse/sales.orders', 
+                  allow_moved_paths=true);
+```
+
+DuckDB handles partition pruning, file filtering, and schema evolution automatically. It is not as optimized for distributed scans as Trino, but for workloads that fit in a single machine's memory, it is faster because it eliminates network overhead.
+
+**When to use DuckDB:**
+
+- Workloads run on a single machine (laptop, VM, container).
+- Data size fits in local memory or can be streamed incrementally.
+- You want zero operational overhead — no cluster to manage, no servers to monitor.
+- Queries are non-concurrent (one user, one process, one query at a time).
+
+**When to avoid DuckDB:**
+
+- Data size exceeds single-machine memory (DuckDB can stream from disk but performance degrades).
+- You need multi-user concurrency with query queueing and isolation.
+- Queries require distributed joins across multiple nodes.
+
+### Cloud Warehouse Engines for Managed BI Workloads
+
+**BigQuery, Snowflake, and Databricks SQL** are fully managed warehouse engines. They provide turnkey query serving with automatic scaling, caching, concurrency management, and built-in governance. These engines work well for **BI workloads** where teams prioritize ease of use over cost optimization.
+
+Warehouse engines integrate with lakehouse tables through **external tables** or **Iceberg connectors**:
+
+- **BigQuery** reads Iceberg tables via BigLake external tables. Queries scan Parquet in GCS, but metadata caching and partition pruning reduce scans.
+- **Snowflake** supports Iceberg tables through external volumes. Queries read Iceberg snapshots without copying data into Snowflake's internal storage.
+- **Databricks SQL** uses Delta Lake (its own table format) but can query Iceberg tables via Unity Catalog. Performance is optimized when data is stored in Delta, so teams often mirror Iceberg tables to Delta for BI.
+
+The tradeoff is **cost vs convenience**. Warehouse engines charge per query or per compute-hour, which can exceed the cost of running Trino on Kubernetes for high-volume workloads. But they eliminate operational burden — no clusters to configure, no autoscaling to tune, no Kubernetes expertise required.
+
+**When to use warehouse engines:**
+
+- Your organization already uses BigQuery or Snowflake for BI.
+- Teams lack the expertise to operate Trino or Spark clusters.
+- Workloads require advanced features (materialized views, automatic clustering, BI-tool integrations).
+- Query volume is moderate (a few thousand queries per day) and cost is acceptable.
+
+**When to avoid warehouse engines:**
+
+- Query volume is very high (hundreds of thousands per day) — per-query costs add up.
+- You want full control over query execution and optimization.
+- Data must remain in open formats without vendor lock-in.
+
+<MermaidDiagram chart={`graph LR
+    A["Workload Characteristics"] --> B{"Data Size"}
+    B -->|"< 100 GB, Single Node"| C["DuckDB Embedded"]
+    B -->|"> 100 GB, Distributed"| D{"Concurrency"}
+    
+    D -->|"High Concurrency, Federated"| E["Trino on K8s"]
+    D -->|"Moderate, Managed"| F["BigQuery / Snowflake"]
+    
+    E --> G["Selection Criteria"]
+    C --> G
+    F --> G
+    
+    G --> H["Data Size"]
+    G --> I["Concurrency"]
+    G --> J["Latency SLA"]
+    G --> K["Operational Expertise"]
+    G --> L["Cost Budget"]
+    
+    subgraph "DuckDB Strengths"
+        C
+        M["Zero Ops Overhead"]
+        N["Fast Single-Node"]
+        O["Embedded in Apps"]
+    end
+    
+    subgraph "Trino Strengths"
+        E
+        P["Federated Queries"]
+        Q["Distributed Scale"]
+        R["Multi-Tenant"]
+    end
+    
+    subgraph "Warehouse Strengths"
+        F
+        S["Managed Service"]
+        T["BI Integrations"]
+        U["Auto-Scaling"]
+    end
+    
+    style C fill:#fff4e6,stroke:#ff9800
+    style E fill:#e0f0ff,stroke:#0066cc
+    style F fill:#f3e5f5,stroke:#9c27b0
+`} />
+
+## Workload Management and Guardrails
+
+Query engines without guardrails become unreliable under load. A single expensive query can monopolize cluster resources, starving other users. A burst of concurrent queries can exhaust memory and crash the coordinator. **Workload management** enforces limits that keep engines stable and fair.
+
+### Query Queueing and Concurrency Limits
+
+Trino and warehouse engines use **query queues** to control how many queries execute simultaneously. When the queue is full, new queries wait until a running query completes. This prevents memory exhaustion and ensures predictable performance.
+
+Trino's **resource groups** define concurrency limits per team, workload type, or data source:
+
+```json
+{
+  "rootGroups": [
+    {
+      "name": "analytics",
+      "softMemoryLimit": "80%",
+      "maxQueued": 100,
+      "hardConcurrencyLimit": 20,
+      "subGroups": [
+        {
+          "name": "exploratory",
+          "softMemoryLimit": "40%",
+          "hardConcurrencyLimit": 10
+        },
+        {
+          "name": "dashboards",
+          "softMemoryLimit": "40%",
+          "hardConcurrencyLimit": 10
+        }
+      ]
+    }
+  ]
+}
+```
+
+This configuration allows **20 concurrent queries** total, split evenly between exploratory queries (ad-hoc analysis) and dashboards (production BI). If 30 queries arrive simultaneously, 20 run immediately and 10 wait in the queue. Each group has a memory limit — exploratory queries cannot exceed 40% of cluster memory, preventing a single expensive query from crashing the cluster.
+
+**Query priorities** allow critical workloads to preempt lower-priority ones. Dashboards backing executive reports run at high priority, while exploratory notebook queries run at low priority. When the cluster is saturated, high-priority queries evict low-priority ones.
+
+### Query Cost Controls
+
+Runaway queries consume resources without producing useful results. A query with a missing `WHERE` clause scans billions of rows. A cross join accidentally creates a trillion-row intermediate result. **Cost controls** kill these queries before they monopolize the cluster.
+
+**Timeouts** enforce maximum query execution time:
+
+- **Trino:** `query.max-execution-time=10m` kills queries that run longer than 10 minutes.
+- **BigQuery:** Set a `maximumBytesProcessed` limit to prevent queries from scanning more than a specified amount of data.
+
+**Row and scan limits** prevent unbounded queries:
+
+- **Row limits:** Enforce `LIMIT` clauses on exploratory queries. A query without a `LIMIT` that attempts to return more than 1 million rows is rejected.
+- **Scan limits:** Reject queries that scan more than a specified amount of data (e.g., "this query would scan 5 TB, which exceeds the 1 TB limit").
+
+**Throttling and rate limits** prevent users from overwhelming the cluster:
+
+- Limit users to 10 concurrent queries each.
+- Limit teams to 100 queries per hour.
+- Reject queries during scheduled maintenance windows.
+
+These controls require tuning. Set limits too low and analysts cannot do their jobs. Set them too high and expensive queries still cause outages. Start with conservative defaults (5-minute timeouts, 100 GB scan limits) and adjust based on query logs and user feedback.
+
+### Tenant Isolation
+
+Multi-tenant query engines serve multiple teams from the same cluster. Without isolation, one team's expensive queries can degrade performance for everyone else. **Tenant isolation** ensures fair resource allocation.
+
+Trino's **resource groups** provide soft isolation — they enforce memory and concurrency limits per group but allow borrowing unused capacity. If the dashboard group is idle, exploratory queries can use its memory. When dashboards resume, Trino evicts exploratory queries to make room.
+
+**Separate clusters** provide hard isolation. High-priority production dashboards run on a dedicated Trino cluster. Exploratory queries run on a separate cluster that can tolerate crashes and slowdowns. This eliminates the risk of exploratory work impacting production, but it doubles operational overhead.
+
+Warehouse engines like BigQuery provide **slot reservations** — teams purchase guaranteed compute capacity. Queries from reserved teams run on reserved slots, while other teams share a best-effort pool. This ensures predictable performance for critical workloads without overprovisioning.
+
+### Caching Strategies
+
+Analytical queries often repeat the same computations. A dashboard refreshes every 5 minutes, running the same query 288 times per day. **Caching** eliminates redundant work by storing query results and reusing them.
+
+**Result caching** stores the output of a query:
+
+- Trino supports result caching in Redis or S3. If an identical query runs twice within 1 hour, the second execution returns the cached result immediately.
+- BigQuery caches query results automatically for 24 hours. Repeated queries cost nothing and return in milliseconds.
+
+**Metadata caching** reduces catalog lookups:
+
+- Trino caches Iceberg table metadata (schema, partition layout, snapshot pointers) in memory. Queries that reference the same table do not re-query the catalog.
+- DuckDB caches Parquet file metadata locally, avoiding repeated S3 `HEAD` requests.
+
+**Materialized views** precompute expensive aggregations:
+
+- Instead of running a 10-minute aggregation query every time a dashboard loads, create a materialized view that refreshes nightly. The dashboard queries the view, which returns results in seconds.
+
+The tradeoff is **freshness vs performance**. Result caches return stale data if the underlying tables change. Materialized views lag behind real-time data. Teams must decide whether a 1-hour cache or a daily refresh is acceptable for each use case.
+
+## Summary
+
+Query engines are the interface between users and the lakehouse. **Trino** provides distributed SQL and federated queries across Iceberg, PostgreSQL, and Kafka. **DuckDB** embeds analytics into notebooks, applications, and CI pipelines. **Cloud warehouses** offer managed serving for teams that prioritize ease over cost.
+
+The key decisions are **when to use each engine** and **how to protect source systems**. Use Trino for distributed workloads and cross-system joins. Use DuckDB for single-node analytics and embedded use cases. Use warehouse engines for managed BI. Materialize data into Iceberg when queries repeat or source systems cannot tolerate analytical load.
+
+Deploy **guardrails** to prevent runaway queries — timeouts, row limits, concurrency controls, and tenant isolation. Cache results and metadata to eliminate redundant work. Treat federated queries as a privilege, not a default. Most analytical workloads should run against optimized Iceberg tables, with federation reserved for exploration.
+
+The right engine placement makes the lakehouse feel fast and accessible. Poor placement creates bottlenecks, unpredictable latency, and frustrated users. Build a portfolio of engines, route workloads deliberately, and enforce the guardrails that keep everything stable.

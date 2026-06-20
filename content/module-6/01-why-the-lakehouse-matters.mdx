@@ -1,0 +1,467 @@
+---
+title: "Why the Lakehouse Matters"
+quiz:
+  - question: "What fundamental problem does the lakehouse architecture solve compared to traditional data lakes?"
+    options:
+      - "It eliminates the need for data processing engines"
+      - "It adds ACID transactions and schema enforcement to cheap object storage (correct)"
+      - "It reduces storage costs by compressing data"
+      - "It removes the need for metadata catalogs"
+    correctIndex: 1
+  - question: "How does lakehouse time-travel improve ML reproducibility?"
+    options:
+      - "It allows you to pin training data to a specific table version for repeatable experiments (correct)"
+      - "It automatically retrains models when data changes"
+      - "It reduces the time required to train models"
+      - "It eliminates the need for feature stores"
+    correctIndex: 0
+  - question: "What makes lakehouse tables 'open' compared to proprietary warehouse formats?"
+    options:
+      - "They can be queried without authentication"
+      - "They use public APIs instead of private protocols"
+      - "Any engine can read Parquet + metadata without vendor lock-in (correct)"
+      - "They store data in JSON instead of binary formats"
+    correctIndex: 2
+---
+
+## Overview
+
+You've built the data platform from M1 through M5. Source databases feed **CDC** pipelines. **Kafka** delivers change streams. **Spark** and **dbt** transform raw data. But where does the transformed data *land*? Where do analysts query it? Where do ML pipelines snapshot training data?
+
+The answer is the **lakehouse** — an architecture that combines the cost efficiency and flexibility of **data lakes** with the reliability and governance of **data warehouses**. It runs on **open table formats** (Parquet files plus metadata layers like Delta Lake, Iceberg, or Hudi) over **object storage**. Any engine can query it. ACID transactions prevent corruption. Time-travel enables reproducible snapshots. Schema enforcement stops bad data at the gate.
+
+This lesson covers the evolution from warehouses to lakes to lakehouses, explains the key properties that make lakehouses work, and shows why reproducibility matters for AI workloads. You'll see the architecture that ties together the storage from M3, the processing from M5, and the query serving you'll build in the rest of M6.
+
+---
+
+## Evolution: From Warehouse to Lake to Lakehouse
+
+Data platforms evolved in three waves.
+
+### Wave 1: The Data Warehouse (1990s–2010s)
+
+Early data platforms centralized operational data into **data warehouses** — purpose-built databases optimized for SQL analytics.
+
+**How warehouses work:**
+- Data is **extracted** from source systems, **transformed**, and **loaded** into the warehouse (ETL).
+- The warehouse stores data in a **proprietary format** optimized for SQL queries (e.g., Redshift's columnar storage, Snowflake's micro-partitions).
+- **Schema-on-write** — you define tables and types before loading data.
+- **Tightly coupled compute and storage** — scaling storage means scaling compute, and vice versa.
+- **Expensive at scale** — warehouse licenses charge per-node or per-query, and scaling storage costs escalate quickly.
+
+**What warehouses got right:**
+- **ACID transactions** — no partial writes, no data corruption.
+- **Schema enforcement** — bad data rejected at load time.
+- **SQL performance** — decades of query optimization, indexes, statistics, cost-based planning.
+
+**What they got wrong:**
+- **Proprietary lock-in** — you can't query Redshift data with Spark without exporting it.
+- **High cost** — scaling to petabytes gets prohibitively expensive.
+- **Structured data only** — JSON, logs, images, video don't fit the relational model.
+- **No time-travel** — once you update or delete a row, the old version is gone.
+
+Warehouses worked well for *structured* data and *predictable* SQL workloads. But they broke down when organizations needed to store **semi-structured data** (logs, JSON events), **unstructured data** (images, PDFs), or run **ML workloads** that don't speak SQL.
+
+### Wave 2: The Data Lake (2010s)
+
+The data lake emerged as a reaction to warehouse limitations. The pitch: dump everything into cheap **object storage** (S3, GCS, Azure Blob), store it in **open formats** (CSV, JSON, Parquet), and let any engine read it.
+
+**How data lakes work:**
+- Raw data lands in object storage as files.
+- **Schema-on-read** — no upfront schema definition; each query interprets the data.
+- **Decoupled compute and storage** — Spark, Presto, Athena all read the same S3 buckets.
+- **Cheap at scale** — object storage costs pennies per GB-month.
+
+**What data lakes got right:**
+- **Cost efficiency** — storing petabytes is affordable.
+- **Flexibility** — JSON, Parquet, images, video all live in the same bucket.
+- **Multi-engine access** — any tool that speaks S3 can read your data.
+
+**What they got wrong:**
+- **No ACID transactions** — partial writes, race conditions, corrupted files.
+- **No schema enforcement** — bad data silently breaks queries downstream.
+- **No governance** — who owns this file? When was it last updated? Is it safe to delete?
+- **Performance problems** — reading 10,000 small files is slow. No indexes. No statistics. Query planning is guesswork.
+- **Became data swamps** — without metadata and governance, lakes turned into unmanageable graveyards of stale files.
+
+The lake solved the *cost* and *flexibility* problems but sacrificed the *reliability* and *governance* that made warehouses trustworthy.
+
+### Wave 3: The Lakehouse (2020s)
+
+The **lakehouse** merges the best of both worlds:
+
+- **Warehouse-like reliability** — ACID transactions, schema enforcement, time-travel.
+- **Lake-like flexibility and cost** — open formats, cheap object storage, multi-engine access.
+
+**How it works:**
+- Data is still stored in **Parquet files** on **object storage** (same as a lake).
+- A **table format layer** (Delta Lake, Iceberg, or Hudi) adds **metadata** on top: transaction logs, schema definitions, partition manifests, file lists.
+- The metadata enables **ACID semantics** — writes are atomic, readers see consistent snapshots, concurrent operations don't corrupt data.
+- A **catalog** (Hive Metastore, AWS Glue, Unity Catalog, Nessie) tracks table locations and schemas.
+- **Any engine** that speaks the table format can query the data — Spark, Flink, Trino, DuckDB, query engines you'll use in M6.
+
+<MermaidDiagram chart={`graph TB
+    subgraph "Lakehouse Stack"
+        Engines["Query Engines<br/>(Spark, Trino, DuckDB)"]
+        Catalog["Catalog<br/>(Hive, Glue, Unity)"]
+        TableFormat["Table Format<br/>(Delta, Iceberg, Hudi)"]
+        ObjectStorage["Object Storage<br/>(S3, GCS, ADLS)"]
+    end
+    
+    Engines --> Catalog
+    Engines --> TableFormat
+    TableFormat --> ObjectStorage
+    Catalog -.-> TableFormat
+    
+    style Engines fill:#e0f0ff,stroke:#0066cc
+    style Catalog fill:#fff4e6,stroke:#ff9900
+    style TableFormat fill:#e6ffe6,stroke:#00cc66
+    style ObjectStorage fill:#f0f0f0,stroke:#666666
+`} />
+
+**What changed:**
+- **ACID on object storage** — the table format tracks writes in a transaction log. Readers see isolated snapshots. No partial writes.
+- **Schema enforcement** — the table format rejects writes that don't match the schema.
+- **Time-travel** — every write creates a new snapshot. You can query data as of yesterday, last week, or version 42.
+- **Cost stays low** — storage is still cheap object storage. Compute scales independently.
+
+The lakehouse *is* a data lake with a governance layer on top.
+
+---
+
+## Key Lakehouse Properties
+
+### 1. Open File Formats
+
+Lakehouse tables are stored as **Parquet files** — a columnar format that compresses well, prunes columns efficiently, and works with any engine.
+
+**Why Parquet?**
+- **Columnar storage** — reading one column from a billion rows is fast.
+- **Compression** — Snappy or Zstd reduces file sizes by 5–10×.
+- **Predicate pushdown** — engines skip files that don't match query filters.
+- **Open spec** — any tool can read Parquet without vendor permission.
+
+**Table format adds metadata:**
+- **Delta Lake** stores a `_delta_log/` directory with JSON files tracking file additions/removals, schema, and partition info.
+- **Iceberg** uses manifest files listing data files, partition values, and row counts.
+- **Hudi** tracks base files and log files for incremental updates.
+
+The metadata turns a pile of Parquet files into a **transactional table**.
+
+### 2. Decoupled Compute and Storage
+
+Warehouses tie storage to compute nodes. Lakehouse tables live in object storage — engines just *read* them.
+
+**Consequences:**
+- **Scale storage independently** — add 10 TB without adding compute nodes.
+- **Scale compute independently** — spin up 100 workers for a one-time job, shut them down after.
+- **Multi-engine access** — Spark writes the table. Trino queries it. DuckDB reads a sample for local analysis. All see the same data.
+- **Cost efficiency** — you pay for storage once. Compute is ephemeral.
+
+**Contrast with warehouses:** Redshift couples storage to nodes. You can't query Redshift data with Spark without exporting it first. Snowflake decouples *internally* but still locks you into Snowflake's query engine.
+
+Lakehouse decoupling is **open** — any engine that speaks Delta/Iceberg can participate.
+
+### 3. ACID Transactions on Object Storage
+
+Object storage (S3, GCS) doesn't support transactions. **PUT** and **DELETE** are atomic, but there's no **BEGIN TRANSACTION** or **ROLLBACK**. Table formats *layer transactions on top*.
+
+**How Delta Lake provides ACID:**
+1. A write creates new Parquet files in the table directory.
+2. The writer appends a new JSON file to `_delta_log/` listing the added files.
+3. Readers check the log to see which files belong to the table.
+4. If two writers race, Delta uses **optimistic concurrency control** — the second writer fails and retries.
+5. Readers see a **snapshot-isolated** view — they read the log once at query start and ignore later writes.
+
+**Result:** no partial writes, no read-your-own-writes anomalies, no corrupted tables.
+
+### 4. Schema Enforcement and Evolution
+
+Data lakes let you write anything — a CSV with 10 columns today, 12 tomorrow, strings instead of integers next week. Lakehouse tables **enforce schema** at write time.
+
+**Schema enforcement:**
+- Delta Lake checks that incoming data matches the table schema.
+- Writes with extra columns, missing columns, or wrong types are **rejected**.
+
+**Schema evolution:**
+- Explicitly add columns: `ALTER TABLE ADD COLUMN`.
+- The table format tracks schema versions.
+- Old data files still work — missing columns read as NULL.
+
+**Why it matters:** downstream consumers don't break when a new column appears. Bad data gets caught at the gate, not three jobs downstream.
+
+### 5. Time Travel and Reproducibility
+
+Every write to a lakehouse table creates a **new version**. The old version stays intact.
+
+**How time-travel works:**
+- Delta Lake assigns an incrementing version number to each commit.
+- `SELECT * FROM table VERSION AS OF 42` reads the table as it existed at version 42.
+- Iceberg uses snapshot IDs.
+- Hudi tracks commit timestamps.
+
+**Why it matters:**
+- **Auditing** — "what did this table look like last Tuesday?"
+- **Debugging** — "which version of the table caused the pipeline to break?"
+- **Reproducibility** — "train the model on exactly the data from last week."
+
+Time-travel is the foundation of **reproducible ML**.
+
+### 6. Cost Efficiency
+
+Lakehouse storage costs are **object storage** costs — roughly **$0.02/GB-month** for S3 Standard, less for infrequent-access tiers.
+
+Warehouse storage costs are **$20–40/TB-month** (Snowflake, BigQuery), 100× more expensive.
+
+**Compute costs:** Lakehouse compute is **ephemeral**. Spin up Spark for two hours, run a job, shut down. You pay for two hours. Warehouses charge per-query or per-node-hour, often with minimum commitments.
+
+**Total cost for a 10 PB dataset:**
+- Lakehouse: ~$200K/year storage + compute-on-demand.
+- Warehouse: $2–4M/year storage + compute.
+
+For AI workloads that need petabytes of training data, only the lakehouse is affordable.
+
+---
+
+## AI Cross-Cut: Reproducibility
+
+Machine learning experiments are worthless if you can't **reproduce** them. Lakehouse time-travel enables reproducibility at every layer.
+
+### Training Data Snapshots
+
+**The problem:** Your model trained last week performed well. You retrain today and accuracy drops. What changed? Did the data change? Did the code change? Did hyperparameters change?
+
+**Lakehouse solution:** Pin the training data to a **table version**.
+
+```sql
+CREATE TABLE features_v42 AS
+  SELECT * FROM features VERSION AS OF 42;
+
+-- Training script reads features_v42
+-- Exactly the same rows, every run
+```
+
+**Result:** You can re-run the training job months later and get bit-identical results.
+
+### RAG Corpus Reproducibility
+
+Retrieval-Augmented Generation (RAG) systems depend on a **corpus** of documents. The corpus evolves — new documents added, old ones deleted, embeddings re-indexed.
+
+**Lakehouse tracks corpus versions:**
+- **Source documents** table: versioned snapshots of PDFs, markdown files, web scrapes.
+- **Parsed chunks** table: versioned snapshots of chunked text (output of a parsing pipeline).
+- **Embeddings** table: versioned snapshots of vector embeddings (output of an embedding model).
+- **Index metadata** table: which embedding model, which chunk size, which index build timestamp.
+
+**Scenario:** Your RAG system answers a question today. You want to know *why* it gave that answer.
+
+**Reproducible retrieval:**
+1. Log the **corpus snapshot ID** used for retrieval.
+2. Re-run retrieval on the same snapshot.
+3. Get the same top-K documents, same embeddings, same answer.
+
+Without time-travel, the corpus changes daily. Yesterday's query can't be reproduced today.
+
+### Experiment Lineage
+
+Lakehouse tables integrate with **ML experiment tracking** (MLflow, Weights & Biases, Neptune).
+
+**Logged metadata:**
+- Data table name and version.
+- Preprocessing code version (git commit).
+- Model hyperparameters.
+- Evaluation metrics.
+
+**Result:** every experiment references a **frozen snapshot** of the world. You can reproduce any past result.
+
+<MermaidDiagram chart={`flowchart TD
+    RawData["Raw Data<br/>(S3 Parquet files)"]
+    TableFormat["Table Format<br/>(Delta Lake log)"]
+    V1["Version 1<br/>2024-01-15"]
+    V2["Version 2<br/>2024-02-10"]
+    V3["Version 3<br/>2024-03-20"]
+    
+    Exp1["Experiment 1<br/>Uses V1"]
+    Exp2["Experiment 2<br/>Uses V2"]
+    Exp3["Experiment 3<br/>Uses V3"]
+    
+    RawData --> TableFormat
+    TableFormat --> V1
+    TableFormat --> V2
+    TableFormat --> V3
+    
+    V1 --> Exp1
+    V2 --> Exp2
+    V3 --> Exp3
+    
+    style RawData fill:#f0f0f0,stroke:#666666
+    style TableFormat fill:#e6ffe6,stroke:#00cc66
+    style V1 fill:#e0f0ff,stroke:#0066cc
+    style V2 fill:#e0f0ff,stroke:#0066cc
+    style V3 fill:#e0f0ff,stroke:#0066cc
+    style Exp1 fill:#fff4e6,stroke:#ff9900
+    style Exp2 fill:#fff4e6,stroke:#ff9900
+    style Exp3 fill:#fff4e6,stroke:#ff9900
+`} />
+
+---
+
+## Bridge from M3 and M5
+
+The lakehouse ties together the storage and processing you've already built.
+
+### From M3: Object Storage is the Foundation
+
+In M3 you learned that object storage (S3, GCS, ADLS) is the **default storage layer** for modern data platforms. Cheap, durable, scales to exabytes.
+
+**Lakehouse builds on object storage:**
+- Parquet files live in S3.
+- Table metadata lives in S3 (Delta `_delta_log/`, Iceberg manifest files).
+- No custom storage layer. No proprietary format.
+
+**M3 pattern → M6 pattern:**
+- M3: "Store raw Kafka events as Parquet in S3."
+- M6: "Store processed events as Delta tables in S3."
+
+Same storage. Different abstraction.
+
+### From M5: Processing Engines Write to the Lakehouse
+
+In M5 you learned **Spark** for distributed processing and **dbt** for SQL transformations.
+
+**Where does the output go?**
+- Spark writes DataFrames as **Delta tables**.
+- dbt models compile to SQL that writes to **Iceberg tables**.
+- Flink sinks write to **Hudi tables**.
+
+**M5 pattern → M6 pattern:**
+- M5: "Transform Kafka events with Spark and write to Parquet."
+- M6: "Transform Kafka events with Spark and write to Delta tables."
+
+Same processing. Different write format.
+
+**Why the upgrade matters:**
+- Parquet alone: no ACID, no schema enforcement, no time-travel.
+- Delta table: ACID, schema enforcement, time-travel.
+
+The lakehouse is where **raw becomes queryable**.
+
+---
+
+## The Default: Lakehouse on Open Formats
+
+For most data platforms, the lakehouse is the **default architecture**.
+
+**When to use it:**
+- You need SQL analytics and ML workloads on the same data.
+- You want cost-efficient petabyte storage.
+- You want to avoid vendor lock-in.
+- You need reproducibility for ML experiments.
+- You want multiple engines to query the same tables (Spark, Trino, DuckDB).
+
+**Table format choice:**
+- **Delta Lake** — best Spark integration, Unity Catalog governance, default for Databricks users.
+- **Iceberg** — best multi-engine support (Spark, Flink, Trino, Athena), strong schema evolution, growing ecosystem.
+- **Hudi** — best for streaming upserts (Flink CDC → Hudi), compaction-optimized.
+
+**Recommendation for new projects:** Start with **Iceberg**. It has the broadest engine support and the cleanest abstraction.
+
+---
+
+## Decision Framework: When the Warehouse Still Wins
+
+Lakehouses don't replace warehouses in every scenario.
+
+**Warehouse advantages:**
+1. **Simpler mental model** — tables look like Postgres tables. No file-level thinking.
+2. **Out-of-the-box governance** — role-based access, column-level security, audit logs.
+3. **Turnkey query performance** — no tuning Spark configs or partition strategies.
+4. **Managed service** — Snowflake/BigQuery handle upgrades, backups, scaling.
+
+**When the warehouse wins:**
+- **BI-heavy workloads** — if 90% of queries are Tableau dashboards, pay for simplicity.
+- **Small data volumes** — under 10 TB, cost difference is negligible.
+- **Low data engineering capacity** — if you don't have Spark/Iceberg expertise, managed warehouses reduce operational burden.
+- **Regulatory compliance** — some industries require certified platforms (healthcare PHI, financial SOX).
+
+**When the lakehouse wins:**
+- **Large data volumes** — over 100 TB, cost savings dominate.
+- **ML-heavy workloads** — training data snapshots, feature engineering in Spark, reproducibility.
+- **Multi-engine access** — different teams use different tools (Spark, Trino, Flink, DuckDB).
+- **Avoiding lock-in** — you want to own your data format and switch engines freely.
+
+**Hybrid pattern:** Use the warehouse for **curated analytics tables** (final reporting layer) and the lakehouse for **raw/intermediate data** (staging, feature stores, ML corpora).
+
+---
+
+## Failure Modes
+
+### Failure Mode 1: Data Lake Without Governance = Data Swamp
+
+A data lake without a table format is a **file graveyard**.
+
+**Symptoms:**
+- No one knows which files are current.
+- Queries read stale data.
+- Orphaned files accumulate (old partitions never deleted).
+- Schema changes break downstream jobs.
+
+**Fix:** Add a table format (Delta, Iceberg, Hudi). Define schemas. Use ACID writes. Run **VACUUM** to delete orphaned files.
+
+### Failure Mode 2: Lakehouse Without a Catalog = Discoverability Crisis
+
+You've built Delta tables. But where are they? What columns do they have? Who owns them?
+
+**Symptoms:**
+- Analysts don't know which tables exist.
+- Duplicate tables proliferate (same data, five different names).
+- No documentation.
+- No lineage.
+
+**Fix:** Use a **catalog** (Hive Metastore, AWS Glue, Unity Catalog, Polaris). Register tables. Add column descriptions. Track ownership.
+
+### Failure Mode 3: ACID Without Concurrency Control = Write Conflicts
+
+Two Spark jobs write to the same Delta table simultaneously. One fails with `ConcurrentAppendException`.
+
+**Symptom:** Writers collide and retry, slowing pipelines.
+
+**Fix:**
+- **Partition writes** — different jobs write to different partitions.
+- **Use MERGE instead of INSERT** — Delta handles concurrency for upserts.
+- **Increase retry backoff** — Delta retries automatically; tune `spark.databricks.delta.retryWriteConflict.limit`.
+
+### Failure Mode 4: Time-Travel Without Retention Policy = Infinite Storage Costs
+
+Every write creates a new version. If you never delete old versions, storage grows unbounded.
+
+**Symptom:** S3 costs grow linearly even though table row count is stable.
+
+**Fix:**
+- **Run VACUUM regularly** — `VACUUM table RETAIN 168 HOURS` deletes files older than 7 days (configurable).
+- **Set retention policy** — keep 30 days for auditing, delete older versions.
+- **Expire snapshots** — Iceberg `expire_snapshots` removes metadata for old snapshots.
+
+---
+
+## Summary
+
+The **lakehouse** merges the cost and flexibility of data lakes with the reliability and governance of data warehouses. It runs on **open table formats** (Delta, Iceberg, Hudi) that add **ACID transactions**, **schema enforcement**, and **time-travel** to Parquet files on object storage.
+
+**Key properties:**
+- Open file formats (Parquet + metadata).
+- Decoupled compute and storage.
+- ACID transactions on object storage.
+- Schema enforcement and evolution.
+- Time-travel for reproducibility.
+- Cost efficiency (cheap storage + ephemeral compute).
+
+**AI cross-cut:** Time-travel enables **reproducible ML** — pin training data to a table version, snapshot RAG corpora, track experiment lineage.
+
+**Bridge from prior modules:** Object storage from M3 is the foundation. Processing engines from M5 write to lakehouse tables. The lakehouse is where raw becomes queryable.
+
+**Defaults:** Use Iceberg for new projects. Use a catalog for discoverability. Run VACUUM to manage retention.
+
+**Failure modes:** Lakes without governance become swamps. Lakehouses without catalogs lose discoverability. Write conflicts require partitioning or MERGE. Time-travel without retention policy inflates storage costs.
+
+Next lesson: **query engines** — how Trino, DuckDB, and Spark read lakehouse tables and serve queries.

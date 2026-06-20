@@ -1,0 +1,413 @@
+---
+title: "Data Lineage with OpenLineage"
+quiz:
+  - question: "What is the primary value of dataset-level lineage in a data platform?"
+    options:
+      - "It shows query execution times and performance metrics"
+      - "It enables impact analysis by tracking which downstream assets depend on upstream changes (correct)"
+      - "It eliminates the need for data catalogs and metadata systems"
+      - "It automatically prevents schema changes from occurring"
+    correctIndex: 1
+  - question: "What should you understand about column-level lineage coverage?"
+    options:
+      - "Column-level lineage is automatically available for all datasets"
+      - "Column-level lineage depends on emitting systems, SQL parsing, and metadata integrations—coverage varies by tooling (correct)"
+      - "Column-level lineage replaces the need for dataset-level lineage"
+      - "Column-level lineage is only useful for compliance reporting"
+    correctIndex: 1
+  - question: "Why is OpenLineage important as an open standard?"
+    options:
+      - "It's the fastest lineage capture tool available"
+      - "It provides a vendor-neutral format for recording lineage across heterogeneous systems (correct)"
+      - "It guarantees data quality and prevents pipeline failures"
+      - "It replaces the need for catalogs, observability, and quality tools"
+    correctIndex: 1
+---
+
+## The Problem: Invisible Dependencies
+
+You wake up to a Slack message: "The marketing dashboard is broken—revenue numbers are way off." You check the dashboard query. It joins three tables. You check the ETL job that writes one of those tables. It reads from two upstream sources. One of those sources changed its schema last night. The breaking change rippled through two intermediate jobs before surfacing in the dashboard.
+
+This is the **dependency visibility problem**. Modern data platforms are graphs of dependencies: jobs read datasets, transform them, and write new datasets. Other jobs consume those outputs. A single source table can have dozens of downstream consumers. A single dashboard can depend on hundreds of upstream tables.
+
+Without **data lineage**, you can't answer basic questions:
+
+- If I change this table's schema, what breaks downstream?
+- Where does this column in my dashboard actually come from?
+- Which jobs need to rerun if this source data is corrected?
+- What is the end-to-end path from raw data to this business metric?
+
+You're flying blind. Every schema change is a gamble. Every data correction is a manual archeology project.
+
+## OpenLineage: An Open Standard for Lineage Metadata
+
+**OpenLineage** is an open specification for capturing lineage metadata across data systems. It defines a standard format for recording which jobs read and write which datasets, with extensible facets for additional metadata like schema, data quality metrics, and run status.
+
+The core abstraction is the **RunEvent**: a timestamped record of a job execution, including:
+
+- **Job metadata** — job name, namespace, facets (code location, SQL query, ownership)
+- **Input datasets** — tables/files read, with facets (schema, data source, partitions read)
+- **Output datasets** — tables/files written, with facets (schema, statistics, data quality metrics)
+- **Run metadata** — start/complete/fail events, duration, error messages
+
+OpenLineage is **producer-agnostic**. Spark jobs, Airflow tasks, dbt models, Flink applications, and custom Python scripts can all emit RunEvents in the same format. This creates a **unified lineage graph** across your entire platform.
+
+<MermaidDiagram chart={`graph TB
+    subgraph Producers["OpenLineage Producers"]
+        Spark[Spark Integration]
+        Airflow[Airflow Plugin]
+        dbt[dbt Adapter]
+        Flink[Flink Listener]
+        Custom[Custom Python/Java]
+    end
+    
+    subgraph Core["OpenLineage API"]
+        API[HTTP API]
+        Events[(RunEvents)]
+    end
+    
+    subgraph Backend["Lineage Backend"]
+        Marquez[Marquez Server]
+        Graph[(Lineage Graph)]
+    end
+    
+    subgraph Consumers["Lineage Consumers"]
+        UI[Marquez UI]
+        Catalog[Data Catalog]
+        Impact[Impact Analysis]
+        Audit[Compliance Audit]
+    end
+    
+    Spark --> API
+    Airflow --> API
+    dbt --> API
+    Flink --> API
+    Custom --> API
+    
+    API --> Events
+    Events --> Marquez
+    Marquez --> Graph
+    
+    Graph --> UI
+    Graph --> Catalog
+    Graph --> Impact
+    Graph --> Audit
+    
+    style Producers fill:#e6f3ff,stroke:#0066cc
+    style Core fill:#fff4e6,stroke:#cc6600
+    style Backend fill:#e6ffe6,stroke:#00cc66
+    style Consumers fill:#ffe6f3,stroke:#cc0066
+`} />
+
+**Marquez** is the reference implementation of an OpenLineage backend. It receives RunEvents via HTTP, builds a lineage graph, and exposes APIs and a UI for querying lineage. You can run Marquez yourself or use managed lineage services that implement the OpenLineage API.
+
+## Dataset and Job Lineage: The Dependable Baseline
+
+The most valuable lineage layer is **dataset-level lineage**: tracking which jobs read and write which datasets. This gives you:
+
+**Impact analysis** — when a source table's schema changes, you can query the lineage graph to find all downstream jobs and datasets that depend on it. You know exactly what to test, what to notify stakeholders about, and what to rerun.
+
+**Root cause analysis** — when a downstream metric is wrong, you can trace backward through the lineage graph to find which upstream job or dataset introduced the error.
+
+**Cross-system tracing** — a single business metric might flow through: raw logs → Spark job → Iceberg table → Trino materialized view → dashboard. Dataset lineage connects these dots across engines.
+
+**Operational replay** — if you fix data in a source table, you can walk the lineage graph to identify all downstream jobs that need to be rerun to propagate the correction.
+
+Dataset lineage is a **dependable baseline** because it's relatively easy to capture accurately. Jobs know which tables they read and write. Spark, Flink, and Airflow integrations can emit this metadata automatically. You don't need deep introspection into query semantics.
+
+<CodeBlock code={`{
+  "eventType": "COMPLETE",
+  "eventTime": "2026-06-19T14:32:10.123Z",
+  "run": {
+    "runId": "f8d7c6b5-a4e3-21f0-9876-1234567890ab"
+  },
+  "job": {
+    "namespace": "production",
+    "name": "aggregate_user_sessions",
+    "facets": {
+      "sql": {
+        "query": "INSERT INTO analytics.session_aggregates SELECT ..."
+      },
+      "sourceCodeLocation": {
+        "type": "git",
+        "url": "https://github.com/acme/data-jobs",
+        "path": "jobs/aggregate_sessions.py"
+      }
+    }
+  },
+  "inputs": [
+    {
+      "namespace": "iceberg",
+      "name": "raw.user_events",
+      "facets": {
+        "schema": {
+          "fields": [
+            {"name": "user_id", "type": "STRING"},
+            {"name": "event_type", "type": "STRING"},
+            {"name": "timestamp", "type": "TIMESTAMP"}
+          ]
+        },
+        "dataSource": {
+          "name": "s3://acme-datalake/raw/user_events",
+          "uri": "s3://acme-datalake/raw/user_events"
+        }
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "namespace": "iceberg",
+      "name": "analytics.session_aggregates",
+      "facets": {
+        "schema": {
+          "fields": [
+            {"name": "user_id", "type": "STRING"},
+            {"name": "session_count", "type": "BIGINT"},
+            {"name": "total_duration_sec", "type": "BIGINT"}
+          ]
+        },
+        "outputStatistics": {
+          "rowCount": 1250000,
+          "size": 45000000
+        }
+      }
+    }
+  ]
+}
+`} language="json" filename="openlineage_run_event.json" />
+
+This RunEvent records that the `aggregate_user_sessions` job read from `raw.user_events` and wrote to `analytics.session_aggregates`, along with schema metadata, row counts, and source code location.
+
+## Column-Level Lineage: Qualified Expectations
+
+**Column-level lineage** tracks which specific columns in output datasets are derived from which columns in input datasets. This is more granular than dataset lineage—it lets you answer:
+
+- "This dashboard metric uses `session_aggregates.total_duration_sec`—which raw columns does that come from?"
+- "If I change the definition of `user_events.timestamp`, which downstream columns are affected?"
+- "Does this column contain PII that originates from a regulated source?"
+
+Column-level lineage is **extremely valuable** for impact analysis, compliance, and understanding transformation logic. But it comes with **qualified expectations**:
+
+**It depends on emitting systems.** Not all job types can emit column-level lineage. SQL-based jobs (Spark SQL, dbt, Trino) are the best candidates—you can parse the SQL to extract column dependencies. But UDFs, black-box Python transforms, and ML feature engineering often can't expose column lineage without custom instrumentation.
+
+**It depends on SQL parsing.** Extracting column lineage from SQL requires parsing SELECT statements, JOIN clauses, and expressions. This works well for straightforward queries but can fail for complex subqueries, dynamic SQL, or non-standard dialects.
+
+**It depends on metadata integrations.** To show end-to-end column lineage from source to dashboard, you need every system in the chain (Spark, Iceberg, Trino, BI tool) to emit OpenLineage events with column-level facets. Gaps in the chain break the lineage trail.
+
+**Do NOT imply universal column-level coverage.** Column-level lineage is a goal to work toward, not a guarantee. Start with dataset lineage. Instrument SQL-based jobs for column lineage where it's feasible. Accept that some transforms (Python UDFs, ML pipelines) will remain opaque until you invest in custom instrumentation.
+
+The OpenLineage spec supports column-level lineage via the `ColumnLineageDatasetFacet`:
+
+<CodeBlock code={`{
+  "outputs": [
+    {
+      "namespace": "iceberg",
+      "name": "analytics.session_aggregates",
+      "facets": {
+        "columnLineage": {
+          "fields": {
+            "user_id": {
+              "inputFields": [
+                {
+                  "namespace": "iceberg",
+                  "name": "raw.user_events",
+                  "field": "user_id"
+                }
+              ]
+            },
+            "total_duration_sec": {
+              "inputFields": [
+                {
+                  "namespace": "iceberg",
+                  "name": "raw.user_events",
+                  "field": "timestamp"
+                },
+                {
+                  "namespace": "iceberg",
+                  "name": "raw.user_events",
+                  "field": "session_start_time"
+                }
+              ],
+              "transformType": "AGGREGATION",
+              "transformDescription": "SUM(timestamp - session_start_time)"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
+`} language="python" filename="column_lineage_facet.json" />
+
+This facet declares that `session_aggregates.user_id` is a direct copy of `user_events.user_id`, while `session_aggregates.total_duration_sec` is derived from two source columns via aggregation.
+
+## Impact Analysis: From Source Changes to Downstream Effects
+
+The killer use case for lineage is **impact analysis**: understanding what breaks when you change something upstream.
+
+Scenario: You need to change the schema of `raw.user_events`—you're renaming `event_type` to `event_name` for consistency with a new ingestion standard. What downstream assets are affected?
+
+Without lineage, you guess. You search the codebase for string matches. You ask teammates. You hope you didn't miss anything. You deploy the change and wait for dashboard alerts.
+
+With dataset-level lineage, you query the graph:
+
+1. Find all jobs that read `raw.user_events` (5 jobs)
+2. For each job, find all output datasets (12 tables)
+3. For each output table, find all jobs that read it (23 jobs)
+4. Recursively traverse until you hit leaf nodes (dashboards, ML models, reports)
+
+You get a **complete dependency tree**. You know exactly which jobs need code changes, which tables need schema migrations, and which downstream consumers need to be notified.
+
+With column-level lineage, you can narrow the impact:
+
+1. Query which downstream columns depend on `user_events.event_type`
+2. Find the jobs that reference those columns
+3. Identify transformation logic that needs to change (e.g., CASE statements that filter on `event_type`)
+
+This is the difference between "this change might affect 23 downstream jobs" and "this change affects 4 jobs—here are the specific columns and lines of code that reference `event_type`."
+
+<MermaidDiagram chart={`graph TB
+    subgraph Source["Source Layer"]
+        RawEvents[raw.user_events]
+    end
+    
+    subgraph Transform["Transformation Layer"]
+        Job1[aggregate_sessions]
+        Job2[enrich_events]
+        Job3[filter_conversions]
+    end
+    
+    subgraph Analytics["Analytics Layer"]
+        Sessions[analytics.session_aggregates]
+        Events[analytics.enriched_events]
+        Conversions[analytics.conversions]
+    end
+    
+    subgraph Serving["Serving Layer"]
+        Dashboard1[Marketing Dashboard]
+        Dashboard2[Product Analytics]
+        ML[Churn Model Training]
+    end
+    
+    RawEvents -->|reads| Job1
+    RawEvents -->|reads| Job2
+    RawEvents -->|reads| Job3
+    
+    Job1 -->|writes| Sessions
+    Job2 -->|writes| Events
+    Job3 -->|writes| Conversions
+    
+    Sessions -->|consumed by| Dashboard1
+    Events -->|consumed by| Dashboard2
+    Events -->|consumed by| ML
+    Conversions -->|consumed by| Dashboard1
+    
+    style RawEvents fill:#ff6b6b,stroke:#c92a2a
+    style Transform fill:#ffd93d,stroke:#cc9900
+    style Analytics fill:#6bcf7f,stroke:#2b8a3e
+    style Serving fill:#4dabf7,stroke:#1971c2
+    
+    class RawEvents changed
+    
+    classDef changed stroke-width:4px,stroke-dasharray: 5 5
+`} />
+
+In this example, changing `raw.user_events` impacts 3 jobs, 3 analytics tables, and 3 serving-layer consumers. The lineage graph makes the blast radius explicit.
+
+## Cross-System Lineage: Tracing Data Across Engines
+
+Real data platforms are **polyglot**: data flows through multiple processing engines, storage systems, and serving layers. A single metric might traverse:
+
+- **Ingestion** — Kafka → Flink → Iceberg table
+- **Transformation** — Spark batch job → Iceberg table
+- **Serving** — Trino materialized view
+- **Consumption** — BI dashboard or ML feature store
+
+Each system has its own metadata store. Kafka doesn't know about Iceberg. Spark doesn't know about Trino. The BI tool doesn't know where the data originally came from.
+
+OpenLineage creates **cross-system lineage** by using a common namespace and dataset naming convention. All producers emit events to the same lineage backend. The backend stitches together the graph by matching dataset identifiers.
+
+Example flow:
+
+1. Flink job emits a COMPLETE event: writes to `iceberg://prod.raw.user_events`
+2. Spark job emits a COMPLETE event: reads from `iceberg://prod.raw.user_events`, writes to `iceberg://prod.analytics.sessions`
+3. Trino materialized view refresh emits a COMPLETE event: reads from `iceberg://prod.analytics.sessions`, writes to `trino://prod.serving.session_summary`
+4. BI dashboard logs a query event: reads from `trino://prod.serving.session_summary`
+
+The lineage backend connects these events into a single graph. You can now trace from Kafka topic to dashboard metric, across four different engines, because they all emit to the same OpenLineage API.
+
+This is **lineage as a platform capability**, not a per-tool feature. You don't need separate lineage UIs for Spark, Trino, and dbt. You have one lineage graph that spans the entire platform.
+
+## AI Cross-Cut: Training Data Provenance
+
+Machine learning models inherit the quality, bias, and compliance posture of their training data. **Training data provenance** is critical:
+
+- If training data contains PII, the model is subject to privacy regulations
+- If training data has quality issues (label noise, sampling bias), the model's predictions are suspect
+- If training data comes from a deprecated source, model retraining will fail when the source is deleted
+
+Lineage connects **model training jobs** to **upstream data sources** just like any other transformation:
+
+1. Feature engineering job reads from `analytics.user_behavior`, writes to `ml.features.user_embeddings`
+2. Training job reads from `ml.features.user_embeddings`, writes model artifact to `s3://models/churn-v3.pkl`
+3. Lineage graph shows: `raw.user_events` → `analytics.user_behavior` → `ml.features.user_embeddings` → `churn-v3.pkl`
+
+When `raw.user_events` changes schema or quality profiles shift, you can trace the impact forward to every model that transitively depends on it. You can enforce policies: "No model can be trained on data from `pii.customer_profiles` without an approved data use agreement."
+
+This is lineage as **ML governance**. You're not just tracking tables and dashboards—you're tracking how data flows into models, and how model predictions flow into production systems.
+
+## What to Instrument First: A Decision Framework
+
+You can't instrument everything on day one. Prioritize lineage instrumentation based on impact and feasibility:
+
+**Tier 1: Critical batch jobs.** Start with Spark, Airflow, and dbt jobs that produce high-value analytics tables. These are SQL-based, well-structured, and easy to instrument. They're also the highest-leverage targets—your most important dashboards and reports depend on them.
+
+**Tier 2: Real-time ingestion.** Instrument Flink and Kafka Streams jobs that write to Iceberg or Delta tables. Real-time pipelines are harder to debug when they break. Lineage helps you trace back from a bad write to the upstream source.
+
+**Tier 3: Serving-layer reads.** Instrument Trino queries, BI tool queries, and API data fetches. This closes the loop—you can now trace from source data all the way to the end consumer.
+
+**Tier 4: ML pipelines.** Instrument feature engineering and model training jobs. This is valuable for governance but often requires custom instrumentation (scikit-learn and PyTorch don't emit lineage by default).
+
+**Tier 5: Ad-hoc scripts.** If your analysts run one-off Python or R scripts that write to production tables, instrument those too. But this is lower priority—ad-hoc scripts are ephemeral and don't have the same blast radius as scheduled jobs.
+
+Start narrow. Prove value with a small set of critical jobs. Then expand coverage systematically.
+
+## Failure Modes and How to Avoid Them
+
+**Failure mode 1: Lineage gaps.** You instrument 80% of your jobs, but the remaining 20% are black boxes. The lineage graph has gaps. Impact analysis is incomplete because you can't trace through the uninstrumented jobs.
+
+**Mitigation:** Make lineage instrumentation a standard for new jobs. Add it to job templates, CI checks, and onboarding docs. Treat uninstrumented jobs as tech debt.
+
+**Failure mode 2: Column-level lineage overconfidence.** You assume column lineage is complete and accurate. But SQL parsing failed for complex queries, and UDFs don't emit lineage. You make schema changes based on incomplete column lineage and break downstream dependencies.
+
+**Mitigation:** Treat column lineage as **best-effort guidance**, not ground truth. Always cross-check with dataset-level lineage and manual code review for high-risk changes.
+
+**Failure mode 3: Lineage without action.** You build a beautiful lineage graph, but no one uses it. Developers don't check lineage before making changes. Data quality alerts don't link to lineage. The lineage UI is a ghost town.
+
+**Mitigation:** Integrate lineage into existing workflows. Show lineage in the data catalog. Add "check lineage" steps to schema migration playbooks. Link data quality alerts to lineage traces. Make lineage the **default answer** to "what depends on this?"
+
+**Failure mode 4: Namespace chaos.** Different teams use different namespace conventions for the same dataset. `iceberg://prod.raw.events` and `s3://acme-lake/raw/events` refer to the same table, but the lineage backend doesn't know that. The graph is fragmented.
+
+**Mitigation:** Enforce a **canonical dataset naming convention**. Use Iceberg table identifiers as the canonical namespace. Map physical paths (S3 URIs) to logical names (Iceberg tables) in a metadata registry. Emit lineage using the canonical name.
+
+**Failure mode 5: Metadata drift.** You emit lineage events, but the schema facets are outdated because the Spark job caches schema metadata. The lineage graph shows stale schemas. Downstream consumers can't trust the metadata.
+
+**Mitigation:** Emit lineage events **synchronously** with job execution. Don't cache metadata. Pull schema directly from the Iceberg catalog or Hive metastore at job runtime.
+
+## Summary
+
+**OpenLineage** is an open standard for lineage metadata. It defines a common format (RunEvents) for recording which jobs read and write which datasets, with extensible facets for schema, quality, and operational metadata.
+
+**Dataset-level lineage** is the dependable baseline. It enables impact analysis, root cause debugging, and cross-system tracing. It's relatively easy to capture because jobs know which tables they touch.
+
+**Column-level lineage** adds granular visibility into which columns depend on which upstream columns. But it requires SQL parsing, metadata integrations, and per-system instrumentation. Coverage varies. Treat it as best-effort, not guaranteed.
+
+**Impact analysis** is the killer use case. When you change a source table, lineage tells you exactly what downstream jobs, tables, dashboards, and models are affected.
+
+**Cross-system lineage** stitches together data flows across Kafka, Spark, Iceberg, Trino, and BI tools. OpenLineage's vendor-neutral format makes this possible without per-tool integrations.
+
+**AI provenance** extends lineage to ML training data. You can trace from raw data sources through feature engineering to trained models, enabling governance policies and quality tracking.
+
+Instrument high-value batch jobs first. Expand to real-time pipelines, serving queries, and ML pipelines. Avoid lineage gaps, column-level overconfidence, and namespace chaos. Make lineage the default answer to dependency questions.
+
+Lineage is not a reporting tool. It's **operational infrastructure**. It's how you make safe changes in a complex data platform.

@@ -1,0 +1,405 @@
+---
+title: "Security, Identity & Network Controls"
+quiz:
+  - question: "Why should data workloads use workload identity instead of shared credentials?"
+    options:
+      - "Workload identity is faster and reduces API latency"
+      - "It provides per-workload audit trails, enables least privilege, and eliminates credential rotation"
+      - "Shared credentials are deprecated in all major cloud providers"
+      - "Workload identity is required for compliance with GDPR"
+    correctIndex: 1
+  - question: "Which secret management approach provides the best security posture for production data platforms?"
+    options:
+      - "Kubernetes Secrets with base64 encoding"
+      - "Environment variables injected at container start"
+      - "External secrets management (Vault, cloud-native) with dynamic injection and rotation"
+      - "Encrypted secrets stored in Git with SOPS"
+    correctIndex: 2
+  - question: "What is the primary difference between platform IAM and data IAM?"
+    options:
+      - "Platform IAM controls who can deploy infrastructure; data IAM controls who can read/write data"
+      - "Platform IAM is managed by security teams; data IAM is managed by data engineers"
+      - "Platform IAM uses RBAC; data IAM uses ABAC"
+      - "There is no meaningful difference — both control access to cloud resources"
+    correctIndex: 0
+---
+
+## Overview
+
+In Lesson 1, we established that the data platform is a product. In Lesson 2, we made placement decisions — where workloads run and why. Now we address the **trust boundary**: how do workloads prove who they are, what they can access, and how we isolate them?
+
+Security for data platforms is not a perimeter problem. Modern cloud architectures assume **zero trust** — every service must authenticate, every request must be authorized, and every network flow must be validated. The default posture is denial.
+
+This lesson covers infrastructure-level security: **workload identity**, **IAM**, **secrets management**, **encryption**, **tenant isolation**, and **network controls**. We defer data-policy enforcement (row-level security, column masking, PII handling) to Module 7 (Trust Plane). Here, we focus on the foundation: proving identity, managing secrets, and controlling network boundaries.
+
+The shift from implicit trust (shared credentials, open networks) to zero trust (workload identity, encrypted transit, least privilege) is the single most impactful architectural change in modern data platforms.
+
+## Workload Identity — Every Process Needs a Name
+
+In legacy systems, workloads authenticate using **shared credentials** — a single service account whose key is copied to every instance. This creates a blast radius: if one instance is compromised, all instances are compromised. Worse, shared credentials obscure the audit trail: you know *something* accessed the database, but not *which* workload.
+
+**Workload identity** solves this by giving every workload a unique, cryptographically verifiable identity. No long-lived credentials are distributed. Instead, the platform's identity provider issues **short-lived tokens** that the workload exchanges for access to cloud resources.
+
+### How Workload Identity Works
+
+In Kubernetes on GKE, a pod runs with a **Kubernetes service account** (KSA). You bind that KSA to a **Google Cloud IAM service account** (GSA) using **Workload Identity Federation**. When the pod requests access to BigQuery, the flow is:
+
+1. Pod authenticates to the Kubernetes API using its service account token (injected by the kubelet)
+2. GKE's metadata server intercepts the request and exchanges the KSA token for a GSA token
+3. Pod receives a short-lived OAuth token scoped to the GSA's permissions
+4. Pod uses that token to authenticate to BigQuery
+
+At no point does the pod hold a static credential. The token expires in an hour. If the pod is compromised, the blast radius is limited to that pod's identity and the token's TTL.
+
+<MermaidDiagram chart={`graph TD
+    A[Pod with KSA] -->|1. Request token| B[K8s Metadata Server]
+    B -->|2. Validate KSA| C[GKE Workload Identity]
+    C -->|3. Exchange for GSA token| D[Google Cloud IAM]
+    D -->|4. Issue short-lived OAuth token| A
+    A -->|5. Authenticate with token| E[BigQuery API]
+    
+    style A fill:#e0f0ff,stroke:#0066cc
+    style C fill:#fff4e0,stroke:#cc8800
+    style E fill:#e0ffe0,stroke:#00cc00
+`} />
+
+### Cloud Provider Patterns
+
+Every major cloud has a workload identity mechanism:
+
+- **GCP**: Workload Identity Federation (KSA ↔ GSA binding)
+- **AWS**: IAM Roles for Service Accounts (IRSA) — pods assume IAM roles via OIDC
+- **Azure**: Azure AD Workload Identity — pods federate to Azure AD managed identities
+
+The pattern is universal: workloads authenticate as themselves, not as humans. The platform's identity provider is the source of truth. Credentials are short-lived and scoped.
+
+**Principle:** Every data workload — Spark job, Airflow task, streaming processor — must have its own identity. Shared service accounts are a failure mode, not a deployment shortcut.
+
+## IAM for Data Platforms — Two Layers of Access Control
+
+IAM (Identity and Access Management) governs **who can do what**. In data platforms, there are two distinct layers:
+
+1. **Platform IAM** — who can deploy infrastructure, modify Kubernetes manifests, change network policies
+2. **Data IAM** — who can read/write specific tables, datasets, or buckets
+
+These layers are independent. A data scientist may have `roles/bigquery.dataViewer` (data IAM) but zero access to the GKE cluster (platform IAM). A platform engineer may have full Kubernetes access but no access to production data.
+
+### Platform IAM — Infrastructure Control
+
+Platform IAM controls the blast radius of infrastructure changes. Best practices:
+
+- **Role-based access control (RBAC)** — assign permissions via roles, not individual grants
+- **Least privilege** — every identity gets the minimum permissions required for its function
+- **Service-to-service authentication** — workloads authenticate to each other using short-lived tokens, not API keys
+- **Cross-project/cross-account patterns** — use workload identity federation to access resources in other GCP projects or AWS accounts without exporting keys
+
+Example: An Airflow worker pod needs to write to a BigQuery dataset in a different GCP project. You bind the pod's KSA to a GSA in the data project, grant that GSA `roles/bigquery.dataEditor` on the specific dataset, and configure Workload Identity Federation to allow the cross-project binding. No keys, no secrets, no shared credentials.
+
+### Data IAM — Dataset-Level and Table-Level Permissions
+
+Data IAM controls access to datasets, tables, schemas, and buckets. This is where you enforce:
+
+- **Dataset-level permissions** — `roles/bigquery.dataViewer` grants read-only access to all tables in a dataset
+- **Table-level permissions** — you can grant access to a specific table, not the entire dataset
+- **Column-level security** — BigQuery supports policy tags that mask sensitive columns (e.g., PII fields)
+- **Row-level security** — deferred to Module 7, but implemented via BigQuery row-level security policies or dbt models with `WHERE` filters
+
+**Critical distinction:** Platform IAM is about *deploying* the data platform. Data IAM is about *using* the data platform. Conflating these creates security debt — engineers with Kubernetes admin access automatically get production data access, which violates least privilege.
+
+> **Tip:** Use separate GCP projects (or AWS accounts) for platform infrastructure and data storage. Platform engineers have full access to the infrastructure project, but data access in the data project is governed by data IAM policies. This enforces the separation.
+
+## Secrets Management — How to Handle Keys, Tokens, and Passwords
+
+Every data platform has secrets: database passwords, API keys, OAuth tokens, encryption keys. The failure mode is **secrets in Git** — hardcoded credentials, `.env` files committed to version control, or base64-encoded Kubernetes Secrets (which are not encrypted at rest by default).
+
+**Secrets management** is the practice of storing secrets in a dedicated system, injecting them into workloads at runtime, and rotating them on a schedule.
+
+### Why Kubernetes Secrets Are Insufficient
+
+Kubernetes Secrets are **base64-encoded, not encrypted**. They are stored in etcd, which is only encrypted at rest if you enable etcd encryption (not default). Secrets are visible to anyone with `kubectl get secret` access in the namespace.
+
+Kubernetes Secrets are fine for **non-sensitive configuration** (e.g., feature flags, service endpoints). They are **not** a secure secrets store for production credentials.
+
+### Secrets Management Options
+
+The landscape is split between **self-hosted** (HashiCorp Vault) and **cloud-native** (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+
+#### HashiCorp Vault
+
+Vault is the industry standard for self-hosted secrets management. It provides:
+
+- **Dynamic secrets** — Vault generates database credentials on-demand and revokes them after TTL
+- **Encryption as a service** — Vault encrypts/decrypts data using a managed key, without exposing the key
+- **Audit logging** — every secret access is logged with identity, timestamp, and result
+- **Policy-driven access** — secrets are organized in paths, and access is controlled via HCL policies
+
+Vault is powerful but requires operational expertise. You must run a highly available Vault cluster, manage unseal keys, rotate the root token, and handle disaster recovery. For startups, this is overkill. For enterprises with compliance requirements, it's table stakes.
+
+#### Cloud-Native Secrets Managers
+
+GCP Secret Manager, AWS Secrets Manager, and Azure Key Vault are managed services that handle encryption, replication, and rotation. They integrate natively with workload identity — no Vault tokens to distribute.
+
+Example workflow with GCP Secret Manager:
+
+1. Store database password in Secret Manager
+2. Grant the workload's GSA `roles/secretmanager.secretAccessor` on that secret
+3. Inject the secret into the pod using **External Secrets Operator** or **GCP Secret Manager CSI driver**
+4. Application reads the secret from a mounted volume or environment variable
+
+The secret is decrypted in-flight. The workload never sees the raw secret value in its configuration.
+
+**Decision framework:** Use cloud-native secrets managers unless you have regulatory requirements (HIPAA, PCI-DSS) that demand self-hosted encryption. Vault is the right tool for those cases. Otherwise, GCP Secret Manager is simpler and cheaper.
+
+### Injection Patterns — How Secrets Reach Workloads
+
+There are three ways to inject secrets into containers:
+
+1. **Environment variables** — inject at container start, secret is visible in `env`
+2. **Mounted volumes** — secret is written to a file, application reads the file
+3. **Sidecar injection** — a sidecar container fetches the secret and exposes it via localhost API
+
+**Best practice:** Use mounted volumes with **automatic rotation**. The GCP Secret Manager CSI driver mounts secrets as files and refreshes them when the secret version changes. The application watches the file for updates.
+
+Avoid environment variables for secrets — they are visible in `kubectl describe pod`, container inspect output, and crash dumps.
+
+<CodeBlock code={`# GCP Secret Manager CSI Driver example
+apiVersion: v1
+kind: Pod
+metadata:
+  name: data-processor
+spec:
+  serviceAccountName: data-processor-ksa
+  containers:
+  - name: app
+    image: gcr.io/my-project/data-processor:v1.2.3
+    volumeMounts:
+    - name: db-password
+      mountPath: /secrets
+      readOnly: true
+  volumes:
+  - name: db-password
+    csi:
+      driver: secrets-store.csi.k8s.io
+      readOnly: true
+      volumeAttributes:
+        secretProviderClass: "gcp-secrets"
+---
+apiVersion: secrets-store.csi.x-k8s.io/v1
+kind: SecretProviderClass
+metadata:
+  name: gcp-secrets
+spec:
+  provider: gcp
+  parameters:
+    secrets: |
+      - resourceName: "projects/123456/secrets/db-password/versions/latest"
+        path: "db-password.txt"
+`} language="yaml" filename="secret-injection.yaml" />
+
+## Encryption — At Rest, In Transit, and Key Management
+
+Encryption is **table stakes** for data platforms. Every major cloud provider encrypts storage at rest by default. The question is not *whether* to encrypt, but *who controls the keys*.
+
+### Encryption at Rest
+
+Cloud storage (BigQuery, S3, Cloud Storage) is encrypted by default using **platform-managed keys**. You don't manage the keys; the cloud provider does. This is sufficient for most workloads.
+
+For compliance-sensitive workloads (healthcare, finance), you may need **customer-managed encryption keys (CMEK)** or **bring your own key (BYOK)**:
+
+- **CMEK** — you create a key in Cloud KMS (or AWS KMS), and BigQuery uses that key to encrypt data. You control key rotation and access policies.
+- **BYOK** — you generate the key in your own HSM (hardware security module) and import it into the cloud KMS. You hold the root of trust.
+
+**Application-level encryption** is rare in data platforms — most tools (Spark, dbt, Airflow) do not encrypt data before writing to storage. If you need it (e.g., encrypting PII columns before writing to BigQuery), you implement it in custom code.
+
+### Encryption in Transit
+
+All traffic between workloads must be encrypted. This is achieved with **mutual TLS (mTLS)** — both client and server present certificates, and the connection is encrypted end-to-end.
+
+Kubernetes service meshes (Istio, Linkerd) automate mTLS:
+
+- Every pod gets a certificate issued by the mesh's CA
+- All pod-to-pod traffic is mTLS by default
+- The mesh enforces that only authenticated pods can communicate
+
+Without a service mesh, you must configure mTLS manually in each application (e.g., Kafka broker certificates, PostgreSQL SSL mode).
+
+**Best practice:** Use a service mesh for mTLS if you have more than a handful of services. The operational complexity of managing certificates manually exceeds the complexity of running Istio.
+
+### Key Management
+
+Encryption keys must be rotated, versioned, and audited. Cloud KMS (GCP), AWS KMS, and Azure Key Vault handle this. They provide:
+
+- **Automatic rotation** — keys rotate on a schedule (e.g., every 90 days)
+- **Key versioning** — old versions remain available for decrypting historical data
+- **Audit logging** — every key use (encrypt, decrypt, sign) is logged
+
+**BYOK** is only necessary if your threat model includes the cloud provider. For most organizations, CMEK is sufficient.
+
+## Tenant Isolation — Running Multiple Teams on One Platform
+
+Multi-tenancy is the practice of running workloads for multiple teams (or customers) on shared infrastructure. The challenge is **isolation** — preventing one tenant from accessing another's data, exhausting shared resources, or interfering with workloads.
+
+### Namespace Isolation in Kubernetes
+
+The default isolation boundary in Kubernetes is the **namespace**. You create one namespace per team (or per environment: `team-a-prod`, `team-a-dev`). Kubernetes RBAC controls access: `team-a-engineers` can deploy to `team-a-prod`, but not to `team-b-prod`.
+
+Namespaces provide **logical** isolation, not **physical** isolation. Pods in different namespaces share the same nodes, network, and kernel. To strengthen isolation:
+
+- **ResourceQuotas** — limit CPU, memory, and storage per namespace. Prevents one team from starving others.
+- **LimitRanges** — enforce min/max resource requests per pod. Prevents accidentally requesting 1000 CPUs.
+- **NetworkPolicies** — restrict pod-to-pod traffic. Default-deny all ingress/egress, then allow specific flows.
+
+### Network Policies — Controlling Pod-to-Pod Traffic
+
+By default, Kubernetes allows all pods to talk to all other pods. This is a security failure. **NetworkPolicies** enforce zero-trust networking: traffic is denied unless explicitly allowed.
+
+Example: A Spark job in `team-a-prod` should only talk to BigQuery, not to pods in `team-b-prod`.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: spark-egress-policy
+  namespace: team-a-prod
+spec:
+  podSelector:
+    matchLabels:
+      app: spark-driver
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443  # Allow DNS and API server
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        except:
+        - 10.0.0.0/8  # Block RFC1918 private IPs (other namespaces)
+```
+
+This policy allows Spark to reach external APIs (BigQuery) but blocks pod-to-pod traffic within the cluster.
+
+**Service mesh integration:** Istio and Linkerd can enforce network policies at Layer 7 (HTTP/gRPC), not just Layer 4 (TCP/UDP). You can write policies like "allow POST to `/api/data` but deny DELETE" — finer-grained than Kubernetes NetworkPolicies.
+
+### Data-Level Isolation
+
+Infrastructure isolation (namespaces, network policies) does not prevent one team from querying another's BigQuery tables. For that, you need **data-level isolation**:
+
+- **Separate datasets** — each team has their own BigQuery dataset. IAM policies grant access only to that dataset.
+- **Row-level security** — a shared table with a `WHERE team_id = 'team-a'` filter. BigQuery enforces this at query time. (Covered in Module 7.)
+- **Column-level security** — policy tags that mask PII columns unless the user has the `roles/datacatalog.categoryFineGrainedReader` role.
+
+**Best practice:** Combine infrastructure isolation (namespaces) with data isolation (separate datasets). This is **defense in depth** — even if a pod escapes its namespace, it cannot access another team's data without IAM permissions.
+
+## Network Policies and Boundaries — Segmenting Traffic
+
+Modern data platforms run **hybrid architectures** — some workloads in Kubernetes, some in managed services (BigQuery, Dataflow), some in VMs. Network segmentation controls which components can talk to each other.
+
+### Data Plane vs Control Plane
+
+- **Data plane** — workloads that process data (Spark executors, Flink workers, BigQuery queries)
+- **Control plane** — services that orchestrate workloads (Airflow scheduler, Kubernetes API server, Argo Workflows controller)
+
+**Best practice:** Isolate the control plane in a separate VPC or subnet. Data plane workloads should not have direct access to the control plane API. This limits the blast radius of a compromised data workload.
+
+Example: Airflow workers (data plane) run in a GKE node pool with **no public IP**. They access BigQuery via Private Service Connect (a private VPC endpoint). The Airflow webserver (control plane) runs in a separate node pool with a Cloud Load Balancer. Workers cannot reach the webserver directly.
+
+### Private Endpoints and Egress Controls
+
+Managed services (BigQuery, S3) are public by default — they have internet-routable endpoints. For security-sensitive workloads, you configure **private endpoints**:
+
+- **GCP Private Service Connect** — BigQuery is reachable via a private IP in your VPC. No internet egress.
+- **AWS PrivateLink** — S3, RDS, and other services are accessible via VPC endpoints.
+- **Azure Private Link** — same concept for Azure services.
+
+**Egress controls** prevent workloads from reaching the public internet. You configure a **Cloud NAT** (GCP) or **NAT Gateway** (AWS) with an allowlist of permitted destinations. For example, allow egress to `pypi.org` (for pip installs) but block all other internet traffic.
+
+**Use case:** A financial services firm requires that Spark jobs cannot exfiltrate data to the internet. All egress goes through a NAT gateway with strict firewall rules. Even if an attacker compromises a Spark pod, they cannot send data to an external server.
+
+### Service Mesh — Layer 7 Traffic Control
+
+Kubernetes NetworkPolicies operate at **Layer 4** (TCP/UDP port level). Service meshes (Istio, Linkerd) operate at **Layer 7** (HTTP/gRPC method level). You can enforce:
+
+- **Method-level authorization** — allow GET requests but deny DELETE
+- **Rate limiting** — limit each team to 1000 requests/minute to a shared service
+- **Traffic shaping** — route 10% of traffic to a canary version of a service
+
+Service meshes also provide **observability** — distributed tracing, request logs, and latency histograms for every service-to-service call.
+
+**Trade-off:** Service meshes add complexity (sidecar containers, control plane overhead, certificate rotation). Use them if you have **more than ~10 microservices** and need fine-grained traffic control. For simpler architectures, Kubernetes NetworkPolicies are sufficient.
+
+<MermaidDiagram chart={`graph TD
+    subgraph "Security Layers"
+        A[Workload Identity] --> B[IAM Policies]
+        B --> C[Network Policies]
+        C --> D[Encryption in Transit]
+        D --> E[Data Access Policies]
+    end
+    
+    subgraph "Platform IAM"
+        F[Deploy Infrastructure] --> G[Modify K8s Manifests]
+        G --> H[Change Network Rules]
+    end
+    
+    subgraph "Data IAM"
+        I[Read Tables] --> J[Write Datasets]
+        J --> K[Column-Level Access]
+    end
+    
+    B --> F
+    B --> I
+    
+    style A fill:#e0f0ff,stroke:#0066cc
+    style E fill:#ffe0e0,stroke:#cc0000
+    style F fill:#fff4e0,stroke:#cc8800
+    style I fill:#e0ffe0,stroke:#00cc00
+`} />
+
+## Failure Modes — What Goes Wrong
+
+Security failures in data platforms follow predictable patterns:
+
+### Shared Service Accounts
+
+**Problem:** Multiple teams share a single GCP service account. When one team's workload is compromised, the attacker has access to all resources granted to that service account.
+
+**Solution:** One service account per workload. Use workload identity to bind Kubernetes service accounts to unique GCP/AWS identities.
+
+### Unencrypted Secrets in Git
+
+**Problem:** Database passwords, API keys, or OAuth tokens are committed to Git (in `.env` files or Kubernetes manifests). Git history is immutable — even if you delete the file, the secret remains in history.
+
+**Solution:** Use a secrets manager (Vault, GCP Secret Manager). Inject secrets at runtime, never commit them to version control.
+
+### No Network Segmentation
+
+**Problem:** All pods can reach all other pods. A compromised Spark job can access the Airflow database or the Kubernetes API server.
+
+**Solution:** Default-deny NetworkPolicies. Allow only the traffic required for the workload to function. Use service meshes for Layer 7 policies.
+
+### Long-Lived Credentials
+
+**Problem:** API keys or service account keys are generated once and never rotated. If leaked, they remain valid until manually revoked.
+
+**Solution:** Use workload identity (no keys at all) or dynamic secrets (Vault generates credentials with a TTL and auto-revokes them).
+
+### Platform IAM ≠ Data IAM
+
+**Problem:** Engineers with Kubernetes admin access also have access to production BigQuery datasets. This violates least privilege — not every platform engineer needs to see customer data.
+
+**Solution:** Separate platform IAM (who can deploy) from data IAM (who can query). Use different GCP projects or AWS accounts for infrastructure and data storage.
+
+## Summary
+
+Security for data platforms is built on **zero trust**: workloads authenticate as themselves, secrets are managed externally, network traffic is encrypted and authorized, and access is granted at the finest granularity.
+
+**Workload identity** eliminates shared credentials and provides per-workload audit trails. **IAM** enforces least privilege, separating platform access from data access. **Secrets management** (Vault, cloud-native) injects credentials at runtime and rotates them automatically. **Encryption** (at rest, in transit) is table stakes — the question is who controls the keys. **Tenant isolation** (namespaces, network policies, data-level permissions) prevents one team from affecting another. **Network controls** (private endpoints, egress rules, service meshes) segment traffic and limit blast radius.
+
+The shift from implicit trust to zero trust is the defining architectural change in modern data platforms. Infrastructure-level security (this lesson) is the foundation. Data-policy enforcement (Module 7) builds on top of it.
+
+In the next lesson, we'll cover **FinOps and cost optimization** — how to measure, allocate, and reduce infrastructure costs in cloud data platforms.

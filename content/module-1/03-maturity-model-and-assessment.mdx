@@ -1,0 +1,339 @@
+---
+title: "Maturity Model & Assessment"
+quiz:
+  - question: "Why should you assess current state before designing a target platform architecture?"
+    options:
+      - "To justify a larger budget for data platform investments"
+      - "To avoid solving problems you don't have and align investments with actual gaps"
+      - "To benchmark against competitors and industry standards"
+      - "To identify which tools to purchase first"
+    correctIndex: 1
+  - question: "In the maturity model, what distinguishes Level 3 (Governed) from Level 2 (Managed)?"
+    options:
+      - "Active enforcement, contracts, and trust mechanisms vs. basic process and checks"
+      - "More documentation and compliance reports"
+      - "Automated pipelines instead of manual scripts"
+      - "Self-service capabilities for all teams"
+    correctIndex: 0
+  - question: "What is the most critical anti-pattern when running a maturity assessment?"
+    options:
+      - "Interviewing too many stakeholders across the organization"
+      - "Focusing only on technical metrics without business context"
+      - "Inflating scores to avoid uncomfortable conversations about gaps"
+      - "Assessing all five dimensions instead of picking one priority area"
+    correctIndex: 2
+---
+
+## Overview
+
+Most platform teams start with a solution in mind. They benchmark Snowflake against Databricks, debate dbt versus custom SQL, and design target-state architectures before understanding where they are today. The result: **solving problems they don't have** while ignoring the pain that's bleeding revenue.
+
+This lesson introduces a **five-dimension maturity model** that maps your current state across data management, platform capabilities, governance, AI readiness, and organizational structure. You'll learn how to run an honest assessment, identify the gaps that matter most, and connect those gaps to prioritized investments.
+
+> **Key principle:** You can't design the target without knowing where you are. Assessment precedes architecture.
+
+This connects to Lesson 2's discussion of **domain-driven data ownership** — your maturity level determines whether you're ready for hybrid ownership models or still need centralized control. It also sets the stage for Lesson 4, where we'll translate these gaps into a sequenced capability roadmap.
+
+---
+
+## Why Assessment Before Architecture
+
+Platform teams face a temptation: **skip diagnosis, jump to prescription**. The vendor pitch deck shows a self-service data mesh with feature stores and active metadata. The conference keynote promises governance automation. The industry report claims everyone is at Level 4 maturity.
+
+None of that matters if your current state is:
+- Analysts still waiting 3 weeks for database access
+- Data scientists copying CSVs into notebooks because the warehouse is too slow
+- Compliance asking for lineage reports you can't produce
+- Domain teams wanting ownership but lacking the platform guardrails to succeed
+
+**The mismatch problem:** Building Level 4 self-service capabilities on a Level 1 foundation wastes money and creates shadow IT. Conversely, investing in basic pipelines when you already have managed orchestration solves yesterday's problem.
+
+Assessment gives you **reality-based prioritization**. It answers:
+1. Where are we today across each dimension?
+2. Which gaps cause the most pain or risk?
+3. Which capabilities are prerequisites for others?
+4. Where should we invest first to maximize impact?
+
+> **Analogy:** You wouldn't design a marathon training plan without knowing your current fitness level. Data platform investment works the same way — baseline first, then roadmap.
+
+---
+
+## The Five-Dimension Maturity Model
+
+The model uses **four levels per dimension**, each representing a distinct capability threshold. The levels are cumulative — you can't skip Level 2 to reach Level 3.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Maturity["Maturity Levels (All Dimensions)"]
+        L1["Level 1: Ad-Hoc<br/>Manual, inconsistent, reactive"]
+        L2["Level 2: Managed<br/>Process-driven, repeatable, basic tooling"]
+        L3["Level 3: Governed<br/>Contracts, enforcement, trust mechanisms"]
+        L4["Level 4: Self-Service<br/>Platform-enabled autonomy, automated"]
+        
+        L1 --> L2
+        L2 --> L3
+        L3 --> L4
+    end
+    
+    style L1 fill:#ffcccc,stroke:#cc0000
+    style L2 fill:#ffffcc,stroke:#ccaa00
+    style L3 fill:#ccffcc,stroke:#00aa00
+    style L4 fill:#ccccff,stroke:#0000cc
+`} />
+
+### Dimension 1: Data Management
+
+**How data flows from source to consumer.**
+
+- **Level 1 (Ad-Hoc):** Scripts extract data on demand. Analysts copy files. No versioning. Data breaks when upstream changes.
+- **Level 2 (Managed):** Scheduled pipelines in orchestrators (Airflow, Dagster). Data lands in a central warehouse. Tables have owners. Basic data quality checks in code.
+- **Level 3 (Governed):** Data products with published contracts (schema, SLA, lineage). Producers expose stable APIs or governed datasets. Consumers trust the data because changes are versioned and announced.
+- **Level 4 (Self-Service):** Domain teams publish data products with automated quality checks, automated lineage, and discovery via a data catalog. Consumers provision access and explore data without waiting for approvals.
+
+**Gap example:** You're at Level 2 if you have pipelines but consumers still email asking "is this field safe to use?" Level 3 means they check the contract and trust it.
+
+### Dimension 2: Platform Capabilities
+
+**The infrastructure and tools that enable data work.**
+
+- **Level 1 (Ad-Hoc):** Manual provisioning. Analysts request VMs or database credentials via tickets. No standards.
+- **Level 2 (Managed):** Centralized data warehouse and compute. Platform team provisions infrastructure. Basic IAM roles.
+- **Level 3 (Governed):** Reusable patterns and golden paths (Terraform modules, approved stack). Standardized environments. Automated security baselines.
+- **Level 4 (Self-Service):** Teams provision infrastructure via platform APIs or IaC templates. Guardrails enforce compliance automatically. Monitoring, cost tracking, and environment isolation are built-in.
+
+**Gap example:** You're at Level 2 if the platform team is the bottleneck for every new project. Level 3 means teams use pre-approved templates. Level 4 means they deploy autonomously within guardrails.
+
+### Dimension 3: Governance & Trust
+
+**How you ensure data quality, security, and compliance.**
+
+- **Level 1 (Ad-Hoc):** No lineage. No data quality monitoring. Compliance is manual audits. Trust is based on tribal knowledge ("ask Sarah").
+- **Level 2 (Managed):** Basic lineage captured in orchestrator metadata. Manual data quality checks in pipelines. Role-based access control (RBAC) enforced.
+- **Level 3 (Governed):** Active data contracts with schema validation and SLA monitoring. Automated lineage from ingestion to BI dashboards. Policy-as-code enforces access and retention rules.
+- **Level 4 (Self-Service):** Real-time data quality dashboards. Consumers see lineage and quality scores before using data. Automated compliance reporting. Policy violations block bad data from reaching consumers.
+
+**Gap example:** You're at Level 2 if you know where data came from but can't prove it to auditors. Level 3 means lineage is automated and trustworthy.
+
+### Dimension 4: AI/ML Readiness
+
+**The platform's ability to support production AI and machine learning.**
+
+- **Level 1 (Ad-Hoc):** Data scientists use local notebooks with CSV files. Models are one-off scripts. No versioning or deployment process.
+- **Level 2 (Managed):** Centralized notebook environment (JupyterHub, Databricks). Models registered in MLflow or similar. Batch scoring pipelines exist but are manual.
+- **Level 3 (Governed):** Feature stores provide reusable, versioned features. Model lineage tracks training data and code versions. A/B testing and model monitoring are standardized.
+- **Level 4 (Self-Service):** Teams deploy models to production with automated CI/CD. Feature stores integrate with real-time serving. LLMs and GenAI use governed, traceable data. Model drift and retraining are automated.
+
+**Gap example:** You're at Level 2 if data scientists can train models but deployment requires weeks of engineering work. Level 3 means deployment is repeatable. Level 4 means it's fully automated.
+
+### Dimension 5: Organizational Maturity
+
+**How teams are structured and who owns what.**
+
+- **Level 1 (Ad-Hoc):** Siloed teams. Each domain builds its own pipelines and tools. No shared standards or platform.
+- **Level 2 (Managed):** Centralized data team owns all pipelines and data products. Domain teams submit requests and wait for delivery.
+- **Level 3 (Governed):** Hybrid ownership model (from Lesson 2). Platform team provides infrastructure and guardrails. Domain teams own data products with clear contracts.
+- **Level 4 (Self-Service):** Federated ownership at scale. Domain teams operate autonomously within platform guardrails. Platform team focuses on enabling capabilities, not delivering projects.
+
+**Gap example:** You're at Level 2 if the central data team is the bottleneck for every domain's data needs. Level 3 means domains own their data products and follow platform standards.
+
+---
+
+## Maturity Assessment: The Process
+
+<MermaidDiagram chart={`flowchart TD
+    A[Start Assessment] --> B[Interview Producers & Consumers]
+    B --> C[Map Data Flows & Pain Points]
+    C --> D[Score Each Dimension 1-4]
+    D --> E[Identify Top 5 Gaps]
+    E --> F[Map Gaps to Capabilities]
+    F --> G[Prioritize by Impact & Dependency]
+    G --> H[Build Investment Roadmap]
+    
+    style A fill:#e0f0ff,stroke:#0066cc
+    style H fill:#ccffcc,stroke:#00aa00
+`} />
+
+### Step 1: Interview Stakeholders
+
+Talk to **both producers and consumers** of data:
+- **Producers:** Data engineers, domain teams that build pipelines, ML engineers who deploy models.
+- **Consumers:** Analysts, data scientists, BI developers, compliance teams, application teams that need data APIs.
+
+Ask:
+- What's the biggest friction in your workflow?
+- How long does it take to get access to new data?
+- How do you know if data is trustworthy?
+- What would you do if you had self-service capabilities?
+
+**Goal:** Identify pain points, not just tool complaints. "Airflow is slow" might mean "we need auto-scaling orchestration" or "we need better pipeline patterns."
+
+### Step 2: Map Data Flows
+
+Draw the actual data movement:
+- Source systems → ingestion → staging → transformation → consumption
+- Identify handoffs between teams
+- Note where manual steps or tickets are required
+- Highlight breaking points (where pipelines fail most often)
+
+This reveals **organizational boundaries** and **process bottlenecks** that don't show up in architecture diagrams.
+
+### Step 3: Score Each Dimension
+
+Use the maturity definitions above. Be **brutally honest**:
+- Don't score based on what you plan to build — score what exists today.
+- If only one team has a capability, that's not organization-wide maturity.
+- If a process exists on paper but nobody follows it, score it as ad-hoc.
+
+**Example scoring:**
+- Data Management: Level 2 (we have pipelines but no contracts)
+- Platform Capabilities: Level 1 (everything is manual provisioning)
+- Governance: Level 2 (basic lineage, no enforcement)
+- AI/ML Readiness: Level 1 (notebooks only, no production deployment)
+- Organizational Maturity: Level 2 (centralized team owns everything)
+
+### Step 4: Identify Gaps
+
+For each dimension, ask:
+- What's the next level, and what's blocking us from reaching it?
+- Which gap causes the most business pain? (missed revenue, compliance risk, team burnout)
+- Which gap blocks other improvements? (e.g., can't do self-service without contracts)
+
+Rank your **top 5 gaps** by impact and urgency.
+
+### Step 5: Map Gaps to Capabilities
+
+Each gap corresponds to one or more platform capabilities. Examples:
+
+| Gap | Capability Needed |
+|-----|-------------------|
+| No data contracts → consumers don't trust data | Schema validation, SLA monitoring, contract publication |
+| Manual provisioning → 3-week wait for new environments | Self-service IaC templates, automated IAM, cost controls |
+| No lineage → can't prove compliance | Automated lineage from source to BI, audit logging |
+| ML models stuck in notebooks | Model registry, CI/CD for ML, feature store |
+| Central team is bottleneck | Hybrid ownership model, platform guardrails, golden paths |
+
+### Step 6: Prioritize by Impact & Dependency
+
+Not all gaps are equal. Use these criteria:
+
+1. **Impact:** Does this gap cost revenue, create compliance risk, or block critical projects?
+2. **Dependency:** Do other improvements require this one first? (Contracts are a prerequisite for self-service.)
+3. **Feasibility:** Can we deliver this in 3-6 months, or is it a multi-year effort?
+4. **Adoption:** Will teams actually use this, or are we solving a theoretical problem?
+
+**Decision framework:**
+- **High impact + prerequisite for others** = invest first (e.g., data contracts, basic lineage)
+- **High impact + independent** = invest in parallel (e.g., ML deployment pipeline, cost controls)
+- **Low impact or far future** = defer (e.g., advanced feature stores when you don't have basic ML in production)
+
+> **Tip:** Solve the pain that's bleeding revenue or creating compliance risk, not the pain that sounds impressive in roadmap presentations.
+
+---
+
+## Connecting Assessment to Investment
+
+The maturity model is **not a checklist to reach Level 4 in everything**. It's a map to prioritize where you invest.
+
+**Common patterns by starting state:**
+
+**If you're mostly Level 1:** Focus on **Data Management** and **Platform Capabilities**. Build managed pipelines and a central warehouse before worrying about governance or self-service.
+
+**If you're mostly Level 2:** Invest in **Governance & Trust** (contracts, lineage) and begin the shift to **hybrid ownership**. This unblocks consumers and reduces the central team's bottleneck.
+
+**If you're mostly Level 3:** Enable **self-service** capabilities and **AI/ML readiness**. Your foundation is solid — now make teams autonomous and production-ready for AI.
+
+**If dimensions are uneven** (e.g., Level 3 data management but Level 1 governance): Close the lagging dimension first. You can't sustain self-service data products without trust mechanisms.
+
+### Example: From Assessment to Roadmap
+
+**Scenario:** A retail company scores:
+- Data Management: 2 (pipelines, no contracts)
+- Platform Capabilities: 2 (central warehouse, manual provisioning)
+- Governance: 1 (no lineage, tribal knowledge)
+- AI/ML: 1 (notebooks only)
+- Organizational Maturity: 2 (centralized data team)
+
+**Top pain points:**
+1. Marketing can't trust customer data because the schema changes without notice
+2. Compliance can't produce lineage reports for GDPR audits
+3. Data science team can't deploy models to production
+
+**Investment sequence:**
+
+**Phase 1 (months 1-3):** Governance foundations
+- Implement schema validation for top 5 datasets
+- Automate lineage capture in orchestrator
+- Publish data contracts for customer data
+
+**Phase 2 (months 4-6):** ML deployment capability
+- Set up model registry and CI/CD pipeline
+- Deploy first production model with monitoring
+- Document golden path for other teams
+
+**Phase 3 (months 7-9):** Self-service foundations
+- Create IaC templates for new projects
+- Enable domain teams to deploy pipelines within guardrails
+- Migrate one domain team to hybrid ownership
+
+This sequence solves the **compliance risk first** (lineage), then enables **revenue growth** (ML deployment), then reduces the **central team bottleneck** (self-service).
+
+---
+
+## Anti-Patterns to Avoid
+
+### 1. Inflated Maturity Scores
+
+**What it looks like:** Scoring yourself at Level 3 because you have a data catalog, even though nobody uses it or trusts the metadata.
+
+**Why it happens:** Pride, avoiding tough conversations, or misunderstanding the definitions.
+
+**How to avoid:** Use **evidence, not intentions**. If the capability isn't in production and widely adopted, it doesn't count. Interview external stakeholders (consumers, auditors) — they'll be honest about what's missing.
+
+### 2. Treating All Dimensions as Equally Urgent
+
+**What it looks like:** Trying to move from Level 2 to Level 3 in all five dimensions simultaneously.
+
+**Why it happens:** Thinking "we need everything" or building a roadmap that looks balanced on PowerPoint.
+
+**How to avoid:** **Prioritize ruthlessly**. Pick the 1-2 dimensions where gaps are causing the most business pain or risk. Sequence the rest.
+
+### 3. Assessing Tools, Not Capabilities
+
+**What it looks like:** "We're Level 3 governance because we bought a data catalog."
+
+**Why it happens:** Confusing tool adoption with capability delivery.
+
+**How to avoid:** Define capabilities by **outcomes**, not tools. Level 3 governance means "consumers trust the data and can prove lineage to auditors," not "we have Alation installed."
+
+### 4. One-Time Assessment, No Updates
+
+**What it looks like:** Running a maturity assessment once, then never revisiting it as the platform evolves.
+
+**Why it happens:** Treating assessment as a project milestone, not an ongoing process.
+
+**How to avoid:** **Reassess every 6-12 months**. As you deliver capabilities, your maturity increases — and new gaps emerge. Keep the assessment current so your roadmap stays relevant.
+
+### 5. Skipping the "Why"
+
+**What it looks like:** Identifying a gap but not understanding why it matters to the business.
+
+**Why it happens:** Engineering-led assessment without stakeholder input.
+
+**How to avoid:** For every gap, ask: **What revenue or risk does this create?** If the answer is "it would be nice to have," it's not a priority. If the answer is "compliance fines" or "lost customers," invest immediately.
+
+---
+
+## Summary
+
+Maturity assessment is the **foundation of smart platform investment**. The five-dimension model — Data Management, Platform Capabilities, Governance & Trust, AI/ML Readiness, Organizational Maturity — maps where you are today across four levels: Ad-Hoc, Managed, Governed, Self-Service.
+
+The process: **interview stakeholders, map data flows, score dimensions honestly, identify top gaps, connect gaps to capabilities, prioritize by impact and dependency**. The output is a sequenced roadmap that solves real pain, not vendor-driven buzzwords.
+
+Key principles:
+- **Assessment before architecture** — you can't design the target without knowing your starting point
+- **Prioritize ruthlessly** — not all gaps are equally urgent
+- **Evidence over intentions** — score based on what's in production and adopted, not what's planned
+- **Outcomes over tools** — capabilities matter, not which vendor you picked
+
+This lesson connects to Lesson 2's **hybrid ownership model** (you need Level 3 governance before domains can own data products) and sets up Lesson 4, where we'll translate these gaps into a **capability-driven architecture and roadmap**.
+
+Next up: **Reference Architecture & Capability Mapping** — designing the platform that closes your gaps and enables your target state.

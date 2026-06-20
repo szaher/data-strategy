@@ -1,0 +1,399 @@
+---
+title: "Agent Data Patterns & Retrieval Governance"
+---
+
+## Beyond Simple Retrieval
+
+You've built a RAG pipeline. Your embeddings are tuned, your vector search returns relevant chunks, and your prompts are carefully crafted. But when you deploy an **agent** — an LLM system that reasons, plans, and takes actions over multiple turns — you encounter a new class of data challenges that RAG alone doesn't address.
+
+**Agents are not single-shot question answerers.** They maintain state across conversations, execute multi-step workflows, access multiple data sources, and make decisions that can trigger real-world actions. This introduces three critical distinctions:
+
+1. **Memory architecture** — agents need different types of memory (ephemeral vs durable vs shared), not just a single vector store.
+2. **Retrieval vs action authorization** — reading a document is not the same as executing an action based on it.
+3. **Lineage and observability** — you must track what was retrieved, what influenced the output, and what went into the prompt.
+
+This lesson connects the RAG foundations from Lessons 3-4 to the **agent governance patterns** you'll need when your data infrastructure powers autonomous reasoning systems.
+
+## Agent Memory Types
+
+Not all agent state should live in the same place. A robust agent architecture separates memory into three distinct layers, each with different durability, scope, and access control requirements.
+
+<MermaidDiagram chart={`graph TB
+    subgraph Ephemeral["Ephemeral Memory"]
+        E1[Conversation Context]
+        E2[Current Task State]
+        E3[Recent Tool Results]
+    end
+    
+    subgraph Durable["Durable Memory"]
+        D1[User Preferences]
+        D2[Past Decisions]
+        D3[Long-term Facts]
+    end
+    
+    subgraph Shared["Shared Memory"]
+        S1[Team Knowledge]
+        S2[Org Policies]
+        S3[Collective Learnings]
+    end
+    
+    Agent[Agent Process] --> Ephemeral
+    Agent --> Durable
+    Agent --> Shared
+    
+    Ephemeral -->|Cleared on| SessionEnd[Session End]
+    Durable -->|Persisted in| UserDB[User Database]
+    Shared -->|Synced to| TeamDB[Team Knowledge Store]
+    
+    style Ephemeral fill:#fef5e7,stroke:#f39c12
+    style Durable fill:#ebf5fb,stroke:#3498db
+    style Shared fill:#e8f8f5,stroke:#1abc9c
+`} />
+
+### Ephemeral Memory
+
+**Scope:** Single conversation session  
+**Durability:** In-memory, cleared on disconnect  
+**Use cases:** Tracking the current task, holding recent tool outputs, maintaining conversation context
+
+Ephemeral memory is what most people think of as "the context window." It's the transient state that the LLM sees on each turn. This memory:
+
+- Does NOT survive session restarts
+- Is NOT shared across users
+- Has no access control requirements (it's already user-scoped by session)
+
+In the recurring scenario, if a product manager asks the agent "Which customers mentioned performance issues?", the agent might retrieve relevant support tickets and hold them in ephemeral memory for the duration of that conversation. Once the session ends, that context is discarded.
+
+**Anti-pattern:** Storing ephemeral memory in a database. If it doesn't need to survive a restart, don't persist it — you're just creating cleanup debt and access control complexity.
+
+### Durable Memory
+
+**Scope:** Single user across sessions  
+**Durability:** Persisted to storage  
+**Use cases:** User preferences, past decisions, personalized knowledge
+
+Durable memory allows an agent to "remember" things across conversations. If a user tells the agent "I prefer Python code examples," that preference should persist into the next session.
+
+Key distinctions from ephemeral memory:
+
+- Stored in a database (often a vector store with metadata filters)
+- Requires user-scoped access control (user A cannot read user B's durable memory)
+- Must be prunable (users should be able to delete their memory)
+
+In the recurring scenario, if a data engineer repeatedly asks for cost breakdowns in a specific format, the agent can save that preference to durable memory and apply it automatically in future sessions.
+
+**Security note:** Durable memory can leak information across time. If a user asks about a confidential project in one session, and the agent saves a fact about it to memory, that fact might surface in a later session when the context is no longer appropriate. Implement **expiration policies** and **context tagging** to prevent stale or out-of-scope memory from influencing future decisions.
+
+### Shared Memory
+
+**Scope:** Team or organization  
+**Durability:** Persisted and synchronized  
+**Use cases:** Team knowledge bases, organizational policies, collective learnings
+
+Shared memory is where agents become organizational assets. When one team member teaches the agent something valuable, other team members can benefit from that knowledge.
+
+Critical requirements:
+
+- **Role-based access control** — not all shared memory is visible to all users. A finance team's knowledge should not leak into an engineering agent's context.
+- **Versioning and audit trails** — who added this knowledge, when, and why? If the agent starts making bad decisions, you need to trace it back to a specific memory entry.
+- **Conflict resolution** — what happens when two users teach the agent contradictory facts?
+
+In the recurring scenario, if the analytics team documents a set of "known data quality issues" in the warehouse, that knowledge can be stored in shared memory so the agent warns any user who queries those affected tables.
+
+**Anti-pattern:** Treating shared memory as a single global knowledge base. Partition it by **domain**, **team**, and **sensitivity level**. An agent helping with marketing analytics should not have access to confidential HR data just because both are in "the shared knowledge store."
+
+## Tool-Data Boundaries
+
+An agent that can **read** a document is not the same as an agent that can **act on** it. This distinction is the foundation of agent authorization.
+
+**Scenario:** Your agent retrieves a payroll report from the vector store. The user's role grants them READ access to that document. The agent summarizes the report and then offers to "update the payroll database to correct the discrepancy." Should the agent be allowed to execute that action?
+
+**No.** Retrieval authorization and action authorization are separate gates.
+
+- **Retrieval authorization:** Can the user (or agent on behalf of the user) read this document?
+- **Action authorization:** Can the agent execute this tool call given the current context and user permissions?
+
+Even if the agent retrieves a document, it must check action-level permissions before executing any tool that modifies state.
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant User
+    participant Agent
+    participant RetrievalGate as Retrieval Gate
+    participant ActionGate as Action Gate
+    participant VectorStore as Vector Store
+    participant Database as Database
+    
+    User->>Agent: "Fix payroll discrepancy for Alice"
+    Agent->>RetrievalGate: Check: Can user read payroll docs?
+    RetrievalGate-->>Agent: Allowed (user has HR read role)
+    Agent->>VectorStore: Retrieve payroll report
+    VectorStore-->>Agent: Document chunk
+    
+    Agent->>ActionGate: Check: Can user execute UPDATE_PAYROLL?
+    ActionGate-->>Agent: Denied (user lacks payroll-write permission)
+    Agent-->>User: "I found the discrepancy but you don't have permission to modify payroll records"
+    
+    Note over Agent,ActionGate: Retrieval succeeded, action blocked
+    
+    style RetrievalGate fill:#d5f4e6,stroke:#27ae60
+    style ActionGate fill:#fadbd8,stroke:#e74c3c
+`} />
+
+### Implementing Retrieval vs Action Separation
+
+In code, this separation is enforced at two checkpoints:
+
+1. **Retrieval-time filtering:** Before the agent queries the vector store, apply an access control filter based on the user's permissions.
+2. **Action-time validation:** Before the agent executes a tool, validate that the user is authorized for that specific action.
+
+<CodeBlock code={`from typing import List, Dict
+from dataclasses import dataclass
+
+@dataclass
+class UserContext:
+    user_id: str
+    roles: List[str]
+    permissions: List[str]
+
+@dataclass
+class RetrievalFilter:
+    """Access control filter applied at retrieval time."""
+    allowed_doc_types: List[str]
+    allowed_tags: List[str]
+    max_sensitivity_level: int
+
+def build_retrieval_filter(user: UserContext) -> RetrievalFilter:
+    """Construct a retrieval filter based on user roles."""
+    allowed_doc_types = []
+    allowed_tags = []
+    max_sensitivity = 0
+    
+    if "hr-read" in user.roles:
+        allowed_doc_types.append("payroll")
+        allowed_tags.extend(["hr", "compensation"])
+        max_sensitivity = max(max_sensitivity, 2)
+    
+    if "finance-read" in user.roles:
+        allowed_doc_types.extend(["budget", "forecast"])
+        allowed_tags.extend(["finance", "budgets"])
+        max_sensitivity = max(max_sensitivity, 3)
+    
+    if "eng-read" in user.roles:
+        allowed_doc_types.extend(["tech-doc", "runbook"])
+        allowed_tags.extend(["engineering", "infrastructure"])
+        max_sensitivity = max(max_sensitivity, 1)
+    
+    return RetrievalFilter(
+        allowed_doc_types=allowed_doc_types,
+        allowed_tags=allowed_tags,
+        max_sensitivity_level=max_sensitivity
+    )
+
+def retrieve_with_access_control(
+    query: str,
+    user: UserContext,
+    vector_store
+) -> List[Dict]:
+    """
+    Retrieve documents, filtering by user permissions.
+    
+    This ensures the agent CANNOT retrieve documents
+    the user is not authorized to read, even if those
+    documents are semantically relevant to the query.
+    """
+    filter_obj = build_retrieval_filter(user)
+    
+    # Apply access control as metadata filter in vector search
+    results = vector_store.query(
+        query=query,
+        filter={
+            "doc_type": {"$in": filter_obj.allowed_doc_types},
+            "tags": {"$in": filter_obj.allowed_tags},
+            "sensitivity_level": {"$lte": filter_obj.max_sensitivity_level}
+        },
+        top_k=10
+    )
+    
+    return results
+
+def validate_action(
+    tool_name: str,
+    tool_args: Dict,
+    user: UserContext
+) -> bool:
+    """
+    Validate action authorization separately from retrieval.
+    
+    Just because the user can READ a document doesn't mean
+    they can execute an action derived from it.
+    """
+    action_policies = {
+        "UPDATE_PAYROLL": ["payroll-write"],
+        "SEND_EMAIL": ["email-send"],
+        "DELETE_RECORD": ["admin"],
+        "EXPORT_DATA": ["data-export"]
+    }
+    
+    required_permissions = action_policies.get(tool_name, [])
+    return any(perm in user.permissions for perm in required_permissions)
+`} language="python" filename="retrieval_governance.py" />
+
+**Key insight:** The retrieval filter is applied **at query time** via metadata filters in the vector database. The action validation happens **after** the agent has formed a plan but **before** executing the tool. Both gates must pass.
+
+## Multi-Step Retrieval Strategies
+
+Simple RAG retrieves once: user asks a question, agent queries the vector store, agent generates an answer. Agents performing complex workflows often need **multi-step retrieval** — querying multiple sources, refining queries based on intermediate results, and synthesizing across datasets.
+
+**Pattern 1: Cascading Retrieval**  
+Start with a broad query, extract key entities from the results, then issue refined queries for each entity.
+
+**Pattern 2: Source Routing**  
+Analyze the user's query, classify it into a domain (e.g., HR, finance, engineering), then route the retrieval to the appropriate vector store or database.
+
+**Pattern 3: Iterative Refinement**  
+Issue an initial query, evaluate the quality of results, then reformulate the query with added context or constraints. Repeat until results meet a quality threshold.
+
+In the recurring scenario, if a user asks "Why did revenue drop in Q3?", the agent might:
+
+1. Retrieve sales dashboards (broad retrieval)
+2. Extract product names mentioned in the dashboards (entity extraction)
+3. Issue refined queries for each product's Q3 metrics (cascading retrieval)
+4. Retrieve customer churn data for those products (source routing to CRM vector store)
+5. Synthesize findings across all sources
+
+Each retrieval step must respect access control. If the user lacks permission to query the CRM vector store, step 4 is blocked.
+
+## Retrieval Lineage and Audit Records
+
+When an agent makes a decision or produces an output, you need a record of:
+
+- **What was retrieved** — which documents, from which sources
+- **What influenced the output** — which chunks were included in the prompt
+- **When and why** — timestamp, user context, query intent
+
+This is **retrieval lineage**, and it's critical for debugging, compliance, and trust.
+
+**Example audit record:**
+
+```json
+{
+  "session_id": "sess-20260619-1234",
+  "user_id": "pm-alice",
+  "timestamp": "2026-06-19T14:32:11Z",
+  "query": "Which customers reported performance issues?",
+  "retrieval_steps": [
+    {
+      "step": 1,
+      "source": "support-tickets-vector-store",
+      "filter": {"tags": ["support", "performance"], "sensitivity_level": {"$lte": 2}},
+      "results_count": 12,
+      "top_chunks": ["chunk-5a3f", "chunk-7b2e", "chunk-9c1d"]
+    },
+    {
+      "step": 2,
+      "source": "customer-db",
+      "query": "SELECT name, tier FROM customers WHERE id IN (...)",
+      "results_count": 8
+    }
+  ],
+  "action_taken": null,
+  "output_summary": "Listed 8 enterprise customers who filed performance-related tickets in the last 30 days"
+}
+```
+
+This record connects the user's query to the specific data sources consulted. If the agent produces a wrong answer, you can trace back to the exact chunks that influenced it and determine whether the problem was:
+
+- **Bad retrieval** (wrong documents returned)
+- **Bad access control** (retrieved documents the user shouldn't see)
+- **Bad synthesis** (LLM misinterpreted the chunks)
+
+## Prompt and Context Observability
+
+The final governance layer is **prompt observability** — logging what actually went into the LLM's context window on each turn.
+
+**Why this matters:** The agent might retrieve 50 chunks but only include 10 in the prompt due to token limits. Which 10 were chosen? How were they ranked? If the agent produces a biased or incorrect answer, you need to know exactly what it "saw."
+
+Prompt observability requirements:
+
+- **Log the full prompt** (or a hash if the prompt contains sensitive data)
+- **Log the model and temperature** (different models produce different outputs for the same prompt)
+- **Log the token count** (did the context exceed the window and get truncated?)
+- **Log the retrieval ranking** (which chunks were ranked highest by the retrieval system)
+
+In regulated environments (healthcare, finance, government), prompt logs are often treated as **audit records** and must be retained for compliance.
+
+**Privacy tradeoff:** Logging full prompts can leak sensitive data into your observability system. Consider these mitigations:
+
+- **Hash sensitive fields** — log the prompt structure but redact PII or confidential values
+- **Separate storage tiers** — store prompt logs in a high-security system with restricted access
+- **Retention policies** — auto-delete prompt logs after N days unless flagged for audit
+
+## Connecting to the Trust Plane
+
+You built the trust plane architecture in Module 7: cryptographic lineage, attestation, and tamper-proof audit trails. Now connect it to agent retrieval.
+
+**Integration points:**
+
+1. **Provenance attestation:** When the agent retrieves a document, verify its cryptographic signature and lineage. If the document was derived from a protected dataset, enforce data use agreements at retrieval time.
+
+2. **Access decision logging:** Every retrieval-time access control decision (allow/deny) is logged to the trust plane. This creates an immutable record of who accessed what data, even via an agent intermediary.
+
+3. **Output attestation:** When the agent produces a final answer, attach a signed provenance record that lists all data sources consulted. The user (or a downstream auditor) can verify that the agent only used authorized data.
+
+In the recurring scenario, if the agent retrieves customer churn data to answer a revenue question, the trust plane records:
+
+- **Input provenance:** Churn data was derived from CRM exports (lineage traced back to source)
+- **Access decision:** User alice@company.com (role: pm-read) accessed churn data at 2026-06-19T14:32:11Z (allow)
+- **Output provenance:** Revenue analysis report includes data from sources [churn-data-v3, sales-db-snapshot-20260615] (signed attestation)
+
+If the user later disputes the analysis, the trust plane provides a tamper-proof audit trail.
+
+## Applying This to the Recurring Scenario
+
+You're designing a data platform for a SaaS company. The analytics team uses an AI agent to answer ad hoc questions about customer behavior, product usage, and revenue trends. Apply the agent governance patterns:
+
+### Memory Architecture
+
+- **Ephemeral memory:** Current conversation context (e.g., "the user is asking about Q3 revenue")
+- **Durable memory:** User-specific preferences (e.g., "this data engineer prefers SQL query results over natural language summaries")
+- **Shared memory:** Team knowledge base (e.g., "the `events` table has a known data quality issue in September 2026 — rows are missing timestamps")
+
+### Retrieval vs Action Separation
+
+- **Retrieval gate:** Filter vector store results by user role. If the user is in the `analytics-read` role, they can retrieve dashboards and reports. If they are NOT in the `finance-read` role, they cannot retrieve budget forecasts.
+- **Action gate:** Even if the user retrieves a report showing a billing error, they cannot execute the `UPDATE_BILLING` tool unless they have the `billing-write` permission.
+
+### Multi-Step Retrieval
+
+- **Cascading retrieval:** User asks "Why did churn spike in October?" → Agent retrieves churn dashboards → Extracts product IDs with high churn → Retrieves usage logs for those products → Retrieves support tickets mentioning those products → Synthesizes findings.
+- **Access control at each step:** If the user lacks access to support tickets, step 3 is blocked, and the agent responds "I can see usage data but cannot access support tickets. Your analysis is incomplete."
+
+### Retrieval Lineage
+
+- Log every retrieval step: which vector store, which filter, how many results, which chunks were included in the prompt.
+- Store lineage records in the trust plane for audit.
+- If the agent produces a wrong answer, trace back to the exact chunks that influenced it.
+
+### Prompt Observability
+
+- Log the full prompt (or a hash) for every agent turn.
+- Log the model, temperature, and token count.
+- Log the retrieval ranking (which chunks were ranked highest).
+- Redact PII or sensitive values before logging.
+
+### Trust Plane Integration
+
+- Verify cryptographic signatures on retrieved documents.
+- Log access control decisions to the trust plane.
+- Attach signed provenance records to agent outputs.
+
+## Key Takeaways
+
+- **Agent memory is NOT a single vector store.** Separate ephemeral, durable, and shared memory with different access controls and retention policies.
+- **Retrieval authorization ≠ action authorization.** An agent may be allowed to read a document but not execute an action derived from it. Enforce both gates.
+- **Multi-step retrieval requires access control at every step.** If any step is blocked, the agent must surface that limitation to the user.
+- **Retrieval lineage is critical for debugging and compliance.** Log what was retrieved, what influenced the output, and when.
+- **Prompt observability closes the loop.** You must know exactly what went into the LLM's context window on each turn.
+- **Integrate with the trust plane (Module 7).** Cryptographic provenance, access logging, and output attestation create an auditable record of agent behavior.
+
+The next module (Module 10) extends these patterns to **real-time operational scenarios** — event streams, monitoring data, and data governance under time pressure. You'll see how the trust plane and agent governance patterns adapt when latency constraints force you to make access control decisions in milliseconds, not seconds.

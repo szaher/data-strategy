@@ -1,0 +1,53 @@
+{
+  "id": 3,
+  "title": "Storage, Persistence & Table Design",
+  "description": "Object storage, databases, stateful workloads, schemas, partitioning, retention, backup",
+  "color": "#63b3ed",
+  "lessons": [
+    {
+      "slug": "01-why-storage-architecture-matters",
+      "title": "Why Storage Architecture Matters",
+      "description": "Data gravity, durability guarantees, access patterns, cost tiers; retaining raw documents and model artifacts",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-object-storage-and-data-lake-foundations",
+      "title": "Object Storage & Data Lake Foundations",
+      "description": "S3-compatible object storage as the architectural primitive; MinIO as local/Kubernetes reference implementation",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-databases-on-the-data-platform",
+      "title": "Databases on the Data Platform",
+      "description": "PostgreSQL as primary reference; OLTP vs OLAP, connection pooling, replication, backup/restore, workload isolation",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["comparison", "architecture"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-schema-design-partitioning-and-retention",
+      "title": "Schema Design, Partitioning & Retention",
+      "description": "Relational and file-level schema design, indexing strategies, time-based partitioning, retention policies",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["flowchart"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-storage-decision-framework",
+      "title": "Storage Decision Framework",
+      "description": "Decision tree for block vs object vs database; managed vs self-hosted; document, search, and vector storage placement",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

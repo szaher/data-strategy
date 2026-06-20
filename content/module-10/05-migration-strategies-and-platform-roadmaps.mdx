@@ -1,0 +1,323 @@
+---
+title: "Migration Strategies & Platform Roadmaps"
+quiz:
+  - question: "What is the strangler fig pattern in data platform migrations?"
+    options:
+      - "A method for detecting deprecated features"
+      - "Gradually replacing old systems by intercepting requests and routing them to the new system"
+      - "A technique for compressing old data"
+      - "A way to test new features in isolation"
+    correctIndex: 1
+  - question: "What does parallel run mean in migration strategies?"
+    options:
+      - "Running multiple instances of the same system"
+      - "Executing migration steps in parallel threads"
+      - "Running old and new systems simultaneously to compare results"
+      - "Testing migrations on separate hardware"
+    correctIndex: 2
+  - question: "What is a critical component of every migration plan that many teams forget?"
+    options:
+      - "Performance benchmarking"
+      - "Documentation updates"
+      - "A tested rollback path"
+      - "Cost estimation"
+    correctIndex: 2
+---
+
+Migration is where data platform strategy meets operational reality. A brilliant architecture delivers zero value if you can't get there from here. Big-bang migrations fail spectacularly — systems are interconnected, consumers resist change, and unexpected dependencies emerge mid-flight. The path from legacy to modern platforms requires **incremental migration patterns**, **clear exit criteria**, and **tested rollback plans**. This lesson closes the full academy with the strategies that move platforms forward safely.
+
+## The Migration Challenge
+
+Data platforms don't exist in isolation. When you migrate a data warehouse, you're touching dozens of ETL pipelines, hundreds of dashboards, thousands of queries, and an entire organization's muscle memory. Teams remember the last time a migration broke their reports on Monday morning.
+
+**Big-bang migration** attempts to replace an entire system in one cutover event. The old platform runs until migration day, then everything switches to the new platform overnight. This approach fails for data platforms because:
+
+- **Hidden dependencies surface late** — the obscure weekly report that Finance runs every month-end appears only after cutover
+- **No performance comparison** — you discover the new platform is 10x slower on critical queries only after users revolt
+- **All-or-nothing rollback** — if anything breaks, you either roll back everything or push forward in crisis mode
+- **Coordination overhead** — coordinating hundreds of stakeholders for a single cutover event is logistically impossible
+
+The alternative is **incremental migration**: move workloads piece by piece, validate each step, maintain parallel systems during transition, and preserve rollback capability throughout.
+
+## Migration Patterns
+
+Three patterns dominate incremental data platform migrations: **strangler fig**, **parallel run**, and **shadow mode**. Each addresses different migration constraints.
+
+### Strangler Fig Pattern
+
+The **strangler fig pattern** gradually replaces old system components by intercepting requests and routing them to the new system. Named after the fig tree that grows around a host tree until the host can be removed, this pattern wraps the legacy platform with a routing layer that directs traffic based on migration progress.
+
+<MermaidDiagram chart={`graph TB
+    subgraph Week1["Week 1: Route 10% traffic"]
+        C1[Consumers] --> R1[Router]
+        R1 -->|90%| L1[Legacy Platform]
+        R1 -->|10%| N1[New Platform]
+    end
+    
+    subgraph Week4["Week 4: Route 50% traffic"]
+        C2[Consumers] --> R2[Router]
+        R2 -->|50%| L2[Legacy Platform]
+        R2 -->|50%| N2[New Platform]
+    end
+    
+    subgraph Week8["Week 8: Route 100% traffic"]
+        C3[Consumers] --> R3[Router]
+        R3 -->|0%| L3[Legacy Platform<br/>Decommissioned]
+        R3 -->|100%| N3[New Platform]
+    end
+    
+    style N1 fill:#68d391
+    style N2 fill:#68d391
+    style N3 fill:#68d391
+    style L3 fill:#cbd5e0,stroke-dasharray: 5 5
+`} />
+
+**When to use strangler fig:**
+- You control the routing layer (API gateway, reverse proxy, load balancer)
+- Consumers access data through a single interface (not direct database connections)
+- Migration can proceed dataset by dataset or team by team
+- Rollback requires only configuration changes, not code deploys
+
+**Example**: Migrating from Redshift to BigQuery. Build a query routing layer that inspects incoming SQL and directs it to Redshift or BigQuery based on table name. Migrate table by table, updating routing rules as you go. Consumers use the same endpoint throughout.
+
+### Parallel Run Pattern
+
+The **parallel run pattern** operates old and new systems simultaneously, processes the same workload on both, and compares outputs to validate functional parity. This pattern prioritizes **correctness verification** over incremental rollout.
+
+**How parallel run works:**
+1. Both systems process the same input data
+2. Results are compared automatically (exact match, within tolerance, or schema-only)
+3. Discrepancies trigger alerts and investigation
+4. The old system serves production traffic; the new system validates in parallel
+5. Once comparison passes for N consecutive days, cutover to the new system
+
+**When to use parallel run:**
+- Correctness is non-negotiable (financial reporting, regulatory compliance)
+- You can afford to run both systems simultaneously (2x compute cost)
+- Output comparison is automatable (deterministic results, stable schemas)
+- Migration timeline allows for weeks of parallel validation
+
+**Example**: Migrating a fraud detection pipeline from a batch ETL to a streaming architecture. Run both pipelines on the same transaction stream. Compare flagged transactions daily. Investigate every discrepancy until root cause is understood. After 30 days of identical results, cutover production traffic to the streaming pipeline.
+
+### Shadow Mode Pattern
+
+The **shadow mode pattern** duplicates production traffic to the new system without affecting end users. The new system processes requests but doesn't serve responses. This pattern tests **performance and stability** under real load without risking production correctness.
+
+**When to use shadow mode:**
+- Performance and scale are the primary migration risks
+- You can't afford to serve incorrect results (even temporarily)
+- Production workload is difficult to simulate in test environments
+- The new system architecture differs significantly from the old (different query engine, storage format, indexing strategy)
+
+**Example**: Migrating an analytics API from PostgreSQL to ClickHouse. Configure the API gateway to duplicate all incoming queries to both databases. PostgreSQL serves responses to users. ClickHouse processes queries in shadow mode. Monitor ClickHouse latency, error rates, and resource usage for two weeks. Cutover to ClickHouse once shadow metrics meet SLOs.
+
+## Exit Criteria: When Migration Is Complete
+
+Migrations without **exit criteria** drift indefinitely. Engineers fear turning off the old system because they're not certain the new system handles everything. Exit criteria formalize the definition of "done."
+
+### Functional Parity
+
+**Functional parity** means the new system handles all use cases the old system handled. For data platforms, this includes:
+
+- All datasets migrated and queryable
+- All scheduled jobs running successfully
+- All dashboards rendering correctly
+- All API endpoints returning expected results
+- All alerting rules firing as expected
+
+Verify functional parity with a **workload inventory**: enumerate every pipeline, dashboard, report, and query that runs on the old platform. Migrate one by one. Track completion in a spreadsheet or issue tracker. Migration is complete when inventory completion reaches 100%.
+
+### Performance Parity
+
+**Performance parity** means the new system meets or exceeds the old system's performance SLOs. Measure:
+
+- **Query latency** (p50, p95, p99) — dashboards load as fast or faster
+- **Job duration** — ETL pipelines complete within existing SLA windows
+- **Concurrent query capacity** — the system handles peak load without degradation
+- **Data freshness** — tables update as frequently as before
+
+Collect baseline metrics from the old system before migration. Compare new system metrics against baselines weekly. Resolve performance regressions before declaring migration complete.
+
+### Data Consistency Verification
+
+**Data consistency** means the new system produces the same answers as the old system. For analytics workloads, "same" often means "within acceptable tolerance" rather than bitwise identical.
+
+**Row count reconciliation**: Compare row counts for every migrated table. Discrepancies indicate incomplete data loads or filtering differences.
+
+**Checksum validation**: Hash aggregated metrics (daily revenue, user counts) and compare between systems. Differences reveal calculation bugs or missing data.
+
+**Sample query comparison**: Run a suite of representative queries on both platforms and compare results. Automate this as a regression test that runs daily during migration.
+
+### Rollback Tested
+
+Every migration plan includes a **tested rollback path**. Rollback is not theoretical — you've actually executed it in a staging environment and timed how long it takes.
+
+**Why rollback testing matters**: On cutover day, you discover the new platform can't handle Friday's peak load. Do you know how to revert to the old platform? Have you tested the DNS changes, load balancer rules, and connection string updates required? Can you execute rollback in under 15 minutes?
+
+Document rollback steps as a runbook. Test the runbook in staging. Time the execution. Update the runbook based on what you learned. Share the runbook with the on-call team before cutover.
+
+## Rollback Plans
+
+Rollback is not failure — it's **insurance**. The presence of a tested rollback plan gives teams confidence to attempt migrations. The absence of rollback plans leads to risk-averse cultures that never migrate anything.
+
+### Rollback Decision Criteria
+
+Define **rollback triggers** before cutover. When X happens, we immediately execute rollback. Example triggers:
+
+- **Error rate exceeds threshold** — if query error rate exceeds 5% for 10 minutes, rollback
+- **Latency degrades** — if p95 latency exceeds baseline by 2x for 5 minutes, rollback
+- **Data freshness SLA missed** — if any critical table is more than 2 hours stale, rollback
+- **Critical consumer broken** — if the CEO dashboard is blank, rollback immediately
+
+Automate rollback triggers when possible. If error rate crosses the threshold, the monitoring system pages the on-call engineer with a link to the rollback runbook.
+
+### Rollback Mechanisms
+
+**Configuration-based rollback**: The fastest rollback path changes configuration without redeploying code. Examples:
+
+- **DNS cutover** — change DNS records to point consumers back to the old platform
+- **Feature flags** — flip a flag to route traffic back to legacy code paths
+- **Load balancer rules** — update routing rules to direct requests to old infrastructure
+
+Configuration rollbacks complete in seconds to minutes.
+
+**Deployment-based rollback**: Slower but sometimes necessary. Redeploy previous application versions, re-run migration scripts in reverse, restore database snapshots. Deployment rollbacks take minutes to hours.
+
+**Data rollback**: The hardest case. If the new platform has accepted writes, rolling back means losing data or replaying writes against the old platform. Avoid this scenario by keeping the old platform as the source of truth until migration is fully validated.
+
+## Ownership Transfer
+
+Data platforms serve dozens of teams. Migrations often involve **ownership transfer** — moving data products from one team to another. This is not just technical; it's organizational.
+
+### Handoff Checklists
+
+Document everything the receiving team needs to operate the data product:
+
+- **Runbooks** — how to restart failed jobs, debug data quality issues, scale infrastructure
+- **On-call procedures** — escalation paths, SLA definitions, incident response playbooks
+- **Code repositories** — transfer repository ownership, add new team to CI/CD permissions
+- **Access controls** — grant new team admin access to production infrastructure, revoke old team's access after transition
+- **Documentation** — architecture diagrams, data flow diagrams, glossary of domain terms
+- **Cost budgets** — transfer budget ownership to new team, update cost allocation tags
+
+**Shadowing period**: The receiving team shadows the giving team for 2-4 weeks before taking full ownership. They attend on-call, observe incident response, and ask questions. This reduces the risk of knowledge loss.
+
+### Tribal Knowledge Transfer
+
+The most valuable knowledge is never documented. The receiving team needs to learn:
+
+- **Quirks and workarounds** — why this table is deduplicated even though it shouldn't have duplicates
+- **Hidden dependencies** — the obscure job that breaks if you rename this column
+- **Stakeholder relationships** — who to notify before schema changes, who demands low-latency results
+- **Failure modes** — what breaks during month-end close, Black Friday traffic spikes, daylight saving time changes
+
+Capture tribal knowledge through **recorded walkthroughs** and **interactive Q&A sessions**. Record a 30-minute Loom video walking through the system. Host a live Q&A where the receiving team asks questions based on the recording.
+
+## Decommission Milestones
+
+Turning off old systems is the final migration milestone — and the most neglected. Teams leave legacy platforms running indefinitely "just in case." This creates **technical debt** (unused infrastructure you still pay for) and **operational risk** (unmaintained systems that remain attack surfaces).
+
+### Pre-Decommission Checklist
+
+Before decommissioning the old platform:
+
+1. **Verify zero traffic** — confirm no consumers are accessing the old system (check access logs, query logs, connection pools)
+2. **Redirect lost consumers** — some consumers only appear quarterly; set up redirects or email notifications when they hit the old system
+3. **Archive historical data** — export data that's legally required or historically valuable; store it in cold storage (S3 Glacier, BigQuery long-term storage)
+4. **Document the decision** — write a brief memo explaining why decommission is safe, link to traffic metrics showing zero usage, set a review date
+
+**Staged decommission**: Don't delete everything at once. Follow this timeline:
+
+- **Week 1**: Mark the old platform as deprecated in all documentation; send email to all consumers notifying them of decommission date
+- **Week 4**: Disable writes; make the old platform read-only
+- **Week 8**: Shut down compute infrastructure; preserve storage
+- **Week 16**: Delete storage after final data archive
+
+This gives ample notice and creates multiple checkpoints where you can abort if unexpected consumers surface.
+
+### Decommission Failure Modes
+
+**Premature decommission**: You delete the old platform, then discover a critical quarterly report depends on it. Prevention: monitor access logs for at least one full business cycle (one year for annual reports, one month for month-end processes).
+
+**Incomplete decommission**: You shut down the database but leave the VM running. Prevention: inventory all infrastructure components (compute, storage, networking, IAM roles, DNS records) and delete them systematically.
+
+**Data loss**: You delete the only copy of historical data that's legally required. Prevention: consult legal and compliance teams before deleting anything; export to cold storage before decommission.
+
+## Platform Evolution Roadmap
+
+Migration is never truly "done." Data platforms are **living systems** that evolve continuously. The strategies that close this lesson open the next chapter.
+
+### Continuous Improvement
+
+**Technology refresh cycles**: Cloud platforms release new services quarterly. Engines improve (BigQuery BI Engine, Snowflake Snowpark, Databricks Photon). Adopt improvements incrementally:
+
+- **Quarterly review** — every quarter, review new platform capabilities; prioritize 1-2 for adoption
+- **Pilot projects** — test new features on non-critical workloads before rolling them out broadly
+- **Migration patterns apply** — use strangler fig, parallel run, or shadow mode to adopt new platform features safely
+
+**Capability additions**: As the organization grows, the platform must grow with it. New requirements emerge:
+
+- **Real-time analytics** — the business wants dashboards that update every minute instead of every hour
+- **Machine learning** — data scientists want to deploy models in production
+- **Federated query** — analysts want to join data warehouse tables with external APIs
+
+Treat each capability addition as a mini-migration. Design the architecture, pilot with one team, validate, and roll out incrementally.
+
+### Course Synthesis: From Strategy to Operations
+
+This academy began in Module 1 with **data strategy** and **organizational maturity models**. You learned to assess where your organization stands and plot a path forward. The modules that followed walked that path:
+
+- **Module 2**: Data modeling and schema design
+- **Module 3**: Metadata and data catalogs
+- **Module 4**: Workflow orchestration
+- **Module 5**: Data quality and observability
+- **Module 6**: Data security and governance
+- **Module 7**: FinOps and cost optimization
+- **Module 8**: Reference architectures and architectural patterns
+- **Module 9**: Advanced deployment patterns (blue/green, canary, feature flags)
+- **Module 10**: Production operations, SRE practices, cost management, and migration strategies
+
+The **roadmap** you built in Module 1 is now actionable. You know how to:
+
+- **Build incrementally** — start with batch ETL, add streaming when needed, adopt real-time analytics when business value justifies cost
+- **Migrate safely** — use strangler fig, parallel run, and shadow mode to move from legacy to modern platforms without breaking production
+- **Operate reliably** — define SLOs, monitor SLIs, conduct blameless post-mortems, automate incident response
+- **Control costs** — set budgets, allocate spend by team, optimize queries, rightsize infrastructure, schedule non-critical workloads for off-peak hours
+- **Evolve continuously** — adopt new platform capabilities quarterly, refresh technology stacks every 18-24 months, decommission legacy systems systematically
+
+The maturity model from Module 1 applies here. **Reactive organizations** migrate only when forced by vendor end-of-life. **Proactive organizations** plan migrations as part of quarterly roadmaps. **Data-driven organizations** use metrics to decide when migration delivers ROI. **Optimizing organizations** treat migration as a continuous improvement discipline.
+
+## Decision Framework: Which Migration Pattern When?
+
+No single pattern fits all migrations. Choose based on migration constraints:
+
+| **Constraint**                     | **Pattern**      | **Why**                                                                 |
+|------------------------------------|------------------|-------------------------------------------------------------------------|
+| Consumers tolerate discrepancies   | Strangler fig    | Fastest path to production; fix issues incrementally                    |
+| Zero tolerance for incorrect data  | Parallel run     | Validates correctness before cutover                                    |
+| Performance under real load unknown| Shadow mode      | Tests scale without risking production                                  |
+| Can't run old + new simultaneously | Strangler fig    | Routes traffic incrementally; old system scales down as new scales up   |
+| Complex interdependencies          | Parallel run     | Discovers hidden dependencies before cutover                            |
+| Tight budget constraints           | Strangler fig    | Minimize dual-running infrastructure cost                               |
+
+**Hybrid approaches**: Many migrations combine patterns. Use shadow mode to validate performance, then parallel run to validate correctness, then strangler fig to route production traffic incrementally.
+
+## Migration Failure Modes
+
+Even well-planned migrations encounter failure modes:
+
+**No rollback plan**: The new platform fails under load on cutover day. The team scrambles to revert changes manually. Incident duration: 4 hours. Prevention: test rollback in staging before cutover; automate rollback triggers.
+
+**No exit criteria**: The migration drags on for 18 months. Both systems run indefinitely. Engineers fear turning off the old platform. Prevention: define functional parity, performance parity, and data consistency criteria upfront; track completion weekly.
+
+**Premature decommission**: You delete the old platform after 95% of traffic migrates. The 5% of consumers you missed file urgent tickets. Prevention: monitor access logs for one full business cycle; redirect lost consumers to the new platform automatically.
+
+**Big-bang cutover**: You attempt to migrate the entire data warehouse over a weekend. Unexpected issues surface. The cutover window overruns. You enter Monday with both platforms partially functional. Prevention: migrate incrementally; validate each step; maintain parallel systems during transition.
+
+**Undocumented dependencies**: You migrate a dataset that seemed unused. A critical executive report breaks. Prevention: scan query logs for all references to the dataset; notify all consumers before migration; keep the old dataset available read-only for 90 days post-migration.
+
+## Closing Thoughts
+
+Data platforms are never finished. The strategies in this lesson — incremental migration, clear exit criteria, tested rollback plans, continuous evolution — apply to every platform transition you'll face. The specific technologies change (this year it's Databricks, next year it's something else), but the migration patterns endure.
+
+You started this academy with a blank roadmap. You now have the strategies, architectures, and operational practices to build and evolve data platforms that deliver business value reliably. The path forward is incremental, measurable, and reversible. Trust the process. Migrate safely. Operate reliably. Evolve continuously.

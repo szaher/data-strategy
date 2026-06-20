@@ -1,0 +1,339 @@
+---
+title: "ML Data Decision Framework"
+quiz:
+  - question: "When is a feature store most beneficial over direct database queries?"
+    options:
+      - "For single-feature predictions with simple SQL queries"
+      - "When serving thousands of features to many models with low-latency requirements (correct)"
+      - "When you only have one ML model in production"
+      - "For batch training jobs that run once per month"
+    correctIndex: 1
+  - question: "What does model-data consistency guarantee?"
+    options:
+      - "Model accuracy remains constant over time"
+      - "Features are always computed using the latest data"
+      - "The same feature definitions and logic are used in training and serving (correct)"
+      - "Database schemas never change"
+    correctIndex: 2
+  - question: "How does the trust plane integrate with ML data infrastructure?"
+    options:
+      - "It monitors model drift in production"
+      - "It schedules feature computations"
+      - "It ensures models are accurate and fair"
+      - "It governs feature ownership, data quality, and lineage from features to models (correct)"
+    correctIndex: 3
+---
+
+## When Do You Actually Need a Feature Store?
+
+Most organizations building their first few ML models **don't need a feature store**. The industry marketing makes it sound like every production ML system requires one, but the reality is more nuanced.
+
+A **feature store** solves three specific problems:
+
+1. **Feature reuse across models** — when you have dozens of models that all need the same features (e.g., "customer lifetime value" used by churn prediction, recommendation, and fraud models)
+2. **Low-latency online serving** — when you need to compute and retrieve features in under 50ms for real-time inference
+3. **Training-serving consistency** — when you need ironclad guarantees that the feature logic used in training matches production serving
+
+If you have a single model, batch predictions, or features that are simple SQL queries, **direct database queries are simpler and cheaper**.
+
+<MermaidDiagram chart={`graph TD
+    Start[Starting ML Project] --> Q1{Multiple models<br/>sharing features?}
+    Q1 -->|No| Q2{Real-time<br/>predictions?}
+    Q1 -->|Yes| Q3{Low-latency<br/>requirements?}
+    Q2 -->|No| Direct[Direct DB Queries<br/>Simplest approach]
+    Q2 -->|Yes| Q4{Feature<br/>complexity?}
+    Q4 -->|Simple SQL| Cache[Query + Cache<br/>No feature store needed]
+    Q4 -->|Complex transforms| Online[Online-only<br/>feature store]
+    Q3 -->|No| Offline[Offline-only<br/>feature store]
+    Q3 -->|Yes| Full[Full Feature Platform<br/>Online + Offline]
+    
+    style Direct fill:#68d391,stroke:#2f855a
+    style Cache fill:#68d391,stroke:#2f855a
+    style Online fill:#fbd38d,stroke:#d69e2e
+    style Offline fill:#fbd38d,stroke:#d69e2e
+    style Full fill:#fc8181,stroke:#c53030
+`} />
+
+### Feature Store Tiers
+
+Not all feature stores are created equal. Choose the tier that matches your operational complexity budget:
+
+**Online-Only Feature Store** — stores precomputed features in a low-latency database (Redis, DynamoDB) for real-time serving. You still compute features separately for training (offline). This is the **minimum viable feature store** for real-time inference.
+
+**Offline-Only Feature Store** — stores historical features in a data warehouse (Snowflake, BigQuery) for training and batch predictions. No real-time serving. Useful when you want feature reuse and point-in-time correctness across training jobs, but all predictions are batch.
+
+**Full Feature Platform** — unified offline + online storage with automated pipelines that keep both in sync. This is what Feast, Tecton, and enterprise platforms provide. High operational complexity, but necessary when you have many models with real-time and batch workloads.
+
+## Model-Data Consistency Patterns
+
+The **training-serving skew** problem: your model was trained on features computed one way (e.g., Python in a notebook), but production serves features computed a different way (e.g., SQL in a service). The model performs poorly in production even though training metrics looked great.
+
+**Model-data consistency** means the feature **definition, computation logic, and versioning** are identical between training and serving.
+
+### Three Consistency Patterns
+
+**Pattern 1: Shared Feature Logic (Code Reuse)**
+
+Store feature transformation code in a central repository. Both training pipelines and serving pipelines import the same functions.
+
+```
+feature_definitions/
+  customer_ltv.py         # Single source of truth
+  transaction_velocity.py
+```
+
+Your training pipeline calls `customer_ltv.compute(training_data)`. Your serving API calls `customer_ltv.compute(request_data)`. **Same code, different data sources.**
+
+**Pattern 2: Materialized Features with Versioning**
+
+Precompute all features and store them with version tags. Training reads `features_v3`. Serving reads `features_v3`. When you update feature logic, you bump to `features_v4` and retrain models before deploying them.
+
+This is what **offline feature stores** provide — point-in-time correctness. You can query "what was the customer_ltv feature for customer_id=123 on 2025-01-15?" and get the exact value that would have been used for training.
+
+**Pattern 3: Dual-Write with Validation**
+
+Write features to both the offline store (for training) and online store (for serving) from the same pipeline. Run automated tests that compare offline vs online feature values for the same entities and timestamps. Alert if they diverge.
+
+This is what **full feature platforms** enforce. Feast's `materialize` command writes to both stores atomically.
+
+<MermaidDiagram chart={`graph LR
+    subgraph Training["Training Pipeline"]
+        T1[Raw Data] --> T2[Feature Transform<br/>feature_definitions/]
+        T2 --> T3[Offline Store<br/>features_v3]
+        T3 --> T4[Model Training]
+    end
+    
+    subgraph Serving["Serving Pipeline"]
+        S1[Request Data] --> S2[Feature Transform<br/>SAME CODE]
+        S2 --> S3[Online Store<br/>features_v3]
+        S3 --> S4[Model Inference]
+    end
+    
+    Sync[Feature Pipeline] --> T3
+    Sync --> S3
+    
+    style T2 fill:#90cdf4,stroke:#2c5282
+    style S2 fill:#90cdf4,stroke:#2c5282
+    style T3 fill:#c6f6d5,stroke:#2f855a
+    style S3 fill:#fed7d7,stroke:#c53030
+`} />
+
+### Why Consistency is Hard
+
+**Timestamp alignment** — training uses historical data with timestamps. Serving uses "now." If your feature depends on "transactions in the last 7 days," you need to ensure training computes it as "7 days before the prediction timestamp," not "7 days before the training job ran."
+
+**Data source drift** — training reads from a Snowflake table. Serving reads from a Postgres replica. If the Postgres replica lags by 10 minutes, features diverge.
+
+**Schema evolution** — you add a new column to your feature logic. If training uses the new schema but serving is still on the old schema, consistency breaks.
+
+## Operational Complexity vs Correctness Guarantees
+
+There's a **fundamental tradeoff** in ML data infrastructure: more correctness guarantees require more operational complexity.
+
+| Approach | Complexity | Consistency | Latency | When to Use |
+|----------|-----------|-------------|---------|-------------|
+| Direct SQL queries | <span class="vs-good">Low</span> | <span class="vs-bad">Manual</span> | <span class="vs-neutral">Medium</span> | Single model, batch predictions |
+| Query + cache layer | <span class="vs-good">Low</span> | <span class="vs-bad">Manual</span> | <span class="vs-good">Low</span> | Simple features, low traffic |
+| Online-only store | <span class="vs-neutral">Medium</span> | <span class="vs-neutral">Partial</span> | <span class="vs-good">Very Low</span> | Real-time inference, no training reuse |
+| Offline-only store | <span class="vs-neutral">Medium</span> | <span class="vs-good">High</span> | <span class="vs-bad">High</span> | Batch predictions, training reuse |
+| Full feature platform | <span class="vs-bad">High</span> | <span class="vs-good">Guaranteed</span> | <span class="vs-good">Very Low</span> | Many models, real-time + batch |
+
+**Operational complexity** includes:
+
+- **Infrastructure maintenance** — running Redis clusters, Feast registry, feature materialization jobs
+- **Debugging difficulty** — when a model underperforms, is it the model or a feature pipeline bug?
+- **Team coordination** — who owns features? Who approves schema changes? What's the rollback process?
+- **Monitoring overhead** — feature freshness, data quality checks, serving latency, cache hit rates
+
+For **early-stage ML teams** (1-5 models in production), the operational burden of a full feature platform often outweighs the benefits. Start with direct queries or a simple cache layer. Adopt a feature store when you have **proven product-market fit** for your ML use cases and are scaling to dozens of models.
+
+For **mature ML teams** (50+ models, multiple data science teams), the consistency guarantees and reuse benefits justify the complexity.
+
+## Connecting ML Data Governance to the Trust Plane
+
+In Module 7, we built a **trust plane** for data governance — ownership, access control, lineage, and data quality. ML data infrastructure **must integrate with the trust plane**, not operate as a parallel system.
+
+### Feature Ownership
+
+Every feature should have a **defined owner** — the person or team responsible for its correctness, maintenance, and breaking changes. This ownership should be encoded in the feature metadata:
+
+```yaml
+name: customer_ltv
+owner: data-science-team
+description: Predicted customer lifetime value over 12 months
+version: 3
+dependencies:
+  - transactions_table
+  - customer_profile_table
+data_quality_checks:
+  - no_nulls
+  - positive_values_only
+```
+
+When a feature breaks (returns NaNs, drifts significantly), the **trust plane** routes the alert to the owner and blocks downstream models from using the broken feature.
+
+### Feature Lineage
+
+**Feature lineage** extends the data lineage graph from Module 7. Instead of just tracking table → table dependencies, you now track:
+
+- **Feature → Source Tables** — which raw data does this feature depend on?
+- **Feature → Models** — which models consume this feature?
+- **Feature → Business Metrics** — which dashboards or KPIs depend on models using this feature?
+
+When a source table schema changes, the trust plane can **automatically determine which features and models are affected** and notify the right teams before deploying the change.
+
+### Data Quality for Features
+
+ML models are uniquely sensitive to **data quality issues** that would be invisible in analytics:
+
+- **Feature drift** — the distribution of a feature changes over time (e.g., "avg_transaction_amount" suddenly doubles because you started serving a new market segment)
+- **Null injection** — a source table starts returning nulls due to a pipeline bug, and the model receives NaN features
+- **Stale features** — the feature materialization job fails, so the online store serves 3-day-old features
+
+The **trust plane** should run automated **feature drift detection** and **freshness checks**:
+
+```python
+# Pseudocode: feature quality check in the trust plane
+for feature in feature_store.list_features():
+    current_distribution = feature_store.get_online_stats(feature)
+    training_distribution = feature_store.get_offline_stats(feature, training_date)
+    
+    drift_score = calculate_drift(current_distribution, training_distribution)
+    if drift_score > DRIFT_THRESHOLD:
+        alert_owner(feature.owner, f"Feature {feature.name} has drifted by {drift_score}")
+        block_model_deployments_using(feature.name)
+```
+
+### Access Control for Features
+
+Not all features should be accessible to all models. Some features (e.g., "user_credit_score") may have **compliance restrictions** that limit which models can use them.
+
+The **trust plane** enforces **feature-level access control**:
+
+- Model A (fraud detection) can read `user_credit_score`
+- Model B (recommendation) cannot read `user_credit_score` (FCRA compliance)
+
+This access control should be **enforced at the feature store API level**, not just documented in a wiki.
+
+## Bringing It All Together: The Learner Artifact
+
+You are now equipped to design a **feature store architecture** and **training-data versioning strategy** for the recurring scenario (e-commerce startup).
+
+### Scenario Requirements
+
+- **10 ML models** planned (churn prediction, recommendation, dynamic pricing, fraud detection, etc.)
+- **Real-time inference** for recommendations and fraud detection (< 50ms)
+- **Batch predictions** for churn (daily) and pricing (hourly)
+- **Shared features** across models (e.g., "customer_ltv" used by churn and pricing)
+- **Team of 5 data scientists** who need to iterate on features without breaking production models
+
+### Your Design Decisions
+
+**1. Feature Store Tier** — Full platform (offline + online) because you have both real-time and batch workloads, and you need shared features across 10 models.
+
+**2. Technology Choice** — Feast (open-source, GCP-integrated) with BigQuery (offline) and Redis (online).
+
+**3. Consistency Pattern** — Materialized features with versioning. Every feature has a version tag. Models are trained on `features_v3` and only deployed to serving when the online store also has `features_v3`.
+
+**4. Trust Plane Integration**:
+   - **Ownership**: Every feature has a YAML manifest with `owner`, `dependencies`, and `data_quality_checks`
+   - **Lineage**: Automated graph from source tables → features → models → business metrics
+   - **Access Control**: Feature store API checks model permissions before serving features
+   - **Data Quality**: Hourly drift detection, freshness checks, null rate monitoring
+
+**5. Versioning Strategy**:
+   - Features are versioned (`customer_ltv_v1`, `customer_ltv_v2`)
+   - Training datasets are versioned (`training_data_2025_01_15_v3`)
+   - Models are tagged with the feature version they were trained on (`model_churn_v2_features_v3`)
+   - Serving only uses features matching the deployed model's version tag
+
+### Architecture Diagram
+
+<MermaidDiagram chart={`graph TD
+    subgraph Sources["Data Sources"]
+        S1[(Postgres<br/>Transactions)]
+        S2[(Snowflake<br/>Events)]
+        S3[(MongoDB<br/>Profiles)]
+    end
+    
+    subgraph Pipeline["Feature Pipeline"]
+        P1[Feature Definitions<br/>Python + YAML]
+        P2[Feast Apply<br/>Register features]
+        P3[Materialization Job<br/>Hourly]
+    end
+    
+    subgraph Stores["Feature Stores"]
+        O1[(BigQuery<br/>Offline Store)]
+        O2[(Redis<br/>Online Store)]
+    end
+    
+    subgraph Trust["Trust Plane"]
+        T1[Feature Ownership]
+        T2[Lineage Graph]
+        T3[Data Quality Checks]
+        T4[Access Control]
+    end
+    
+    subgraph ML["ML Workloads"]
+        M1[Training<br/>Batch Jobs]
+        M2[Serving<br/>Real-time API]
+    end
+    
+    S1 --> P1
+    S2 --> P1
+    S3 --> P1
+    P1 --> P2
+    P2 --> P3
+    P3 --> O1
+    P3 --> O2
+    
+    O1 --> M1
+    O2 --> M2
+    
+    P2 --> T1
+    P2 --> T2
+    P3 --> T3
+    T4 --> M2
+    
+    style O1 fill:#c6f6d5,stroke:#2f855a
+    style O2 fill:#fed7d7,stroke:#c53030
+    style T1 fill:#ebf8ff,stroke:#3182ce
+    style T2 fill:#ebf8ff,stroke:#3182ce
+    style T3 fill:#ebf8ff,stroke:#3182ce
+    style T4 fill:#ebf8ff,stroke:#3182ce
+`} />
+
+## Key Takeaways
+
+**Start simple** — most early-stage ML doesn't need a feature store. Direct queries or a cache layer is often sufficient until you have multiple models and proven use cases.
+
+**Model-data consistency is non-negotiable** — training-serving skew destroys production model performance. Invest in shared feature logic and versioning from day one.
+
+**Feature stores have operational cost** — the complexity of running a full feature platform is justified only when you have enough models to amortize the infrastructure overhead.
+
+**Integrate with the trust plane** — ML data infrastructure should not be a parallel governance system. Feature ownership, lineage, data quality, and access control must align with your broader data governance framework.
+
+**Version everything** — features, training datasets, and models should all be versioned and linked. When a model underperforms in production, you need to trace back to the exact feature definitions it was trained on.
+
+---
+
+## Looking Ahead: Module 9 — LLM and Agent Data Infrastructure
+
+Traditional ML data infrastructure (feature stores, training data versioning) was designed for **supervised learning** — you have input features, labels, and a model that predicts outputs.
+
+**Large language models (LLMs)** and **AI agents** have fundamentally different data needs:
+
+- **No explicit features** — inputs are unstructured text, not tabular features
+- **No static training datasets** — LLMs are pretrained on massive corpora, then fine-tuned or adapted via prompting
+- **Context retrieval** — agent performance depends on dynamically retrieving the right context at inference time (RAG, tool use, memory)
+- **Evaluation is subjective** — "did the agent answer the question well?" is harder to measure than "did the classifier predict the right label?"
+
+Module 9 will cover the **new data infrastructure primitives** for LLM and agent systems:
+
+- **Vector databases** for semantic search and retrieval
+- **Prompt engineering and versioning** as the new "feature engineering"
+- **Observability for agent workflows** — tracing multi-step reasoning and tool calls
+- **Human-in-the-loop data pipelines** — collecting feedback to improve LLM outputs
+- **RAG pipeline design** — chunking, embedding, retrieval, and reranking strategies
+
+The principles of **data quality, lineage, and governance** remain the same — but the implementation patterns are entirely different.

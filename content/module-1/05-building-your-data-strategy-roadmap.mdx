@@ -1,0 +1,391 @@
+---
+title: "Building Your Data Strategy Roadmap"
+---
+
+## Overview
+
+You've assessed your organization's data maturity across five dimensions (Lesson 3), mapped your integration scenario and ownership model (Lessons 1–2), and selected a reference architecture (Lesson 4). Now comes the moment where most strategic planning stalls: **turning architectural diagrams into a funded, executable roadmap.**
+
+An architecture shows the target state — the platform you want to have in 12 months. A roadmap shows how to get there: what you build in which order, who owns what, how much investment each phase requires, and how you measure success along the way. Without this sequencing and scoping, your architecture becomes **aspirational wall art** — admired in planning decks, ignored in quarterly budgets.
+
+This lesson builds a **strategy canvas**: a one-page document that translates your assessment, architecture, and ownership model into phased investment bands with clear success metrics. We'll walk through sequencing principles, construct a worked 12-month roadmap for our recurring scenario, and catalog the anti-patterns that turn well-designed architectures into abandoned initiatives.
+
+By the end of this lesson, you'll produce the module's **learner artifact**: a concrete strategy and operating-model canvas that bridges where you are, where you're going, and how you'll get there.
+
+---
+
+## Why a Roadmap, Not Just an Architecture
+
+A reference architecture is necessary but not sufficient. It tells you the destination: managed services for platform teams, lakehouse storage for analytics, streaming infrastructure for operational decisions, feature stores for ML, vector search for AI. All of this is correct — and all of it is useless without execution sequencing.
+
+The roadmap answers four questions the architecture cannot:
+
+1. **What comes first?** You can't build everything at once. Foundation capabilities (object storage, identity, CI/CD) must precede analytics capabilities (Spark, Iceberg, dashboards). Trust mechanisms (governance, lineage, quality) can't wait until Phase 3 — if you defer them, you'll spend Phase 4 retrofitting security and compliance into a platform that was built without them.
+
+2. **How much does each phase cost?** Platform engineering is an investment function. Leadership funds quarterly budgets, not multi-year moonshots. Your roadmap must split the work into **investment bands**: Phase 1 costs $X for foundational infra, Phase 2 costs $Y for analytics, Phase 3 costs $Z for AI. Each band must justify itself with concrete outcomes, not promises of future value.
+
+3. **Who owns what, and when?** The operating model (Lesson 2) described **hybrid ownership**: platform teams provide self-service tooling, domain teams own their data products. The roadmap makes this concrete — Phase 1 establishes the platform team and their first deliverables (object storage, CDC pipelines), Phase 2 onboards the first domain team (marketing analytics), Phase 3 scales to additional domains (fraud detection, personalization).
+
+4. **How do you know if you're succeeding?** Every phase needs success metrics — not vague aspirations like "improve data quality," but measurable outcomes like "reduce pipeline failures from 15% to <5%," "ship first data product in 6 weeks," "achieve <10s query latency for 95th percentile dashboard loads." Without metrics, you can't tell the difference between progress and motion.
+
+The architecture diagram is the map. The roadmap is the route, the fuel stops, and the arrival checkpoints.
+
+---
+
+## The Strategy Canvas Structure
+
+A strategy canvas fits on one page. It contains seven elements, listed in dependency order:
+
+### 1. Current State Summary
+
+Pull from your maturity assessment (Lesson 3). For each dimension, state where you are today:
+
+- **Infrastructure Maturity:** Ad-hoc tooling, no platform team → Level 2 (managed but manual)
+- **Data Governance:** No catalog, informal ownership → Level 1 (siloed, reactive)
+- **Analytics & ML Capability:** SQL dashboards only → Level 2 (batch analytics, no ML in prod)
+- **Operating Model:** IT owns everything → Level 2 (beginning to federate ownership)
+- **AI Readiness:** No AI workloads → Level 1 (no structured data for ML)
+
+This is your baseline. The roadmap explains how you move from Level 1–2 to Level 3–4 across all dimensions.
+
+### 2. Target State
+
+Pull from your reference architecture (Lesson 4). For our recurring scenario (hybrid recommended archetype):
+
+- **Platform foundations:** Managed Kubernetes (GKE), object storage (GCS), managed Postgres, CI/CD (Cloud Build)
+- **Streaming:** Kafka (MSK or Confluent Cloud)
+- **Processing:** Spark on K8s, dbt for transformations
+- **Storage:** Iceberg lakehouse on object storage
+- **Catalog:** DataHub or Atlan
+- **AI/ML:** Feature store (Feast or Tecton), vector DB (Pinecone or pgvector), RAG orchestration (LangChain)
+- **Observability:** Prometheus, Grafana, OpenTelemetry tracing
+
+This is your 12-month destination, not Day 1 deliverables.
+
+### 3. Capability Gaps
+
+The delta between current and target. List every missing capability, prioritized by dependency and business impact:
+
+1. **High Priority (Phase 1):** Platform team formation, K8s cluster, object storage, CI/CD, basic CDC
+2. **Medium Priority (Phase 2):** Kafka cluster, Spark runtime, Iceberg tables, data catalog, governance policies
+3. **Lower Priority (Phase 3):** Feature store, vector search, RAG pipelines, cost optimization, multi-tenancy
+
+Prioritization rules:
+- **Foundation before features:** K8s and object storage unlock everything else.
+- **Trust early, not late:** Governance in Phase 1, not retrofitted in Phase 3.
+- **Quick wins alongside infrastructure:** Ship a CDC pipeline in Phase 1 to prove value while building the platform.
+- **AI readiness as progression:** Feature store requires structured batch data (Phase 2), vector search requires embeddings and retrieval patterns (Phase 3).
+
+### 4. Ownership Model
+
+From Lesson 2, restate the hybrid model:
+
+- **Platform team** owns infrastructure, tooling, SLOs for shared services.
+- **Domain teams** own data products, schemas, quality checks, business logic.
+- **Governance council** sets policies; platform team enforces them via tooling.
+
+In the roadmap, specify when each team starts:
+- Phase 1: Platform team hires first two engineers, reports to CTO.
+- Phase 2: Marketing analytics team designated as first domain data product owner.
+- Phase 3: Fraud detection and personalization teams onboard.
+
+### 5. Investment Bands
+
+Split the roadmap into three phases, each 3–6 months:
+
+**Phase 1 (0–3 months):** Foundations + Quick Wins
+- Budget: $150K (2 platform engineers, cloud infra, tooling licenses)
+- Deliverables: K8s cluster, object storage, Postgres, basic CDC pipeline, CI/CD
+- Outcome: First data product (customer events from app DB to object storage) shipped in 6 weeks
+
+**Phase 2 (3–6 months):** Analytics + Governance
+- Budget: $200K (1 additional platform engineer, Kafka, Spark, catalog license)
+- Deliverables: Kafka cluster, Spark on K8s, Iceberg lakehouse, DataHub catalog, first dbt models
+- Outcome: Marketing analytics dashboard live, <10s query latency, governance policies enforced
+
+**Phase 3 (6–12 months):** AI/ML + Scale
+- Budget: $250K (ML engineer, feature store, vector DB, fine-tuning costs)
+- Deliverables: Feature store, RAG pipeline, vector search, SRE observability, cost dashboards
+- Outcome: Fraud detection model in production, RAG chatbot answering support queries
+
+Each phase is independently fundable. If Phase 1 fails to deliver, you can halt before Phase 2. If Phase 2 succeeds but AI isn't a priority, you can defer Phase 3.
+
+### 6. Success Metrics per Phase
+
+Every phase has **three types of metrics**:
+
+- **Technical SLOs:** Pipeline uptime >99%, query latency <10s p95, data freshness <15 min
+- **Adoption metrics:** 3 domain teams onboarded, 10 data products published, 50 analysts using the catalog
+- **Business outcomes:** $500K ARR from fraud detection model, 20% reduction in support tickets via chatbot
+
+Measure at the end of each phase. If you hit <70% of targets, pause and diagnose before moving to the next phase.
+
+### 7. Dependencies Between Phases
+
+Visualize the critical path:
+
+- Phase 2 cannot start until Phase 1 delivers K8s, object storage, and CDC (dependencies).
+- Phase 3 cannot start until Phase 2 delivers Iceberg lakehouse and dbt models (structured data is required for feature engineering).
+- Governance runs **alongside all phases**, not after them. The catalog launches in Phase 2, but governance policies start in Phase 1 (data classification, access control).
+
+<MermaidDiagram chart={`flowchart TD
+    A[Maturity Assessment] --> B[Gap Analysis]
+    B --> C[Prioritization]
+    C --> D[Phase 1: Foundations]
+    D --> E[Phase 2: Analytics]
+    E --> F[Phase 3: AI/ML]
+    
+    G[Trust Plane] -.-> D
+    G -.-> E
+    G -.-> F
+    
+    D --> H{Success<br/>Metrics<br/>Met?}
+    H -->|Yes| E
+    H -->|No| I[Diagnose & Fix]
+    I --> D
+    
+    E --> J{Success<br/>Metrics<br/>Met?}
+    J -->|Yes| F
+    J -->|No| K[Diagnose & Fix]
+    K --> E
+    
+    style G fill:#fef3c7,stroke:#f59e0b
+    style D fill:#dbeafe,stroke:#3b82f6
+    style E fill:#dbeafe,stroke:#3b82f6
+    style F fill:#dbeafe,stroke:#3b82f6
+    style H fill:#fce7f3,stroke:#ec4899
+    style J fill:#fce7f3,stroke:#ec4899
+`} />
+
+The **trust plane** (governance, security, observability) is not a phase — it's a parallel workstream that starts in Phase 1 and continues through all phases. Deferred trust is the most common roadmap failure mode.
+
+---
+
+## Sequencing Principles
+
+How do you decide what goes into Phase 1 versus Phase 2? Follow these four principles:
+
+### 1. Foundation Before Features
+
+You cannot run Spark without a K8s cluster. You cannot query an Iceberg table without object storage. You cannot enforce governance without a catalog. The **platform foundations** — compute, storage, orchestration, CI/CD — unlock everything else.
+
+Phase 1 is always infrastructure-heavy. This feels slow to stakeholders who want dashboards and models, but it's non-negotiable. The mistake is **hiding the foundation work** instead of **shipping quick wins alongside it.**
+
+### 2. Trust Early, Not Late
+
+Governance, security, and observability are not Phase 3 add-ons. If you build a lakehouse without access controls, you'll spend Phase 4 retrofitting row-level security into 500 Iceberg tables. If you deploy Kafka without monitoring, you'll discover data loss in production, not in testing.
+
+Start the **trust plane** in Phase 1:
+- Classify data (PII, confidential, public) before loading it into the lakehouse
+- Enforce RBAC on object storage buckets before domain teams start writing to them
+- Set up Prometheus and Grafana before the first Spark job runs
+
+Trust mechanisms are easier to build into greenfield platforms than to retrofit into production systems. Don't defer them.
+
+### 3. Quick Wins Alongside Infrastructure
+
+Platform engineering has a **credibility problem**: it takes 6 months to ship a K8s cluster, and stakeholders see no value until the first data product launches. If you spend Phase 1 building infrastructure and Phase 2 building analytics, you'll lose executive support before Phase 2 starts.
+
+The fix: **ship a quick win in Phase 1.** Even if your K8s cluster isn't fully automated, you can still deploy a basic CDC pipeline that streams customer events from Postgres to object storage. Marketing can query those events in BigQuery or Athena while you finish building the Iceberg lakehouse in Phase 2.
+
+Quick wins prove the platform's value **before** the platform is finished.
+
+### 4. AI Readiness as Progression, Not Project
+
+AI workloads (RAG, recommendations, fraud detection) depend on **structured data pipelines** that most organizations don't have yet. You cannot train a fraud detection model without labeled transaction data. You cannot build a RAG chatbot without a knowledge base of embedded documents.
+
+Phase 1 builds the data foundations (CDC, object storage, basic transformations). Phase 2 structures that data into analytics-ready tables (Iceberg, dbt models, dashboards). Phase 3 uses those structured tables for ML feature engineering and AI inference.
+
+AI readiness is the **output** of a mature data platform, not a separate project you run in parallel. Trying to skip from Phase 1 to Phase 3 (build AI without analytics) produces proof-of-concept notebooks that never reach production.
+
+---
+
+## Worked Example: 12-Month Roadmap
+
+Let's apply the strategy canvas to our recurring scenario (e-commerce company, 200 employees, $50M ARR, Level 2 maturity, hybrid recommended architecture).
+
+### Phase 1 (0–3 Months): Platform Foundations + Quick Wins
+
+**Goal:** Establish the platform team, deploy foundational infrastructure, ship the first data product.
+
+**Team:**
+- Hire 2 platform engineers (1 backend/K8s, 1 data engineering)
+- Report to CTO, budget $150K for salaries + infra
+
+**Deliverables:**
+1. **Kubernetes cluster** on GKE (or EKS) with auto-scaling, pod security policies, network policies
+2. **Object storage** (GCS or S3) with bucket-level RBAC, lifecycle policies for archival
+3. **Managed Postgres** (Cloud SQL or RDS) for app database replication
+4. **Basic CDC pipeline** using Debezium to stream customer events from Postgres to object storage (Parquet files)
+5. **CI/CD** with Cloud Build (or GitHub Actions) for automated deployments
+6. **Initial governance** — data classification schema (PII, confidential, public), RBAC on storage buckets
+
+**Quick Win:**
+- Marketing team queries customer events from object storage via BigQuery external tables (or Athena)
+- First data product published: `customer_events` table, updated every 15 minutes
+
+**Success Metrics:**
+- K8s cluster uptime >99.5%
+- CDC pipeline latency <15 minutes from Postgres commit to object storage write
+- Marketing team runs 10+ queries per week on `customer_events` table
+- Zero security incidents (no unauthorized bucket access)
+
+**Cost:** $150K
+
+---
+
+### Phase 2 (3–6 Months): Analytics + Governance
+
+**Goal:** Build the lakehouse, enable self-service analytics, enforce governance policies.
+
+**Team:**
+- Add 1 platform engineer (data focus)
+- Onboard marketing analytics team as first **domain data product owner**
+
+**Deliverables:**
+1. **Kafka cluster** (MSK or Confluent Cloud) for real-time event streaming
+2. **Spark on K8s** for batch and streaming transformations
+3. **Iceberg lakehouse** on object storage — migrate `customer_events` from Parquet to Iceberg tables
+4. **DataHub catalog** with automated lineage tracking (dbt → Iceberg → dashboards)
+5. **dbt models** for first 10 analytics use cases (customer segmentation, cohort analysis, churn prediction)
+6. **Governance policies** enforced — PII masking in non-production environments, access requests via catalog UI
+
+**Quick Win:**
+- Marketing dashboard live with <10s query latency for 95th percentile loads
+- First governed data product: `customer_segments` table with documented schema, lineage, and SLOs
+
+**Success Metrics:**
+- 3 data products published in the catalog (customer events, segments, churn scores)
+- 20 analysts onboarded, 100+ queries per week
+- Pipeline uptime >99%
+- <5% of queries fail due to schema changes (lineage tracking catches breaking changes)
+
+**Cost:** $200K
+
+---
+
+### Phase 3 (6–12 Months): AI/ML + Scale
+
+**Goal:** Enable ML workloads, ship production AI use cases, scale to 5+ domain teams.
+
+**Team:**
+- Add 1 ML engineer
+- Onboard fraud detection and personalization teams
+
+**Deliverables:**
+1. **Feature store** (Feast or Tecton) with online/offline stores, feature versioning, monitoring
+2. **Vector database** (Pinecone or pgvector extension in Postgres) for embeddings
+3. **RAG pipeline** using LangChain, OpenAI embeddings, and vector search over support docs
+4. **Production SRE** — Prometheus alerting, Grafana dashboards, OpenTelemetry tracing, cost dashboards
+5. **Multi-tenancy** — namespace isolation per domain team, quota enforcement, chargeback reports
+6. **Cost optimization** — spot instances for Spark, lifecycle policies for cold data, query result caching
+
+**Quick Wins:**
+- Fraud detection model in production, blocking 5% of transactions with <1% false positive rate
+- RAG chatbot answering 30% of support queries, reducing ticket volume by 20%
+
+**Success Metrics:**
+- 5 domain teams onboarded, 20+ data products published
+- Fraud model achieves $500K annual savings (prevented fraud)
+- RAG chatbot handles 1,000 queries per week with 80% answer accuracy
+- Platform cost per data product <$5K/month
+- P95 query latency <10s for all dashboards
+
+**Cost:** $250K
+
+---
+
+### Phase Dependency Diagram
+
+<MermaidDiagram chart={`gantt
+    title 12-Month Data Platform Roadmap
+    dateFormat  YYYY-MM-DD
+    section Phase 1
+    Platform Team Hiring          :p1a, 2026-07-01, 30d
+    K8s + Object Storage          :p1b, after p1a, 45d
+    CDC Pipeline                  :p1c, after p1b, 30d
+    Governance Foundations        :p1d, after p1a, 90d
+    section Phase 2
+    Kafka Cluster                 :p2a, after p1c, 30d
+    Spark on K8s                  :p2b, after p2a, 30d
+    Iceberg Lakehouse             :p2c, after p2b, 30d
+    DataHub Catalog               :p2d, after p1d, 45d
+    dbt Models                    :p2e, after p2c, 30d
+    section Phase 3
+    Feature Store                 :p3a, after p2e, 45d
+    Vector DB + RAG               :p3b, after p2e, 45d
+    Production SRE                :p3c, after p2a, 120d
+    Multi-Tenancy                 :p3d, after p3c, 30d
+`} />
+
+The diagram shows the critical path: CDC depends on K8s, Iceberg depends on Spark, and the feature store depends on dbt models (structured data). Governance runs in parallel from Phase 1 onward.
+
+---
+
+## Anti-Patterns: How Roadmaps Fail
+
+Five failure modes turn well-designed architectures into abandoned initiatives:
+
+### 1. Everything at Once
+
+Attempting to deploy Kafka, Spark, Iceberg, DataHub, and a feature store in the first quarter. Result: none of them reach production, the platform team burns out, and executives cancel the initiative.
+
+**Fix:** Phase the work. Ship foundational infrastructure first, analytics second, AI third.
+
+### 2. Governance Deferred to Phase 3
+
+Building a lakehouse without access controls, catalogs, or lineage tracking, then trying to retrofit governance after 500 tables are in production. Result: compliance failures, data breaches, and months of remediation work.
+
+**Fix:** Start the trust plane in Phase 1. Governance is not a Phase 3 add-on.
+
+### 3. No Success Metrics
+
+Shipping a K8s cluster, Kafka cluster, and Iceberg lakehouse without measuring pipeline uptime, query latency, or adoption. Result: you can't tell if the platform is succeeding or failing.
+
+**Fix:** Define technical SLOs, adoption metrics, and business outcomes for every phase. Measure them. Adjust if you miss targets.
+
+### 4. Tool-First Planning
+
+Choosing Databricks because a vendor pitched it, then designing the roadmap around Databricks features. Result: over-provisioned platforms that cost $500K/year and deliver $50K of value.
+
+**Fix:** Start with the integration scenario (Lesson 1), pick the architecture (Lesson 4), then choose tools that fit the architecture. Tools serve the strategy, not the reverse.
+
+### 5. Ignoring Organizational Change
+
+Deploying a self-service platform without training domain teams, creating data product ownership policies, or establishing governance councils. Result: the platform sits unused because no one knows how to use it.
+
+**Fix:** The operating model (Lesson 2) is half the roadmap. Allocate budget for training, documentation, office hours, and governance processes.
+
+---
+
+## Summary
+
+A reference architecture shows the target state. A roadmap shows how to get there: what you build in which order, who owns what, how much each phase costs, and how you measure success.
+
+The **strategy canvas** fits on one page and contains seven elements:
+1. Current state summary (from maturity assessment)
+2. Target state (from reference architecture)
+3. Capability gaps (prioritized delta)
+4. Ownership model (hybrid: platform team + domain teams)
+5. Investment bands (Phase 1: foundations, Phase 2: analytics, Phase 3: AI)
+6. Success metrics per phase (technical SLOs, adoption, business outcomes)
+7. Dependencies between phases (critical path + parallel trust plane)
+
+Follow four sequencing principles:
+- **Foundation before features** — K8s and object storage unlock everything else
+- **Trust early, not late** — governance in Phase 1, not Phase 3
+- **Quick wins alongside infrastructure** — ship a CDC pipeline in Phase 1 to prove value
+- **AI readiness as progression** — structured data pipelines (Phase 2) enable ML workloads (Phase 3)
+
+Avoid five anti-patterns:
+- Everything at once (phase the work)
+- Governance deferred to Phase 3 (start the trust plane in Phase 1)
+- No success metrics (measure SLOs, adoption, business outcomes)
+- Tool-first planning (strategy first, tools second)
+- Ignoring organizational change (operating model is half the roadmap)
+
+The worked example demonstrated a 12-month roadmap for our recurring scenario: Phase 1 built platform foundations and shipped a CDC pipeline, Phase 2 deployed the Iceberg lakehouse and enforced governance, Phase 3 launched ML workloads and scaled to five domain teams.
+
+This completes Module 1. You've learned the **layer cake and integration scenario** (Lesson 1), the **hybrid ownership model and data products** (Lesson 2), the **five-dimension maturity assessment** (Lesson 3), the **three reference architecture archetypes** (Lesson 4), and now the **strategy canvas and roadmap** (Lesson 5).
+
+In Module 2, we'll descend into the platform foundations: Kubernetes runtime decisions, security models, cost optimization, and observability patterns. The strategy is set. Now we build it.

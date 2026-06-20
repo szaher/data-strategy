@@ -1,0 +1,358 @@
+---
+title: "Schema Design, Partitioning & Retention"
+---
+
+## Overview
+
+Storage decisions don't end at choosing between PostgreSQL and Parquet files. The structure you impose on your data — how you organize tables, what columns exist, how you partition data across files or partitions, and how long you keep it — determines whether queries run in milliseconds or minutes, whether storage costs spiral or stay predictable, and whether your schema evolves gracefully or becomes a maintenance nightmare.
+
+This lesson covers the design principles that turn raw storage into a structured data platform: **relational schema design** (normalization vs denormalization), **file-level schema design** (Parquet, JSON, Avro tradeoffs), **indexing strategies** (when to add them, when they hurt), **time-based partitioning** (choosing granularity to match query patterns), and **retention policies** (automating lifecycle management before storage costs become a governance crisis).
+
+By the end of this lesson, you'll understand the default choices that work for most systems (normalized OLTP, Parquet analytics, daily partitioning, automated retention), the decision framework for when to deviate, and the failure modes to avoid.
+
+**Boundary note:** This lesson covers relational and file-level schema design. Event-schema compatibility (Avro schema evolution, Protobuf backward compatibility) is covered in Module 4. Table-format schema evolution (Apache Iceberg schema changes) is covered in Module 6.
+
+## Relational Schema Design Principles
+
+Relational databases organize data into tables with defined columns, types, and constraints. How you structure those tables — how normalized or denormalized they are — depends on your workload.
+
+### Normalization for OLTP
+
+**Normalization** is the process of organizing data to minimize redundancy. The most common target is **Third Normal Form (3NF)**, which enforces:
+
+1. Each column contains atomic values (no arrays or JSON blobs)
+2. Every non-key column depends on the entire primary key
+3. No transitive dependencies (non-key columns don't depend on other non-key columns)
+
+The practical effect: each fact is stored exactly once. If a customer's email changes, you update one row in the `customers` table, and every order referencing that customer immediately reflects the new email.
+
+**Why normalize?** OLTP systems prioritize write consistency and storage efficiency. Redundancy creates **update anomalies** — if the same email is stored in 10,000 order rows, updating it requires 10,000 writes, and forgetting one creates inconsistency.
+
+**Example:** Instead of storing customer name and email in every order row, you store a `customer_id` foreign key and join to the `customers` table. This is a normalized design.
+
+### Denormalization for Analytics
+
+**Denormalization** is the deliberate introduction of redundancy to optimize read performance. Analytics workloads query historical data at scale, often joining dozens of tables. Denormalized schemas reduce joins by pre-computing them.
+
+The two most common patterns are:
+
+- **Star schema:** A central **fact table** (e.g., `sales`) surrounded by **dimension tables** (e.g., `customers`, `products`, `time`). Fact tables store metrics (revenue, quantity) and foreign keys to dimensions. Queries join facts to dimensions, but the structure is simple and predictable.
+- **Snowflake schema:** Like a star schema, but dimensions are further normalized (e.g., `products` joins to `categories`, which joins to `departments`). This reduces storage at the cost of more joins.
+
+**Why denormalize?** Analytics queries scan millions of rows. Every join adds overhead. Denormalized schemas embed common dimensions directly into fact tables (e.g., store `product_name` and `category_name` in `sales`), eliminating joins. The tradeoff: updates become expensive, but analytics workloads rarely update historical data.
+
+**Default recommendation:** Use 3NF for OLTP. Use star schemas for analytics (data warehouses, OLAP databases). Don't prematurely denormalize OLTP tables to optimize for occasional analytics queries — build a separate analytics schema instead.
+
+### Primary Keys, Foreign Keys, and Constraints
+
+Constraints are documentation. They tell readers (and query planners) what guarantees the data provides.
+
+- **Primary key:** Uniquely identifies a row. Forces `NOT NULL` and `UNIQUE`. Most tables need one.
+- **Foreign key:** References a primary key in another table. Enforces referential integrity (you can't insert an order with a non-existent `customer_id`).
+- **Check constraints:** Enforce domain rules (e.g., `age >= 0`, `status IN ('pending', 'complete')`).
+
+**Why enforce constraints?** They catch errors at write time, before corrupt data enters the system. They also enable query optimizations — the planner knows a foreign key column has no null values, and can skip null checks.
+
+**When to relax constraints?** High-throughput OLTP systems sometimes defer foreign key checks to improve write performance. Analytics systems often skip constraints entirely — the ETL pipeline guarantees data quality, and constraint validation would slow bulk loads.
+
+### Normalization as a Spectrum
+
+Normalization isn't binary. You can have a mostly normalized schema with selective denormalization for hot paths. The decision framework:
+
+- **Normalize when:** Writes are frequent, data changes often, storage efficiency matters, consistency is critical.
+- **Denormalize when:** Reads dominate, data is append-only, query latency is a bottleneck, joins are too expensive.
+
+Most systems have both normalized operational tables and denormalized analytics tables, connected by an ETL pipeline that runs nightly or hourly.
+
+## File-Level Schema Design
+
+File formats embed schema information in different ways. Choosing the right format depends on where you are in the data pipeline.
+
+### Parquet as the Default Columnar Format
+
+**Parquet** is the default file format for analytics. It stores data in columns (not rows), which enables two key optimizations:
+
+1. **Column pruning:** If a query only reads 3 of 50 columns, Parquet skips the other 47 entirely. Row-based formats (CSV, JSON) must read the entire row to extract any column.
+2. **Predicate pushdown:** Parquet files store min/max statistics for each column chunk. If you filter `WHERE date >= '2024-01-01'`, the query engine skips chunks where `max(date) < '2024-01-01'`.
+
+Parquet also compresses better than row-based formats because similar values cluster together in columns (e.g., a column of timestamps compresses more efficiently than rows mixing timestamps, strings, and numbers).
+
+**Schema embedding:** Parquet files include a schema footer that defines column names, types, and nullability. You can read a Parquet file without external metadata.
+
+**When to use Parquet:** Analytics queries, data lake storage, any workload that scans large datasets and filters on a subset of columns.
+
+### JSON vs Avro vs Parquet Tradeoffs
+
+Different stages of the pipeline optimize for different properties:
+
+- **JSON:** Human-readable, schema-on-read (no upfront schema required), easy to debug. High storage overhead (field names repeated in every record). Use for event logging, API responses, early-stage exploration.
+- **Avro:** Row-based binary format with embedded schema. Compact, fast to write, supports schema evolution (add/remove fields without breaking readers). Use for event streams (Kafka topics), ETL intermediate stages, any workload that writes one record at a time.
+- **Parquet:** Columnar binary format optimized for analytics. Slowest to write (must buffer rows to build columns), best for read-heavy workloads. Use for final analytics storage (data lakes, data warehouses).
+
+**Default pattern:** Ingest events as JSON or Avro, transform to Parquet for analytics. JSON is flexible but expensive to query at scale. Avro is compact and evolution-friendly but row-based (inefficient for wide tables). Parquet is the end state for analytics.
+
+<MermaidDiagram chart={`graph LR
+    A[Event Logs<br/>JSON] --> B[Kafka Topics<br/>Avro]
+    B --> C[Data Lake<br/>Parquet]
+    C --> D[Analytics<br/>Queries]
+    style A fill:#fef3c7,stroke:#d97706
+    style B fill:#dbeafe,stroke:#2563eb
+    style C fill:#d1fae5,stroke:#059669
+    style D fill:#e0e7ff,stroke:#4f46e5
+`} />
+
+## Indexing Strategies
+
+Indexes are auxiliary data structures that accelerate queries by avoiding full table scans. But they come with costs: storage overhead, write amplification, and maintenance burden. Add indexes strategically, not defensively.
+
+### B-Tree Indexes (Default)
+
+**B-tree** is the default index type in PostgreSQL and most relational databases. It's a balanced tree structure that supports:
+
+- **Equality lookups:** `WHERE id = 42`
+- **Range scans:** `WHERE created_at >= '2024-01-01'`
+- **Sorted retrieval:** `ORDER BY name`
+
+B-trees work well for most queries. If you're unsure, start with a B-tree.
+
+**When B-trees fail:** High-cardinality columns with many unique values (e.g., UUIDs) create large indexes. Writes to indexed columns update the index, which can dominate write latency at high throughput.
+
+### Hash Indexes (Equality Only)
+
+**Hash indexes** map column values to bucket IDs using a hash function. They're faster than B-trees for exact-match queries (`WHERE email = 'user@example.com'`), but they don't support range scans or sorting.
+
+**When to use hash indexes:** Lookup tables, caches, any workload that only performs equality checks. Rare in practice — B-trees are fast enough for most equality queries, and their range support is more versatile.
+
+### GIN and GiST Indexes (Full-Text and JSONB)
+
+**GIN (Generalized Inverted Index)** indexes array and JSONB columns. It's optimized for queries like `WHERE tags @> ARRAY['machine-learning']` or `WHERE metadata @> '{"status": "active"}'`.
+
+**GiST (Generalized Search Tree)** supports geometric and full-text search queries. Use it for geospatial data (`WHERE location <-> point(0,0) < 100`) or fuzzy text matching.
+
+**When to use GIN/GiST:** When you query nested or semi-structured data stored in JSONB, or when you search full-text columns. These indexes are large and slow to build, so add them only when query performance demands it.
+
+### When to Add Indexes vs When They Hurt
+
+**Add an index when:**
+
+- A query scans more than 5-10% of a table
+- The column appears in `WHERE`, `JOIN ON`, or `ORDER BY` clauses
+- Query latency is unacceptable and the query plan shows a sequential scan
+
+**Skip the index when:**
+
+- The column has low cardinality (e.g., `status` with 3 possible values) — the database will scan the table anyway
+- The table is small (< 10,000 rows) — sequential scans are fast
+- Writes dominate reads — every indexed column adds overhead to `INSERT`/`UPDATE`/`DELETE`
+
+**Write amplification:** An indexed column turns one write into two (update the table and the index). A table with 5 indexes turns one write into six. High-throughput OLTP systems carefully limit indexes to avoid this.
+
+**Default recommendation:** Start with no indexes except primary keys. Add indexes reactively when slow queries appear in production. Monitor index usage (`pg_stat_user_indexes` in PostgreSQL) and drop unused indexes.
+
+## Time-Based Partitioning
+
+Partitioning splits a large table into smaller physical chunks based on a partition key (usually a date column). Queries that filter on the partition key scan only relevant partitions, ignoring the rest.
+
+### Why Partition?
+
+Three reasons:
+
+1. **Query performance:** A query filtering `WHERE date = '2024-06-15'` scans one partition instead of the entire table. For tables with billions of rows, this turns a 10-minute scan into a 1-second scan.
+2. **Lifecycle management:** You can drop old partitions (`DROP TABLE sales_2020_01`) instead of running slow `DELETE` queries. Dropping a partition is instant.
+3. **Cost optimization:** Cold partitions can be moved to cheaper storage (S3 Glacier, object storage lifecycle tiers) while hot partitions stay on fast SSD.
+
+### Partition Key Selection
+
+**Date is the most common partition key.** Analytics workloads almost always filter by time (`WHERE created_at >= '2024-01-01'`). Event logs, sales records, user activity — nearly all operational data is time-series data.
+
+Other partition keys (e.g., `region`, `customer_id`) are rare and usually combined with date in **composite partitioning** (e.g., partition by date first, then sub-partition by region).
+
+**Anti-pattern:** Partitioning on high-cardinality columns (e.g., `user_id`) creates too many partitions and degrades performance. Most systems have millions of users but only hundreds of days — partition by date, not user.
+
+### Partition Granularity: Hourly, Daily, Monthly
+
+How finely you partition depends on data volume and query patterns.
+
+- **Hourly partitioning:** Each partition covers one hour (e.g., `events_2024_06_15_14`). Use for high-volume event streams (10M+ events/hour). Queries filtering on hour-level precision benefit. Downside: thousands of partitions to manage.
+- **Daily partitioning:** Each partition covers one day (e.g., `sales_2024_06_15`). The default for most analytics workloads. Balances granularity and manageability.
+- **Monthly partitioning:** Each partition covers one month (e.g., `logs_2024_06`). Use for low-volume datasets or when queries span months at a time.
+
+**Over-partitioning vs under-partitioning:**
+
+- **Over-partitioning** (too many small partitions) creates metadata overhead. Query planners must evaluate thousands of partitions, even if only one is scanned. Many storage systems (BigQuery, S3) charge per-file access — hourly partitioning with 100 files per hour becomes expensive.
+- **Under-partitioning** (too few large partitions) defeats the purpose. If each partition contains 1TB of data, queries still scan huge datasets.
+
+**Decision framework:** Aim for partitions between 100MB and 10GB. Match granularity to query patterns — if 90% of queries filter on a single day, use daily partitioning.
+
+<MermaidDiagram chart={`flowchart TD
+    A[Start: Choose Partition Granularity] --> B{Data volume per day?}
+    B -->|< 100 MB/day| C[Monthly Partitions]
+    B -->|100 MB - 10 GB/day| D[Daily Partitions]
+    B -->|> 10 GB/day| E{Query patterns?}
+    E -->|Queries filter by day| D
+    E -->|Queries filter by hour| F[Hourly Partitions]
+    F --> G[Monitor partition count<br/>Risk: metadata overhead]
+    D --> H[Default choice<br/>Balances granularity<br/>and manageability]
+    C --> I[Queries span months<br/>Low-volume dataset]
+    style D fill:#d1fae5,stroke:#059669
+    style G fill:#fef3c7,stroke:#d97706
+    style I fill:#e0e7ff,stroke:#4f46e5
+`} />
+
+### Example: PostgreSQL Partitioned Table
+
+<CodeBlock code={`-- Create partitioned table
+CREATE TABLE events (
+    event_id BIGSERIAL,
+    user_id INTEGER NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    payload JSONB
+) PARTITION BY RANGE (created_at);
+
+-- Create daily partitions for June 2024
+CREATE TABLE events_2024_06_15 PARTITION OF events
+    FOR VALUES FROM ('2024-06-15') TO ('2024-06-16');
+
+CREATE TABLE events_2024_06_16 PARTITION OF events
+    FOR VALUES FROM ('2024-06-16') TO ('2024-06-17');
+
+CREATE TABLE events_2024_06_17 PARTITION OF events
+    FOR VALUES FROM ('2024-06-17') TO ('2024-06-18');
+
+-- Index each partition separately (optional, for query performance)
+CREATE INDEX idx_events_2024_06_15_user ON events_2024_06_15(user_id);
+CREATE INDEX idx_events_2024_06_16_user ON events_2024_06_16(user_id);
+
+-- Query with partition pruning
+-- This scans only events_2024_06_15, ignoring other partitions
+SELECT event_type, COUNT(*)
+FROM events
+WHERE created_at >= '2024-06-15' AND created_at < '2024-06-16'
+GROUP BY event_type;
+`} language="sql" filename="partitioned_events.sql" />
+
+**Automation:** Most production systems use scripts or tools (e.g., `pg_partman` for PostgreSQL, Hive partition management) to create new partitions daily and drop old ones based on retention policies.
+
+## Retention Policies
+
+Data is not free to store. As systems scale, storage costs become a line item — and without automated retention policies, they spiral indefinitely.
+
+### Retention Tiers
+
+Different data has different lifespans:
+
+1. **Operational (days to weeks):** Real-time dashboards, alerting, debugging. Needs low latency. Stored on fast SSD or hot object storage.
+2. **Analytical (months to years):** Historical reporting, ML training, trend analysis. Queries are infrequent but span long time ranges. Stored on standard object storage.
+3. **Compliance/Archive (years to forever):** Legal holds, audit trails, regulatory requirements. Rarely accessed. Stored on cold storage (Glacier, archival tiers).
+
+**Default retention targets:**
+
+- Raw event logs: 90 days operational, 2 years analytical, 7 years compliance
+- Aggregated metrics: 1 year hot, 5 years cold
+- ML training data: 2 years (retrain cycles are typically annual)
+
+**These are starting points, not rules.** Adjust based on business needs, legal requirements, and cost tolerance.
+
+### Automation: Partition Drops and Lifecycle Policies
+
+Manual retention enforcement doesn't scale. Automate it.
+
+**Partition drops:** For partitioned tables, retention is a `DROP TABLE` command. A daily cron job drops partitions older than the retention threshold.
+
+```sql
+-- Drop partitions older than 90 days
+DROP TABLE IF EXISTS events_2024_03_15;
+DROP TABLE IF EXISTS events_2024_03_16;
+```
+
+**Object storage lifecycle policies:** Cloud storage systems (S3, GCS, Azure Blob) support lifecycle rules that automatically transition or delete objects based on age.
+
+Example S3 lifecycle policy:
+
+- After 30 days: transition to Infrequent Access (cheaper storage, higher read cost)
+- After 90 days: transition to Glacier (cold storage, retrieval takes hours)
+- After 7 years: delete
+
+These policies run automatically. Set them once, then forget them.
+
+### Legal Holds and Exceptions
+
+Retention policies must respect legal holds. If data is subject to litigation, it cannot be deleted even if it exceeds the retention threshold.
+
+Most systems implement holds via metadata: a `legal_hold` flag on partitions or object tags. Automated retention scripts check the flag before dropping data.
+
+**Anti-pattern:** Deleting data to save costs, then discovering it was needed for an audit. Build retention policies conservatively, and enforce legal holds rigorously.
+
+### Retention as Governance
+
+Retention isn't just cost optimization — it's governance. Storing data indefinitely creates privacy risk (stale PII), compliance risk (GDPR "right to be forgotten"), and operational risk (old data pollutes analytics).
+
+Module 7 (Data Governance) covers this in depth. The key takeaway: retention policies are a forcing function for data hygiene. Define them early, automate them, and enforce exceptions carefully.
+
+> **Tip:** Start with aggressive retention (90 days for raw logs) and relax it based on actual usage. It's easier to extend retention than to convince teams to delete data they've grown dependent on.
+
+## Schema Evolution at the Relational Level
+
+Schemas change over time. Applications add features, data models evolve, and analytics requirements shift. Relational databases handle schema evolution through **DDL (Data Definition Language)** commands: `ALTER TABLE`, `ADD COLUMN`, `RENAME COLUMN`.
+
+### Adding Columns
+
+The safest change. PostgreSQL supports `ADD COLUMN` with a default value without rewriting the table (as of version 11). Existing queries ignore new columns. Backward compatible.
+
+```sql
+ALTER TABLE customers ADD COLUMN loyalty_tier VARCHAR(20) DEFAULT 'standard';
+```
+
+### Renaming Columns
+
+Breaks existing queries that reference the old name. Use database views to maintain backward compatibility:
+
+```sql
+-- Rename column
+ALTER TABLE customers RENAME COLUMN email TO email_address;
+
+-- Create a view with the old schema
+CREATE VIEW customers_legacy AS
+SELECT customer_id, name, email_address AS email FROM customers;
+```
+
+Applications using the old schema query `customers_legacy`; new applications query `customers`. Dual-schema support during migration.
+
+### Changing Column Types
+
+Risky. Requires a table rewrite if the new type is incompatible (e.g., `VARCHAR` to `INTEGER`). For large tables, this locks the table for minutes or hours.
+
+**Safe approach:** Add a new column with the new type, backfill it via a background job, then drop the old column.
+
+```sql
+ALTER TABLE events ADD COLUMN created_at_ts BIGINT;
+UPDATE events SET created_at_ts = EXTRACT(EPOCH FROM created_at);
+-- Once backfill completes, drop created_at and rename created_at_ts
+```
+
+### Backward Compatibility
+
+Schema evolution must not break deployed applications. The default strategy: **additive changes only**. Add columns, add tables, but never rename or remove until all readers are updated.
+
+**Event schema evolution** (Avro schema compatibility, Protobuf field rules) is covered in Module 4. **Table-format schema evolution** (Apache Iceberg schema changes, Hudi column mapping) is covered in Module 6. This lesson focuses on relational DDL.
+
+## Summary
+
+Schema design, partitioning, and retention are the structural decisions that determine whether your data platform scales gracefully or collapses under its own weight.
+
+**Relational schema design:** Normalize for OLTP (3NF), denormalize for analytics (star schemas). Constraints are documentation. Normalization is a spectrum — optimize for your workload.
+
+**File-level schema design:** JSON for exploration, Avro for event streams, Parquet for analytics. Columnar formats enable column pruning and predicate pushdown, which are critical for large-scale scans.
+
+**Indexing:** B-trees are the default. Add indexes reactively, not defensively. Every index adds write overhead — monitor usage and drop unused indexes.
+
+**Partitioning:** Partition by date for analytics workloads. Choose granularity based on data volume and query patterns — aim for partitions between 100MB and 10GB. Over-partitioning creates metadata overhead; under-partitioning defeats the purpose.
+
+**Retention:** Automate it. Define retention tiers (operational, analytical, compliance), enforce them with partition drops and object lifecycle policies, and respect legal holds. Retention is governance, not just cost optimization.
+
+**Schema evolution:** Add columns safely. Rename and type changes require backward compatibility strategies (views, dual schemas, backfill jobs).
+
+The default choices — normalized OLTP, Parquet analytics, daily partitioning, 90-day retention — work for most systems. Deviate when your workload demands it, but understand the tradeoffs. The failure modes are predictable: premature denormalization, over-indexing, over-partitioning, no retention policy. Avoid them by starting simple and evolving based on observed performance.
+
+In the next lesson, we'll cover **data ingestion pipelines** — how to move data from source systems into the storage and schema structures we've just designed.

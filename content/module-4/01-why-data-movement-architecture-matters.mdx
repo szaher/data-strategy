@@ -1,0 +1,460 @@
+---
+title: "Why Data Movement Architecture Matters"
+quiz:
+  - question: "What is the N×M problem in data integration?"
+    options:
+      - "The need to move N records across M partitions"
+      - "Point-to-point connections where N systems each connect to M others, creating N×M integration points"
+      - "The maximum throughput of N producers sending to M consumers"
+      - "The latency overhead of N hops across M network segments"
+    correctIndex: 1
+  - question: "When should you choose batch ingestion over streaming ingestion?"
+    options:
+      - "Always — batch is simpler and cheaper"
+      - "When you need sub-second latency for downstream consumers"
+      - "When large volumes are acceptable with hourly or daily latency, or when source systems only support periodic extracts"
+      - "Never — streaming has replaced batch in modern architectures"
+    correctIndex: 2
+  - question: "Which integration mechanism is best for propagating state changes to multiple independent consumers?"
+    options:
+      - "Synchronous API calls from the source to each consumer"
+      - "Events (publish-subscribe) where the source emits change events to a topic"
+      - "Query federation to let each consumer query the source directly"
+      - "Scheduled batch extracts that poll the source hourly"
+    correctIndex: 1
+---
+
+## Overview
+
+Data does not stay where it is created. A product catalog lives in PostgreSQL, but the search service needs it in Elasticsearch, the analytics team needs it in the data lake, and the RAG system needs embeddings in a vector store. When a customer updates their email address, that change must propagate to the CRM, the billing system, and the notification service. Without **intentional data movement architecture**, organizations build point-to-point integrations that create fragile, inconsistent, and unmaintainable systems.
+
+This lesson establishes why data movement architecture matters, introduces five integration mechanisms (APIs, events, commands, batch extracts, and query federation), and presents a decision framework for choosing the right mechanism based on latency, coupling, and scale requirements. You will learn when events are the right choice — and when they are not.
+
+## The Data Movement Problem
+
+Every organization faces the same challenge: **data created in one system is needed in many others**. A single customer record might need to exist in:
+
+- The source database (PostgreSQL)
+- The data warehouse (Snowflake or BigQuery)
+- The real-time analytics engine (ClickHouse)
+- The search index (Elasticsearch)
+- The ML feature store
+- The customer data platform
+- The object storage layer (Parquet files in S3/GCS)
+
+Without architecture, teams build **point-to-point integrations**. The PostgreSQL database gets a cron job that exports to CSV and uploads to S3. A Python script reads from PostgreSQL and writes to Elasticsearch. Another service polls the database every hour and pushes updates to the data warehouse. This creates the **N×M problem**: if you have N source systems and M destination systems, you need N×M custom integrations.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Sources["Source Systems (N=4)"]
+        PG[PostgreSQL]
+        Mongo[MongoDB]
+        API[External API]
+        Files[File Uploads]
+    end
+    
+    subgraph Destinations["Destination Systems (M=5)"]
+        DW[Data Warehouse]
+        ES[Elasticsearch]
+        Lake[Data Lake]
+        Vector[Vector Store]
+        Cache[Redis Cache]
+    end
+    
+    PG -.-> DW
+    PG -.-> ES
+    PG -.-> Lake
+    PG -.-> Vector
+    Mongo -.-> DW
+    Mongo -.-> ES
+    Mongo -.-> Lake
+    API -.-> DW
+    API -.-> Lake
+    Files -.-> Lake
+    Files -.-> DW
+    
+    style Sources fill:#fff5f5,stroke:#e53e3e
+    style Destinations fill:#f0fff4,stroke:#38a169
+`} />
+
+Each dotted line represents a custom integration — different code, different retry logic, different monitoring, different failure modes. When a new destination is added, every source needs a new integration. When a source schema changes, every integration breaks.
+
+The consequences are:
+
+- **Inconsistent data** — each integration transforms and filters differently
+- **Stale data** — no coordination between batch schedules
+- **Fragile pipelines** — one broken integration does not stop others, leading to silent drift
+- **High operational cost** — each integration is a snowflake that requires custom monitoring
+
+This is not a hypothetical problem. Organizations with 50+ microservices commonly have hundreds of point-to-point data flows, and no single person can draw the complete graph.
+
+## Five Integration Mechanisms
+
+Data movement architecture is about choosing the **right integration mechanism** for each data flow. There are five fundamental patterns, each with different tradeoffs:
+
+### 1. APIs (Request-Response)
+
+The source system exposes an HTTP API. Consumers send requests and receive responses synchronously.
+
+**Characteristics:**
+- Synchronous — the caller blocks until the response arrives
+- Tight coupling — the consumer depends on the source being available
+- Request-driven — the consumer controls when data is fetched
+- Good for real-time queries and reads
+
+**Example use cases:**
+- Fetching current user profile data
+- Validating inventory availability before checkout
+- Retrieving metadata for a specific resource
+
+**When NOT to use:**
+- Broadcasting state changes to many consumers (fan-out creates load spikes on the source)
+- High-throughput batch data transfer (request-per-record overhead is prohibitive)
+
+### 2. Events (Publish-Subscribe)
+
+The source system publishes **state change events** to a topic (Kafka, Pub/Sub, EventBridge). Consumers subscribe to the topic and process events asynchronously.
+
+**Characteristics:**
+- Asynchronous — the producer does not wait for consumers
+- Loose coupling — producers and consumers do not know about each other
+- Push-driven — the source emits events when changes occur
+- Good for propagating state changes to multiple consumers
+
+**Example use cases:**
+- Customer address updated → notify CRM, billing, and shipping systems
+- Order placed → update inventory, trigger fulfillment, send confirmation email
+- Product catalog changed → re-index search, invalidate cache, re-embed for RAG
+
+**When NOT to use:**
+- Request-response queries (events are one-way; there is no response)
+- Bulk historical data transfer (event logs are append-only, not optimized for large scans)
+
+### 3. Commands (Task Dispatch)
+
+The source system sends a **command message** to a specific consumer via a queue (RabbitMQ, SQS, Pub/Sub). The consumer processes the command and optionally responds.
+
+**Characteristics:**
+- Asynchronous — the sender does not block
+- Directed — the message goes to a specific consumer or consumer group
+- Task-oriented — the message is an imperative instruction, not a state change notification
+- Good for work distribution and task queues
+
+**Example use cases:**
+- Video uploaded → send transcode command to worker queue
+- User registered → send welcome email command to email service
+- File uploaded → send virus scan command to scanner service
+
+**When NOT to use:**
+- Broadcasting to many consumers (commands are directed, not broadcast)
+- Real-time synchronous workflows (commands are asynchronous)
+
+### 4. Batch Extracts (ETL/ELT)
+
+A scheduled job extracts data from the source system and loads it into the destination. This can be **push** (the source exports and uploads) or **pull** (the destination queries the source).
+
+**Characteristics:**
+- Scheduled — runs on a fixed cadence (hourly, daily, weekly)
+- High latency — data is stale between batch windows
+- High throughput — optimized for bulk transfer
+- Simpler operational model — fewer moving parts than streaming
+
+**Example use cases:**
+- Nightly export from operational database to data warehouse
+- Daily snapshot of product catalog to object storage
+- Hourly aggregation of logs to analytics database
+
+**When NOT to use:**
+- Sub-minute latency requirements (batch windows introduce lag)
+- Frequent small updates (batch overhead is inefficient for trickle changes)
+
+### 5. Query Federation
+
+Data stays in the source system. Consumers query it **in-place** using a query engine that federates across multiple sources (Trino, Presto, data virtualization layers).
+
+**Characteristics:**
+- No data movement — queries run against the source
+- Zero latency for updates — you always see the current state
+- Higher query latency — network round-trips and source load
+- Tight coupling — the source must remain available and performant
+
+**Example use cases:**
+- Ad-hoc analytics queries across multiple databases
+- Joining operational and warehouse data without ETL
+- Prototyping data flows before committing to physical movement
+
+**When NOT to use:**
+- High-throughput analytical workloads (federation adds query overhead)
+- When source systems cannot handle query load (federation increases source load)
+
+<MermaidDiagram chart={`flowchart TD
+    Start([Need to integrate systems?])
+    Start --> Q1{Real-time response needed?}
+    
+    Q1 -->|Yes| Q2{Source must stay available?}
+    Q2 -->|Yes| API[Use API request-response]
+    Q2 -->|No| Event[Use events if one-way,<br/>commands if directed]
+    
+    Q1 -->|No| Q3{Multiple consumers?}
+    Q3 -->|Yes| Q4{State change or task?}
+    Q4 -->|State change| Event2[Use events publish-subscribe]
+    Q4 -->|Task| Command[Use command queue]
+    
+    Q3 -->|No| Q5{Can query in-place?}
+    Q5 -->|Yes| Federation[Use query federation]
+    Q5 -->|No| Batch[Use batch extract]
+    
+    style API fill:#e6f7ff,stroke:#1890ff
+    style Event fill:#f6ffed,stroke:#52c41a
+    style Event2 fill:#f6ffed,stroke:#52c41a
+    style Command fill:#fff7e6,stroke:#fa8c16
+    style Batch fill:#fff1f0,stroke:#f5222d
+    style Federation fill:#f9f0ff,stroke:#722ed1
+`} />
+
+## Push vs Pull Ingestion
+
+Every integration mechanism can be implemented as **push** (the source sends data) or **pull** (the consumer requests data). The choice affects latency, backpressure, and operational complexity.
+
+### Push Ingestion
+
+The source system **sends data** to the destination when it becomes available.
+
+**Examples:**
+- Webhooks — the source POSTs to a consumer endpoint
+- CDC (Change Data Capture) — database changes stream to Kafka
+- Event producers — applications emit events to Pub/Sub
+
+**Advantages:**
+- Low latency — data arrives as soon as it is created
+- Source-driven — the source controls the data flow
+
+**Disadvantages:**
+- Backpressure risk — if the consumer is slow or down, the source must buffer or drop data
+- Consumer availability — the consumer must be reachable (for webhooks) or the buffer must hold data until the consumer recovers
+- Source coupling — the source must know where to send data
+
+### Pull Ingestion
+
+The consumer system **requests data** from the source on a schedule or on-demand.
+
+**Examples:**
+- API polling — the consumer calls an API every N seconds
+- Scheduled extracts — a cron job queries the source and writes to the destination
+- File crawlers — the consumer scans a directory for new files
+
+**Advantages:**
+- Consumer-controlled — the consumer controls the rate and timing
+- Backpressure-friendly — the consumer pulls only what it can process
+- Source simplicity — the source only needs to expose a read API
+
+**Disadvantages:**
+- Higher latency — data is stale until the next pull
+- Polling overhead — frequent polling wastes resources; infrequent polling increases latency
+
+Most organizations need **both**. Push ingestion is used for low-latency state change propagation (CDC, events). Pull ingestion is used for high-volume batch transfers (data warehouse loads) and external APIs that do not support webhooks.
+
+## Batch vs Streaming Ingestion
+
+The **batch vs streaming** decision is orthogonal to push vs pull. You can have:
+
+- **Streaming push** — CDC streams database changes to Kafka
+- **Streaming pull** — a consumer polls an API every second
+- **Batch push** — the source uploads a nightly export to S3
+- **Batch pull** — a scheduled job queries the source and writes to the warehouse
+
+### Batch Ingestion
+
+Data is moved in **large periodic chunks** (hourly, daily, weekly).
+
+**When to use:**
+- Large volumes are acceptable with hourly or daily latency
+- Source systems only support periodic snapshots (legacy databases, third-party APIs)
+- Cost optimization — batch is cheaper to operate than streaming
+- Simpler operational model — fewer moving parts, easier to debug
+
+**Example:**
+- Nightly export from PostgreSQL to BigQuery
+- Daily snapshot of logs from S3 to ClickHouse
+
+### Streaming Ingestion
+
+Data is moved **continuously** as it is created, with latency measured in seconds or milliseconds.
+
+**When to use:**
+- Sub-minute latency is required (real-time dashboards, fraud detection, alerting)
+- Data arrives continuously (IoT sensors, clickstream, application logs)
+- Freshness is critical (inventory availability, pricing updates)
+
+**Example:**
+- CDC from PostgreSQL to Kafka to Elasticsearch
+- Clickstream events from web apps to Pub/Sub to BigQuery
+
+> **Tip:** Most organizations need **both** batch and streaming ingestion. Streaming handles low-latency use cases; batch handles high-volume, cost-sensitive workloads. Do not force everything into one model.
+
+## The AI Cross-Cut: Keeping Knowledge Synchronized
+
+Consider a RAG (Retrieval-Augmented Generation) system that answers customer questions about your product catalog. The catalog lives in PostgreSQL. The RAG system stores **embeddings** of product descriptions in a vector store (Pinecone, Weaviate, pgvector).
+
+When a product description changes in PostgreSQL, the RAG system must:
+
+1. Detect the change
+2. Re-embed the new description
+3. Update or replace the vector in the vector store
+
+This is a **data movement problem**. Without architecture, teams build one-off scripts: a cron job that dumps PostgreSQL to JSON, reads the JSON, generates embeddings via OpenAI, and writes to the vector store. This approach is:
+
+- **Slow** — batch jobs run hourly or daily
+- **Inefficient** — re-embedding unchanged products wastes API calls
+- **Fragile** — schema changes break the script
+
+With data movement architecture, you have options:
+
+- **CDC + events** — PostgreSQL changes stream to Kafka; a consumer re-embeds and writes to the vector store (low latency, incremental)
+- **Batch extract** — nightly export to S3; a job processes new/changed records and updates the vector store (high latency, simpler)
+- **Query federation** — the RAG system queries PostgreSQL directly at query time and caches embeddings (no pre-processing, but higher query latency)
+
+The right choice depends on your **latency tolerance** and **change frequency**. If product descriptions change 10 times per day and users tolerate 1-hour staleness, batch is fine. If descriptions change 1000 times per hour and users need fresh results, CDC + streaming is required.
+
+## Bridge from Module 3: Connecting Storage Systems
+
+Module 3 introduced storage systems: **object storage** (S3/GCS), **databases** (PostgreSQL, MongoDB), **data warehouses** (Snowflake, BigQuery), and **lakehouse architectures** (bronze/silver/gold layers). Data movement architecture is how you **connect** these systems.
+
+Examples:
+
+- **Operational database → Data lake:** CDC captures PostgreSQL changes, streams to Kafka, writes Parquet files to S3 bronze layer
+- **Bronze → Silver:** Batch job reads bronze Parquet files, cleans and validates, writes to silver layer
+- **Silver → Gold:** Aggregation job reads silver tables, computes metrics, writes to gold layer
+- **Gold → Warehouse:** Scheduled export from S3 gold layer to Snowflake for BI dashboards
+- **Warehouse → ML feature store:** Batch job extracts features from Snowflake, writes to feature store (Feast, Tecton)
+
+Without data movement architecture, these flows are built as one-off scripts. With architecture, you build **reusable ingestion patterns** (CDC pipelines, batch orchestration, event consumers) that can be applied to any source-destination pair.
+
+## The Event Backbone Architecture
+
+The **event backbone** is a common pattern for reducing the N×M problem. Instead of every source connecting to every destination, sources publish events to a **central event log** (Kafka, Pub/Sub), and destinations subscribe to the topics they care about.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Sources["Source Systems (N=4)"]
+        PG[PostgreSQL CDC]
+        Mongo[MongoDB CDC]
+        API[API Events]
+        Files[File Upload Events]
+    end
+    
+    subgraph Backbone["Event Backbone (Kafka / Pub/Sub)"]
+        T1[customers topic]
+        T2[products topic]
+        T3[orders topic]
+        T4[files topic]
+    end
+    
+    subgraph Destinations["Destination Systems (M=5)"]
+        DW[Data Warehouse]
+        ES[Elasticsearch]
+        Lake[Data Lake]
+        Vector[Vector Store]
+        Cache[Redis Cache]
+    end
+    
+    PG --> T1
+    PG --> T2
+    Mongo --> T3
+    API --> T1
+    Files --> T4
+    
+    T1 --> DW
+    T1 --> ES
+    T1 --> Cache
+    T2 --> DW
+    T2 --> ES
+    T2 --> Vector
+    T2 --> Lake
+    T3 --> DW
+    T3 --> Lake
+    T4 --> Lake
+    
+    style Backbone fill:#f0f9ff,stroke:#0369a1
+    style Sources fill:#fff5f5,stroke:#e53e3e
+    style Destinations fill:#f0fff4,stroke:#38a169
+`} />
+
+Now, adding a new destination requires subscribing to topics — no changes to sources. Adding a new source requires publishing to topics — no changes to destinations. The integration complexity is **N + M** instead of **N × M**.
+
+**However**, the event backbone is not a universal solution. It works well for **state change propagation** (customer updated, order placed, product deleted), but not for:
+
+- **Bulk historical data** — event logs are append-only; scanning 1TB of history is inefficient (use batch extracts instead)
+- **Request-response queries** — events are asynchronous and one-way (use APIs instead)
+- **Directed task dispatch** — events are broadcast to all subscribers (use command queues instead)
+
+The best architectures use the event backbone **alongside** APIs, batch extracts, and query federation — each mechanism for its appropriate use case.
+
+## Choosing the Right Mechanism: A Decision Framework
+
+| Requirement | Recommended Mechanism |
+|-------------|----------------------|
+| Real-time query response | **API (request-response)** |
+| Propagate state change to multiple consumers | **Events (publish-subscribe)** |
+| Dispatch task to specific consumer | **Commands (task queue)** |
+| Bulk transfer of large volumes | **Batch extract (ETL/ELT)** |
+| Ad-hoc query without pre-loading | **Query federation** |
+| Sub-second latency | **Streaming ingestion (push)** |
+| Hourly/daily latency acceptable | **Batch ingestion (pull)** |
+| Source cannot handle consumer load | **Pre-load to destination (batch or streaming)** |
+| Consumer controls rate | **Pull ingestion** |
+| Source controls rate | **Push ingestion** |
+
+> **Warning:** The most common anti-pattern is **events-for-everything**. Teams adopt Kafka and try to route all data flows through events, including bulk historical loads, request-response queries, and directed task dispatch. This creates unnecessary complexity and poor performance. Use events for state change propagation; use the other four mechanisms for everything else.
+
+## Common Failure Modes
+
+### 1. Events-for-Everything
+
+Using events as the universal integration mechanism. This fails when:
+
+- Consumers need to query historical data (event logs are not optimized for range scans)
+- Request-response workflows require synchronous replies (events are asynchronous)
+- Tasks must be directed to specific consumers (events broadcast to all subscribers)
+
+**Fix:** Use events for state changes; use APIs for queries, commands for tasks, and batch for bulk transfers.
+
+### 2. Ignoring Batch
+
+Streaming ingestion has high operational cost: more moving parts, more complex failure modes, higher infrastructure spend. Many use cases do not need sub-minute latency.
+
+**Fix:** Default to batch ingestion unless you have a proven latency requirement. Batch is simpler and cheaper.
+
+### 3. No Backpressure Strategy
+
+Push ingestion fails when consumers cannot keep up. Without backpressure handling, the source buffers unbounded data (memory exhaustion) or drops data (silent data loss).
+
+**Fix:** Use pull ingestion for high-volume flows, or use event systems with durable storage (Kafka, Pub/Sub) that buffer until consumers catch up.
+
+### 4. Point-to-Point Integration Sprawl
+
+Every new integration is built from scratch with custom code, no shared retry logic, no shared monitoring, no schema validation.
+
+**Fix:** Build **reusable ingestion templates** (CDC pipeline, batch orchestration, event consumer) that enforce consistency and observability.
+
+### 5. No Schema Evolution Strategy
+
+Source schemas change. Without schema versioning and validation, downstream consumers break silently.
+
+**Fix:** Use schema registries (Confluent Schema Registry, Protobuf, Avro) to enforce compatibility rules and version schemas explicitly.
+
+## Summary
+
+Data movement architecture is the intentional design of how data flows between systems. Without it, you get point-to-point integrations, inconsistent data, and the N×M problem.
+
+The five integration mechanisms are:
+
+1. **APIs** — request-response queries
+2. **Events** — publish-subscribe state changes
+3. **Commands** — directed task dispatch
+4. **Batch extracts** — scheduled bulk transfers
+5. **Query federation** — in-place querying without movement
+
+Choose the mechanism based on latency, coupling, and scale requirements. Use **push ingestion** for low-latency propagation and **pull ingestion** for consumer-controlled rate. Use **streaming** for sub-minute latency and **batch** for cost-optimized high-volume transfers.
+
+Most organizations need all five mechanisms. The event backbone reduces N×M complexity for state changes, but it is not a universal solution. Use it alongside APIs, batch, and federation — each for its appropriate use case.
+
+In the next lesson, we will dive into **Change Data Capture (CDC)**, the mechanism for streaming database changes to downstream systems.

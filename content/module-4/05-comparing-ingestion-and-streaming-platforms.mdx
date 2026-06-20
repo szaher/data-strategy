@@ -1,0 +1,390 @@
+---
+title: "Comparing Ingestion & Streaming Platforms"
+quiz:
+  - question: "Which streaming platform offers the strongest compute-storage separation and built-in tiered storage?"
+    options:
+      - "Apache Kafka"
+      - "Redpanda"
+      - "Apache Pulsar"
+      - "NATS JetStream"
+    correctIndex: 2
+  - question: "What is the primary operational advantage of Redpanda over Apache Kafka?"
+    options:
+      - "Better ordering guarantees"
+      - "No JVM or ZooKeeper dependency, simpler deployment"
+      - "Larger connector ecosystem"
+      - "Multi-tenancy support"
+    correctIndex: 1
+  - question: "When is a cloud-native streaming service (like Kinesis or Pub/Sub) the best choice?"
+    options:
+      - "When you need the largest connector ecosystem"
+      - "When you want the lowest possible latency"
+      - "When minimizing operational overhead on a single cloud provider"
+      - "When you need strict ordering across all partitions"
+    correctIndex: 2
+---
+
+## Overview
+
+You've designed **event schemas** with Protobuf, deployed **Kafka on Kubernetes** with Strimzi, and configured **Debezium** to capture database changes as event streams. The final decision: *which platform should run in production?*
+
+The streaming platform landscape offers more than Apache Kafka. **Redpanda** promises simpler operations with Kafka API compatibility. **Apache Pulsar** delivers multi-tenancy and tiered storage. **NATS JetStream** offers lightweight messaging. Cloud-native services like **Amazon Kinesis** and **Google Cloud Pub/Sub** eliminate operational overhead entirely.
+
+This lesson provides a **decision framework** for choosing the right streaming platform based on your requirements, team capabilities, and architectural constraints. We'll compare platforms across ordering guarantees, latency, throughput, operational complexity, ecosystem maturity, and cost models—then map these criteria to concrete decision patterns.
+
+> **Key insight:** The "best" streaming platform is the one that matches your team's operational tolerance, scale requirements, and ecosystem needs—not the one with the most GitHub stars.
+
+## The Problem: Choosing Without Criteria
+
+Teams often select streaming platforms based on **incomplete signals**:
+
+- **Hype-driven decisions:** "Everyone's talking about Pulsar, we should use it."
+- **Resume-driven development:** "I want Kafka on my CV."
+- **Cloud-lock-in avoidance at all costs:** "We can't use Kinesis because we might switch clouds someday."
+- **Over-engineering for scale you don't have:** "We might hit 10 million events per second, so we need Kafka."
+- **Ignoring operational cost:** "The platform is free, so it's cheap" (ignoring the team-hours needed to run it).
+
+The result: organizations run **overly complex platforms** their teams can't operate reliably, or choose **underpowered solutions** that hit scaling walls when traffic grows.
+
+A **criteria-driven decision framework** prevents these failure modes. Compare platforms on dimensions that matter to *your* workload, not abstract benchmarks.
+
+## The Default: Apache Kafka
+
+**Apache Kafka** is the de facto standard for event streaming. It's battle-tested at massive scale (LinkedIn, Uber, Netflix) and offers the largest ecosystem of connectors, stream processing frameworks, and operational tooling.
+
+### Kafka's Strengths
+
+- **Strong ordering guarantees:** Events in the same partition maintain strict order.
+- **High throughput:** Designed for millions of messages per second across hundreds of partitions.
+- **Massive ecosystem:** 100+ connectors via Kafka Connect, deep integration with Spark/Flink/Samza.
+- **Kubernetes-native deployment:** Strimzi provides production-grade operators for K8s.
+- **Mature operational tooling:** Extensive monitoring, rebalancing tools, disaster recovery patterns.
+
+### Kafka's Trade-Offs
+
+- **Operational complexity:** Even with Strimzi, managing ZooKeeper (or migrating to KRaft) adds operational burden.
+- **JVM dependency:** Requires tuning garbage collection, heap sizes, and JVM flags for optimal performance.
+- **Storage coupled to brokers:** Data lives on broker disks—scaling storage means scaling compute.
+- **Rebalancing disruptions:** Consumer group rebalancing can cause temporary latency spikes.
+- **Learning curve:** Concepts like consumer groups, partition assignment strategies, and offset management require expertise.
+
+**When to choose Kafka:** You need a proven, ecosystem-rich platform and have the team expertise to operate a distributed JVM-based system. The connector library and stream processing integrations outweigh the operational cost.
+
+## The Alternatives: Redpanda, Pulsar, NATS, Cloud Services
+
+### Redpanda: Simpler Kafka
+
+**Redpanda** is a **Kafka API-compatible** streaming platform written in C++. It eliminates ZooKeeper and the JVM, offering faster performance and simpler operations while maintaining compatibility with Kafka clients and connectors.
+
+**Strengths:**
+
+- **Zero JVM, zero ZooKeeper:** Single binary deployment, lower memory footprint, simpler troubleshooting.
+- **Kafka API compatibility:** Drop-in replacement for Kafka—use existing clients and Kafka Connect connectors.
+- **Lower latency:** C++ implementation delivers sub-millisecond p99 latencies under load.
+- **Built-in schema registry:** No need to deploy Confluent Schema Registry separately.
+
+**Trade-Offs:**
+
+- **Smaller ecosystem:** Fewer native integrations, less mature tooling.
+- **Newer community:** Less Stack Overflow coverage, fewer battle-tested edge-case solutions.
+- **Enterprise features in paid tier:** Advanced security and monitoring require commercial licensing.
+
+**When to choose Redpanda:** You want Kafka-compatible semantics with simpler operations and lower latency, and your connector needs fit within the Kafka Connect ecosystem.
+
+---
+
+### Apache Pulsar: Multi-Tenant Streaming
+
+**Apache Pulsar** separates **compute (brokers) from storage (BookKeeper)**, enabling independent scaling and built-in tiered storage. It excels in multi-tenant environments where different teams share the same cluster.
+
+**Strengths:**
+
+- **Compute-storage separation:** Scale brokers and storage independently. Offload cold data to S3/GCS without adding brokers.
+- **Multi-tenancy:** Namespaces and tenants enforce isolation, quotas, and access control within a single cluster.
+- **Geo-replication:** Built-in cross-datacenter replication with flexible patterns (active-active, active-standby).
+- **Unified messaging:** Supports both streaming (persistent topics) and queuing (shared subscriptions).
+
+**Trade-Offs:**
+
+- **Architectural complexity:** BookKeeper adds another distributed system to manage.
+- **Smaller adoption:** Less widespread than Kafka, fewer production war stories.
+- **Steeper learning curve:** Concepts like segments, ledgers, and subscription modes differ from Kafka.
+- **Connector ecosystem:** Growing but smaller than Kafka's—many integrations are community-contributed.
+
+**When to choose Pulsar:** You need multi-tenancy, tiered storage, or geo-replication as first-class features, and your team can manage the additional architectural complexity.
+
+---
+
+### NATS JetStream: Lightweight Messaging
+
+**NATS JetStream** is a **cloud-native messaging system** optimized for simplicity and low latency. It's lighter-weight than Kafka or Pulsar, making it ideal for microservices communication and edge deployments.
+
+**Strengths:**
+
+- **Simplicity:** Single binary, minimal configuration, low operational overhead.
+- **Low latency:** Sub-millisecond message delivery for small-to-medium workloads.
+- **Cloud-native:** Designed for Kubernetes, with native NATS Operator support.
+- **Flexible delivery semantics:** At-most-once, at-least-once, exactly-once within streams.
+
+**Trade-Offs:**
+
+- **Weaker ordering guarantees:** No per-partition ordering—messages within a stream may arrive out of order.
+- **Less mature stream processing ecosystem:** Fewer integrations with Flink, Spark, or complex event processing frameworks.
+- **Throughput ceiling:** Not designed for millions of events per second at Kafka's scale.
+
+**When to choose NATS:** You need lightweight, fast messaging for microservices or IoT workloads, and don't require strict ordering or heavy stream processing integrations.
+
+---
+
+### Cloud-Native Services: Kinesis, Pub/Sub, EventBridge
+
+**Amazon Kinesis**, **Google Cloud Pub/Sub**, and **Azure Event Hubs** offer **fully managed** streaming with zero operational overhead. They integrate deeply with their respective cloud platforms.
+
+**Strengths:**
+
+- **Zero operations:** No clusters to manage, no broker scaling, no rebalancing tuning.
+- **Auto-scaling:** Automatically adjusts capacity based on throughput.
+- **Deep cloud integration:** Native connectors to Lambda, BigQuery, Functions, Dataflow, etc.
+- **Pay-per-use pricing:** Cost scales with actual usage, not provisioned capacity.
+
+**Trade-Offs:**
+
+- **Vendor lock-in:** Switching clouds requires rewriting consumers and producers.
+- **Less control:** Limited tuning options—latency and throughput are governed by cloud provider SLAs.
+- **Cost at scale:** Per-message pricing can exceed self-hosted Kafka costs at very high throughput.
+- **Feature gaps:** Missing some Kafka features (transactions, exactly-once semantics vary by service).
+
+**When to choose cloud-native:** You want to minimize operational overhead, already operate deeply within one cloud, and accept the cost-control trade-off.
+
+## Decision Framework: Criteria That Matter
+
+Compare platforms on **dimensions that align with your workload requirements and team capabilities**:
+
+<MermaidDiagram chart={`graph TB
+    subgraph Criteria["Decision Criteria"]
+        A[Ordering Guarantees]
+        B[Latency Requirements]
+        C[Throughput Scale]
+        D[Operational Complexity]
+        E[Multi-Tenancy Needs]
+        F[Ecosystem / Connectors]
+        G[Cost Model]
+        H[Team Expertise]
+    end
+    
+    subgraph Kafka["Apache Kafka"]
+        K1[Strong per-partition ordering]
+        K2[Millisecond latency]
+        K3[Millions msg/sec]
+        K4[High ops complexity]
+        K5[Manual multi-tenancy]
+        K6[Largest ecosystem]
+        K7[Self-hosted or managed]
+        K8[Deep JVM expertise needed]
+    end
+    
+    subgraph Redpanda["Redpanda"]
+        R1[Kafka-compatible ordering]
+        R2[Sub-millisecond p99]
+        R3[High throughput]
+        R4[Lower ops complexity]
+        R5[Manual multi-tenancy]
+        R6[Kafka Connect compatible]
+        R7[Self-hosted or managed]
+        R8[Simpler operations]
+    end
+    
+    subgraph Pulsar["Apache Pulsar"]
+        P1[Per-partition ordering]
+        P2[Millisecond latency]
+        P3[High throughput]
+        P4[High ops complexity]
+        P5[Built-in multi-tenancy]
+        P6[Growing ecosystem]
+        P7[Self-hosted or managed]
+        P8[BookKeeper expertise needed]
+    end
+    
+    subgraph NATS["NATS JetStream"]
+        N1[Weaker ordering]
+        N2[Sub-millisecond]
+        N3[Medium throughput]
+        N4[Low ops complexity]
+        N5[Manual multi-tenancy]
+        N6[Smaller ecosystem]
+        N7[Self-hosted or managed]
+        N8[Minimal expertise needed]
+    end
+    
+    subgraph Cloud["Cloud Services"]
+        C1[Service-dependent ordering]
+        C2[Low-millisecond latency]
+        C3[Auto-scaling throughput]
+        C4[Zero ops complexity]
+        C5[Manual multi-tenancy]
+        C6[Cloud-native integrations]
+        C7[Pay-per-use pricing]
+        C8[No platform expertise needed]
+    end
+    
+    A --> K1
+    A --> R1
+    A --> P1
+    A --> N1
+    A --> C1
+    
+    style Criteria fill:#e0f0ff,stroke:#0066cc
+    style Kafka fill:#f0f9ff,stroke:#0066cc
+    style Redpanda fill:#f0fdf4,stroke:#16a34a
+    style Pulsar fill:#fef3c7,stroke:#f59e0b
+    style NATS fill:#f3e8ff,stroke:#a855f7
+    style Cloud fill:#fce7f3,stroke:#ec4899
+`} />
+
+### Criteria Breakdown
+
+**1. Ordering Guarantees**
+
+- **Kafka/Redpanda/Pulsar:** Strict order within a partition, no global ordering.
+- **NATS JetStream:** Messages in a stream may arrive out of order.
+- **Cloud services:** Kinesis provides per-shard ordering; Pub/Sub offers ordering keys; Event Hubs provides per-partition ordering.
+
+**2. Latency Requirements**
+
+- **Sub-millisecond (p99 < 1ms):** Redpanda, NATS
+- **Low-millisecond (p99 1-10ms):** Kafka, Pulsar, Cloud services
+- **Seconds acceptable:** Any platform works; optimize for simplicity instead.
+
+**3. Throughput Scale**
+
+- **Millions of messages/sec:** Kafka, Redpanda, Pulsar
+- **Hundreds of thousands/sec:** NATS, Cloud services (auto-scaled)
+- **Thousands/sec:** Any platform; avoid over-engineering.
+
+**4. Operational Complexity Tolerance**
+
+- **High (dedicated platform team):** Kafka, Pulsar
+- **Medium (DevOps team manages alongside other services):** Redpanda, NATS
+- **Low (prefer managed services):** Cloud services
+
+**5. Multi-Tenancy Needs**
+
+- **Built-in isolation:** Pulsar (tenants/namespaces)
+- **Manual (ACLs, separate clusters):** Kafka, Redpanda, NATS
+- **Cloud-native projects/subscriptions:** Cloud services
+
+**6. Ecosystem and Connector Availability**
+
+- **Kafka ecosystem (Connect, KSQL, etc.):** Kafka, Redpanda
+- **Growing ecosystem:** Pulsar
+- **Cloud integrations:** Cloud services
+- **Smaller ecosystem:** NATS
+
+**7. Cost Model**
+
+- **Self-hosted:** Kafka, Redpanda, Pulsar, NATS—infrastructure costs plus team-hours
+- **Managed (DBaaS-style):** Confluent Cloud, Redpanda Cloud, Aiven—pay for capacity
+- **Pay-per-use:** Kinesis, Pub/Sub—per-message or per-MB pricing
+
+**8. Team Expertise**
+
+- **JVM tuning, distributed systems:** Kafka
+- **Systems programming, simpler ops:** Redpanda
+- **BookKeeper, storage layers:** Pulsar
+- **Lightweight messaging:** NATS
+- **Cloud-native development:** Cloud services
+
+## When to Pick What: Clear Recommendations
+
+Use this decision tree to map your requirements to the best-fit platform:
+
+### Choose **Kafka** if:
+
+- You need the **largest connector ecosystem** (100+ pre-built integrations).
+- Your team has **JVM expertise** and can manage ZooKeeper or KRaft.
+- You're building a **central data platform** where streaming is a foundational layer.
+- You need **battle-tested reliability** at massive scale with extensive operational tooling.
+
+### Choose **Redpanda** if:
+
+- You want **Kafka API compatibility** with simpler operations.
+- Your team prefers **single-binary deployments** over JVM tuning.
+- You need **lower latency** than Kafka provides.
+- You're willing to trade ecosystem breadth for operational simplicity.
+
+### Choose **Pulsar** if:
+
+- You need **built-in multi-tenancy** with namespace isolation.
+- **Tiered storage** is critical—offload old data to S3/GCS without scaling brokers.
+- You require **geo-replication** as a first-class feature.
+- Your team can manage the added complexity of BookKeeper.
+
+### Choose **NATS JetStream** if:
+
+- You need **lightweight messaging** for microservices or edge deployments.
+- **Simplicity** and low latency matter more than strict ordering.
+- Your workload fits within **medium throughput** (hundreds of thousands msg/sec).
+- You don't need heavy stream processing integrations (Flink, Spark).
+
+### Choose **Cloud Services** (Kinesis, Pub/Sub, Event Hubs) if:
+
+- You want **zero operational overhead**—no clusters, no scaling decisions.
+- You operate deeply within **one cloud provider** and use its native services (Lambda, BigQuery, Functions).
+- Your throughput and cost profile fit the **pay-per-use pricing** model.
+- You accept **vendor lock-in** in exchange for simplicity.
+
+> **Anti-pattern:** Choosing Kafka because it's popular, then struggling to operate it with a small team. If you lack JVM expertise, Redpanda or cloud services may deliver better reliability.
+
+## Bridging to Module 5: From Events to Processing
+
+Your streaming platform is the **data highway**—events flow through it, but the *real value* comes from **processing** those events:
+
+- **Stream processing frameworks** (Spark Structured Streaming, Flink, ksqlDB) consume events and compute aggregations, joins, and enrichments in real time.
+- **Workflow orchestration tools** (Airflow, Dagster, Prefect) trigger batch jobs when event thresholds are crossed or schedules are met.
+- **Data pipelines** land events in warehouses, lakes, and vector indexes for analytics and AI workloads.
+
+In **Module 5: Orchestration, Workflow & Processing**, we'll connect your event streams to **Apache Airflow DAGs** and **Spark jobs** that transform raw events into queryable datasets. You'll learn when to process streams in real time versus landing them in a lake for batch processing—and how to orchestrate hybrid pipelines that do both.
+
+The ingestion platform you choose shapes your processing architecture. Kafka's ecosystem integrates tightly with Flink and Spark. Cloud services (Kinesis, Pub/Sub) integrate natively with cloud data warehouses. Pulsar's tiered storage enables long-retention streams that feed both real-time and historical analytics.
+
+## Common Failure Modes
+
+**1. Choosing on Hype Instead of Criteria**
+
+*Symptom:* Adopting Pulsar because "it's the next-gen Kafka," then realizing your team lacks the expertise to debug BookKeeper issues.
+
+*Fix:* Evaluate platforms against your team's operational capacity and workload requirements, not blog post headlines.
+
+**2. Ignoring Operational Cost**
+
+*Symptom:* "Kafka is open source, so it's free"—but two engineers spend 50% of their time managing clusters.
+
+*Fix:* Factor in **team-hours** when calculating total cost of ownership. A managed service may be cheaper than self-hosting.
+
+**3. Over-Engineering for Scale You Don't Have**
+
+*Symptom:* Deploying a 10-broker Kafka cluster for 1,000 events per second because "we might scale someday."
+
+*Fix:* Start with the simplest platform that meets current needs. Cloud services or NATS may suffice—migrate to Kafka when you actually hit scale limits.
+
+**4. Vendor Lock-In Paranoia**
+
+*Symptom:* Avoiding Kinesis/Pub/Sub "in case we switch clouds," then spending 6 months operating Kafka on Kubernetes.
+
+*Fix:* Evaluate the **actual probability** of switching clouds. If you're deeply integrated into one cloud, the lock-in cost may be lower than the operational cost of self-hosting.
+
+**5. Ignoring Ecosystem Gaps**
+
+*Symptom:* Choosing NATS for simplicity, then discovering no pre-built connectors for your data warehouse.
+
+*Fix:* Inventory your **required integrations** (databases, warehouses, SaaS tools) before selecting a platform. Kafka's connector ecosystem may justify the operational complexity.
+
+## Summary
+
+Choosing a streaming platform is a **multi-dimensional decision** that balances ordering guarantees, latency, throughput, operational complexity, ecosystem maturity, and cost. **Apache Kafka** remains the default for its proven reliability and massive ecosystem, but **Redpanda** offers simpler operations with Kafka compatibility, **Pulsar** excels at multi-tenancy and tiered storage, **NATS** delivers lightweight messaging, and **cloud services** eliminate operational overhead entirely.
+
+Use a **criteria-driven framework**: map your workload requirements (latency, throughput, ordering) and team capabilities (operational expertise, budget) to platform strengths. Avoid hype-driven decisions, over-engineering for hypothetical scale, and ignoring the operational cost of "free" open-source platforms.
+
+In Module 5, we'll connect these event streams to **orchestration engines** (Airflow) and **stream processing frameworks** (Spark, Flink)—transforming raw events into queryable datasets that power analytics, AI, and real-time applications. Your platform choice shapes the processing architecture: Kafka's ecosystem, Pulsar's tiered storage, or cloud-native integrations determine how events flow into warehouses, lakes, and indexes.
+
+> **Transition to Module 5:** Events flowing through Kafka, Redpanda, or Pulsar are raw materials—orchestration and stream processing turn them into insights. Next, you'll design DAGs and streaming jobs that bridge ingestion and analytics.

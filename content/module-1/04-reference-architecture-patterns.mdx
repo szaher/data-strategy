@@ -1,0 +1,409 @@
+---
+title: "Reference Architecture Patterns"
+quiz:
+  - question: "Which archetype is recommended as the default for most organizations?"
+    options:
+      - "Managed-Cloud-First — minimize operational complexity"
+      - "Kubernetes-Centric — maximize control and portability"
+      - "Hybrid/Regulated Enterprise — balance managed services with differentiated capabilities"
+      - "All archetypes are equally suitable for any organization"
+    correctIndex: 2
+  - question: "What is the primary advantage of the Kubernetes-Centric archetype?"
+    options:
+      - "Lowest total cost of ownership at any scale"
+      - "Multi-cloud portability and sovereignty over differentiated components"
+      - "Fastest time-to-value for teams without platform expertise"
+      - "Zero operational overhead"
+    correctIndex: 1
+  - question: "How should AI accountability be integrated into reference architecture?"
+    options:
+      - "AI components should be isolated in a separate architecture pattern"
+      - "Training data, embeddings, and retrieval sources treated as governed data products in the same lakehouse"
+      - "AI features bypass data governance to enable faster experimentation"
+      - "AI accountability is a business concern, not an architectural one"
+    correctIndex: 1
+---
+
+## Overview
+
+Every organization building a modern data platform faces the same architectural question: **which tools should we use, and where should they run?** The layer cake from Lesson 1 defines *what* components you need — ingestion, processing, storage, serving, and the trust plane. But it doesn't prescribe *which* specific technologies or *where* to deploy them.
+
+Without a **reference architecture pattern**, teams make inconsistent tool choices. One squad picks BigQuery because it's fast to set up. Another deploys Spark on Kubernetes because they need custom processing logic. A third team provisions Snowflake because it's what they used at their last company. Six months later, you have three incompatible storage engines, duplicated ingestion pipelines, and no shared governance model. The trust plane is impossible to enforce because every component speaks a different dialect of metadata.
+
+This lesson introduces **three reference-architecture archetypes** that assemble the layer cake in different ways. Each archetype makes coherent decisions about managed vs. self-hosted, cloud-native vs. Kubernetes-centric, and centralized vs. federated operations. You'll learn:
+
+- The **Managed-Cloud-First** archetype — when to delegate infrastructure to cloud vendors
+- The **Kubernetes-Centric** archetype — when platform portability justifies operational complexity
+- The **Hybrid/Regulated Enterprise** archetype — the recommended default for most organizations
+- How to map **composable building blocks** to each archetype
+- How **AI accountability** integrates into reference architecture decisions
+- How the **recurring integration scenario** (Lesson 1) is implemented differently in each archetype
+
+By the end of this lesson, you'll have a decision framework for choosing the right archetype, understand the trade-offs each one makes, and know how to avoid the common failure modes: over-engineering, premature Kubernetes adoption, and vendor lock-in without exit planning.
+
+## The Problem: Inconsistent Tool Choices
+
+Most organizations don't fail because they pick the wrong storage engine or orchestration tool. They fail because **every team picks a different one**. The trust plane depends on uniform metadata extraction, lineage tracking, and access control. When one domain uses BigQuery and another uses Databricks and a third uses Postgres, you can't build a unified catalog. Data products become islands. Lineage breaks at every boundary.
+
+The root cause is the absence of a **reference architecture** — a documented, opinionated pattern that answers the question "what tools do we use, and where do they run?" without requiring every team to relitigate the decision. A reference architecture doesn't lock you into a single vendor or prevent customization. It establishes **defaults** so that teams can move fast, and it defines **extension points** so that exceptions are visible and controlled.
+
+The three archetypes in this lesson are not the only valid patterns. They are **composable building blocks** assembled from the layer cake. Your organization may use Managed-Cloud-First for analytics workloads and Kubernetes-Centric for real-time ML inference. The goal is not to pick one archetype and enforce it everywhere. The goal is to **make explicit choices** so that integration points, governance boundaries, and operational responsibilities are clear.
+
+## Archetype A: Managed-Cloud-First
+
+The **Managed-Cloud-First** archetype delegates infrastructure to cloud vendors. Storage, ingestion, processing, orchestration, and ML platforms are all consumed as managed services. Your team writes SQL, Python transformations, and orchestration DAGs. You do not provision VMs, manage Kubernetes clusters, or patch Kafka brokers.
+
+### Component Choices
+
+| Layer | AWS | GCP | Azure |
+|-------|-----|-----|-------|
+| **Platform Runtime** | Lambda, ECS | Cloud Run, GCE | Azure Functions, ACI |
+| **Storage** | S3, Redshift, Athena | GCS, BigQuery | ADLS, Synapse |
+| **Ingestion** | Kinesis, DMS, EventBridge | Pub/Sub, Datastream | Event Hubs, Data Factory |
+| **Processing** | EMR Serverless, Glue | Dataproc Serverless, Dataflow | Synapse Spark, Databricks |
+| **Serving** | Redshift, Athena, SageMaker | BigQuery, Vertex AI | Synapse, Azure ML |
+| **Orchestration** | MWAA (Airflow), Step Functions | Cloud Composer, Workflows | Data Factory, Azure Functions |
+| **Trust Plane** | Glue Catalog, Lake Formation, IAM | Dataplex, Data Catalog, IAM | Purview, Azure RBAC |
+
+Every component is **fully managed**. The cloud provider handles patching, scaling, backups, and high availability. Your team focuses on data modeling, transformation logic, and business rules. Operational complexity is minimized.
+
+### When to Use
+
+Managed-Cloud-First is the right choice when:
+
+- **You lack platform engineering expertise.** If your team has strong SQL, Python, and analytics skills but no one who can operate Kafka or Kubernetes at scale, managed services reduce risk.
+- **Speed matters more than cost.** Managed services have higher per-unit pricing, but they eliminate weeks of infrastructure setup and ongoing ops toil.
+- **Your data workloads are batch-heavy.** BigQuery, Redshift, and Synapse are optimized for analytical queries and data warehousing. If 80% of your processing is daily batch jobs, managed services fit naturally.
+- **You're willing to accept vendor lock-in for simplicity.** Every managed service uses proprietary APIs. Migrating from BigQuery to another warehouse is expensive. If you're confident in your cloud provider or accept the cost of future migration, this trade-off is acceptable.
+
+### Trade-Offs
+
+**Advantages:**
+- **Minimal operational overhead.** No cluster provisioning, no patching, no on-call for infrastructure failures.
+- **Fast time-to-value.** Spin up a BigQuery dataset and start querying in minutes.
+- **Auto-scaling built-in.** Most managed services scale capacity automatically based on workload.
+
+**Disadvantages:**
+- **Vendor lock-in.** Migrating from BigQuery to Snowflake requires rewriting SQL dialects, rearchitecting storage, and rebuilding integrations.
+- **Higher cost at scale.** Managed services charge for convenience. At large data volumes, self-hosted alternatives (Kafka on Kubernetes, Trino on Spark) are 40-60% cheaper.
+- **Less control.** You can't customize Kafka broker configurations, tune Spark executor memory beyond preset tiers, or patch security vulnerabilities on your own timeline.
+
+### AI Accountability in Managed-Cloud-First
+
+Training data, embeddings, and retrieval sources live in the same lakehouse as analytics data. If you're using **BigQuery** for analytics, your training datasets are BigQuery tables with lineage tracked in **Data Catalog**. Model embeddings are stored in **Cloud Storage** (GCS) or **BigQuery vector search** columns, governed by the same IAM policies and catalog metadata as structured tables.
+
+When a Vertex AI model consumes a data product, that consumption is recorded as lineage. When a RAG retrieval workflow queries a vector index, the source documents are tracked in the catalog. AI components are not isolated — they're integrated into the trust plane.
+
+## Archetype B: Kubernetes-Centric
+
+The **Kubernetes-Centric** archetype runs data platform components as containerized workloads on Kubernetes. Kafka is deployed with **Strimzi** (a Kubernetes operator). Spark runs via the **Spark Operator**. Airflow is installed with the **official Helm chart**. Object storage (S3, GCS) and identity services (IAM) are still cloud-managed, but differentiated components run on K8s.
+
+### Component Choices
+
+| Layer | Tool | Deployment |
+|-------|------|------------|
+| **Platform Runtime** | Kubernetes (GKE, EKS, AKS) | Self-hosted or managed K8s |
+| **Storage** | S3, GCS, ADLS (object storage) | Managed by cloud provider |
+| **Ingestion** | Strimzi (Kafka), Debezium, Airbyte | Deployed on K8s |
+| **Processing** | Spark Operator, Flink Operator, Ray on K8s | Deployed on K8s |
+| **Serving** | Trino on K8s, Feast, Seldon Core | Deployed on K8s |
+| **Orchestration** | Airflow (Helm), Argo Workflows | Deployed on K8s |
+| **Trust Plane** | DataHub, OpenMetadata, Ranger (all on K8s) | Deployed on K8s |
+
+You still use **cloud-managed object storage** (S3, GCS) — self-hosting distributed storage is rarely cost-effective. But ingestion, processing, and governance run on Kubernetes, giving you control over versions, configurations, and resource allocation.
+
+### When to Use
+
+Kubernetes-Centric is the right choice when:
+
+- **You have platform engineering expertise.** Operating Kafka, Spark, and Airflow on Kubernetes requires deep knowledge of container orchestration, service mesh, and distributed systems debugging.
+- **Multi-cloud or hybrid-cloud is a requirement.** If you need to run the same data platform on AWS, GCP, and on-premises datacenters, Kubernetes provides a consistent deployment model.
+- **Sovereignty or regulatory constraints prohibit cloud services.** Some industries (defense, healthcare in certain regions, financial services) cannot use managed services due to data residency or control requirements.
+- **Cost optimization at scale justifies operational complexity.** At petabyte scale, self-hosted Kafka and Spark on Kubernetes can be 40-60% cheaper than managed equivalents — but only if you have a platform team to operate them.
+
+### Trade-Offs
+
+**Advantages:**
+- **Multi-cloud portability.** The same Helm charts and operators work on GKE, EKS, AKS, or bare-metal Kubernetes.
+- **Full control over configuration.** You can tune Kafka broker settings, customize Spark executor memory, and patch vulnerabilities immediately.
+- **Cost savings at scale.** For large workloads, self-hosted infrastructure is cheaper than managed services.
+
+**Disadvantages:**
+- **High operational complexity.** You are responsible for cluster upgrades, TLS certificate rotation, monitoring, alerting, and incident response.
+- **Longer time-to-value.** Setting up Strimzi, Spark Operator, and Airflow on Kubernetes takes weeks, not hours.
+- **Requires a platform engineering team.** A Kubernetes-centric data platform needs 2-3 dedicated SREs to operate reliably.
+
+### AI Accountability in Kubernetes-Centric
+
+Training data lives in S3/GCS, cataloged by **DataHub** or **OpenMetadata** (both deployed on Kubernetes). Embeddings are stored in **vector databases** like Weaviate or Milvus, also running on Kubernetes, with metadata registered in the same catalog.
+
+When a **Kubeflow** or **MLflow** training job consumes a data product, lineage is tracked by DataHub. When a RAG retrieval service queries a vector database, the source documents are linked to catalog entities. The trust plane is unified across analytics and AI workloads, all orchestrated through Kubernetes-native tools.
+
+## Archetype C: Hybrid/Regulated Enterprise (Recommended Default)
+
+The **Hybrid/Regulated Enterprise** archetype is the recommended starting point for most organizations. It uses **managed services for commodity components** (object storage, identity, databases) and **self-hosted tools for differentiated or regulated capabilities** (ingestion pipelines with custom logic, specialized ML inference, governance tools under your control).
+
+This archetype balances **operational simplicity** (managed services where they add value) with **strategic control** (self-hosted where differentiation or compliance matters). You don't manage Kubernetes clusters for every component, but you also don't accept vendor lock-in for your entire platform.
+
+### Component Choices
+
+| Layer | Managed Services | Self-Hosted (on K8s or VMs) |
+|-------|------------------|------------------------------|
+| **Platform Runtime** | Cloud-managed Kubernetes (GKE, EKS, AKS) | Custom runtimes for specialized workloads |
+| **Storage** | S3, GCS, ADLS (object storage); BigQuery or Snowflake (warehouse) | — |
+| **Ingestion** | Pub/Sub, Kinesis (for simple streams) | Airbyte, Debezium, custom connectors (for complex CDC) |
+| **Processing** | Dataproc Serverless, EMR Serverless (for standard Spark) | Spark Operator on K8s (for custom memory tuning, GPU workloads) |
+| **Serving** | BigQuery, Redshift (for analytics); Vertex AI, SageMaker (for standard ML) | Trino, Feast, custom model serving (for specialized inference) |
+| **Orchestration** | Cloud Composer (managed Airflow) or MWAA | Prefect, Dagster, or self-hosted Airflow (if DAG customization is critical) |
+| **Trust Plane** | Cloud IAM, Data Catalog, Dataplex (identity, discovery) | DataHub or OpenMetadata (for lineage, business glossary, custom policies) |
+
+The decision rule: **use managed services for components that don't differentiate your platform**, and **self-host components where control, customization, or compliance justifies the operational cost**.
+
+<MermaidDiagram chart={`graph TB
+    subgraph Sources["Data Sources"]
+        SaaS[SaaS APIs]
+        DB[(Transactional DBs)]
+        Stream[Event Streams]
+    end
+
+    subgraph Ingestion["Ingestion Layer (Hybrid)"]
+        Kinesis[Managed: Kinesis/Pub/Sub<br/>For simple streams]
+        Airbyte[Self-Hosted: Airbyte<br/>For complex CDC]
+    end
+
+    subgraph Storage["Storage Layer (Managed)"]
+        S3[S3/GCS Object Storage]
+        BQ[BigQuery/Snowflake Warehouse]
+    end
+
+    subgraph Processing["Processing Layer (Hybrid)"]
+        Dataproc[Managed: Dataproc Serverless<br/>For standard Spark jobs]
+        SparkOp[Self-Hosted: Spark Operator<br/>For GPU/custom memory tuning]
+    end
+
+    subgraph Serving["Serving Layer (Hybrid)"]
+        BQServe[Managed: BigQuery<br/>For analytics queries]
+        Trino[Self-Hosted: Trino<br/>For federated query across sources]
+        VertexAI[Managed: Vertex AI<br/>For standard ML inference]
+        CustomML[Self-Hosted: Custom Model Serving<br/>For specialized inference]
+    end
+
+    subgraph Trust["Trust Plane (Hybrid)"]
+        IAM[Managed: Cloud IAM]
+        DataCat[Managed: Data Catalog]
+        DataHub[Self-Hosted: DataHub<br/>For lineage + business glossary]
+    end
+
+    subgraph Orchestration["Orchestration (Managed)"]
+        Composer[Cloud Composer<br/>Managed Airflow]
+    end
+
+    SaaS --> Airbyte
+    DB --> Airbyte
+    Stream --> Kinesis
+    Airbyte --> S3
+    Kinesis --> S3
+    S3 --> Dataproc
+    S3 --> SparkOp
+    Dataproc --> BQ
+    SparkOp --> BQ
+    BQ --> BQServe
+    BQ --> Trino
+    BQ --> VertexAI
+    S3 --> CustomML
+    IAM -.-> S3
+    IAM -.-> BQ
+    DataCat -.-> BQ
+    DataHub -.-> S3
+    DataHub -.-> BQ
+    Composer -.-> Airbyte
+    Composer -.-> Dataproc
+    Composer -.-> SparkOp
+
+    style Airbyte fill:#fef3c7,stroke:#f59e0b
+    style SparkOp fill:#fef3c7,stroke:#f59e0b
+    style Trino fill:#fef3c7,stroke:#f59e0b
+    style CustomML fill:#fef3c7,stroke:#f59e0b
+    style DataHub fill:#fef3c7,stroke:#f59e0b
+    style Kinesis fill:#dbeafe,stroke:#3b82f6
+    style S3 fill:#dbeafe,stroke:#3b82f6
+    style BQ fill:#dbeafe,stroke:#3b82f6
+    style Dataproc fill:#dbeafe,stroke:#3b82f6
+    style BQServe fill:#dbeafe,stroke:#3b82f6
+    style VertexAI fill:#dbeafe,stroke:#3b82f6
+    style IAM fill:#dbeafe,stroke:#3b82f6
+    style DataCat fill:#dbeafe,stroke:#3b82f6
+    style Composer fill:#dbeafe,stroke:#3b82f6
+`} />
+
+### When to Use
+
+Hybrid/Regulated Enterprise is the right choice when:
+
+- **You need to balance speed and control.** Managed services for analytics queries and standard ML workflows reduce ops burden. Self-hosted ingestion and governance give you flexibility for custom requirements.
+- **Compliance or sovereignty applies to *some* components, not all.** If training data must stay in a region without managed ML services, you self-host model serving but still use managed storage and identity.
+- **You have a small platform team (1-2 engineers).** Hybrid lets you use managed services where they work and focus engineering effort on the 20% of components that differentiate your platform.
+- **You want an exit strategy from vendor lock-in.** By self-hosting the governance layer (DataHub), you maintain control over metadata even if you switch from BigQuery to Snowflake or Databricks.
+
+### Trade-Offs
+
+**Advantages:**
+- **Balanced operational complexity.** You manage fewer components than Kubernetes-Centric but retain control over differentiated capabilities.
+- **Flexibility to optimize.** Use managed services for commodity workloads and self-host where cost or customization justifies it.
+- **Easier vendor migration.** Because governance (DataHub) and orchestration (Airflow) are self-hosted, switching from BigQuery to Snowflake only requires changing storage/query layers, not the entire stack.
+
+**Disadvantages:**
+- **More complex than Managed-Cloud-First.** You still operate some self-hosted components, which means patching, monitoring, and incident response.
+- **Requires architectural judgment.** Deciding which components to self-host vs. manage is not always obvious. Teams need guidance (this lesson provides that framework).
+
+### AI Accountability in Hybrid
+
+Training data lives in **S3/GCS**, cataloged by **DataHub**. If the data is sensitive, you can enforce region-specific storage policies via IAM and catalog metadata. Embeddings are stored in a **self-hosted vector database** (Weaviate, Milvus) or **BigQuery vector columns**, depending on sovereignty requirements.
+
+Model inference may use **managed Vertex AI** for standard models or **self-hosted model serving** (Seldon, KServe) for custom inference logic that requires GPU tuning or proprietary preprocessing. Either way, the trust plane treats model-consumption data products like any other: lineage tracked in DataHub, access governed by IAM, quality monitored through the same observability stack.
+
+## Composable Building Blocks
+
+The three archetypes are not mutually exclusive templates. They are **composable building blocks** assembled from the layer cake. Your organization may use:
+
+- **Managed-Cloud-First** for analytics workloads (BigQuery for SQL analysts)
+- **Kubernetes-Centric** for real-time ML inference (custom model serving with GPU nodes)
+- **Hybrid** for batch ingestion (Airbyte on Kubernetes, writing to S3, loaded into BigQuery)
+
+The key is to **make explicit decisions** for each layer. If your ingestion layer is self-hosted but your serving layer is managed, document that choice. Define the integration points: how does self-hosted Airbyte authenticate to BigQuery? Where does lineage metadata flow between DataHub and Data Catalog?
+
+<MermaidDiagram chart={`graph LR
+    subgraph Managed["Managed-Cloud-First"]
+        M1[Fast time-to-value]
+        M2[Minimal ops]
+        M3[Vendor lock-in]
+        M4[Higher cost at scale]
+    end
+
+    subgraph K8s["Kubernetes-Centric"]
+        K1[Multi-cloud portability]
+        K2[Full control]
+        K3[High ops complexity]
+        K4[Requires platform team]
+    end
+
+    subgraph Hybrid["Hybrid/Regulated Enterprise"]
+        H1[Balanced ops complexity]
+        H2[Flexible optimization]
+        H3[Exit strategy]
+        H4[Requires judgment calls]
+    end
+
+    Managed -->|Use for: Teams without infra expertise,<br/>batch-heavy workloads| M1
+    K8s -->|Use for: Multi-cloud, sovereignty,<br/>cost optimization at scale| K1
+    Hybrid -->|Use for: Most organizations,<br/>balanced control + speed| H1
+
+    style Managed fill:#dbeafe,stroke:#3b82f6
+    style K8s fill:#fef3c7,stroke:#f59e0b
+    style Hybrid fill:#d1fae5,stroke:#10b981
+`} />
+
+### Decision Framework
+
+Use this framework to decide which components to self-host vs. manage:
+
+**Always manage (unless sovereignty forbids):**
+- Object storage (S3, GCS, ADLS) — self-hosting distributed storage is rarely cost-effective
+- Identity and access control (IAM) — cloud providers invest more in security than most organizations can
+- Databases for transactional workloads (RDS, Cloud SQL) — unless you have a dedicated DBA team
+
+**Manage unless customization is critical:**
+- Orchestration (Cloud Composer, MWAA) — self-host Airflow only if you need custom operators or DAG validation logic
+- Batch processing (Dataproc Serverless, EMR Serverless) — self-host Spark only for GPU workloads or extreme memory tuning
+
+**Self-host if differentiation or compliance requires it:**
+- Data governance (DataHub, OpenMetadata) — vendors' catalog tools lack lineage depth and business glossary flexibility
+- Real-time ingestion with custom logic (Airbyte, Debezium) — if CDC pipelines need proprietary transformation rules
+- Model serving with specialized hardware (KServe, Seldon) — if inference requires GPU, TPU, or custom preprocessing
+
+**Never self-host (unless you're a platform vendor):**
+- DNS, TLS certificate management, CDN — these are solved problems; use managed services
+- Logging and monitoring infrastructure (CloudWatch, Stackdriver) — focus on *using* observability data, not operating the logging backend
+
+## The Recurring Integration Scenario Across Archetypes
+
+Recall the integration scenario from Lesson 1: a source system (Salesforce CRM) changes → CDC captures the event → processing enriches it → data lands in the lakehouse → ML models consume it for churn prediction and RAG retrieval.
+
+Here's how each archetype implements this flow:
+
+### Managed-Cloud-First (GCP)
+
+1. **Source change** — Salesforce writes to Cloud SQL (Postgres)
+2. **CDC** — **Datastream** (managed CDC service) captures change events, publishes to **Pub/Sub**
+3. **Processing** — **Dataflow** (managed Apache Beam) enriches events with lookup tables from **BigQuery**
+4. **Storage** — Enriched data lands in **BigQuery** (lakehouse + warehouse)
+5. **ML consumption** — **Vertex AI** training job reads BigQuery table, writes embeddings to **BigQuery vector columns**
+6. **RAG retrieval** — Application queries **BigQuery vector search**, governed by **Data Catalog** lineage
+
+**Trust plane:** Data Catalog tracks lineage from Cloud SQL → Pub/Sub → BigQuery → Vertex AI. IAM enforces access. Dataplex enforces quality policies.
+
+### Kubernetes-Centric
+
+1. **Source change** — Salesforce writes to Postgres (RDS or Cloud SQL)
+2. **CDC** — **Debezium** (deployed on Kubernetes) captures change events, publishes to **Kafka** (Strimzi on K8s)
+3. **Processing** — **Spark Operator** (Kubernetes-native Spark) enriches events with lookup tables from **Trino** (also on K8s)
+4. **Storage** — Enriched data lands in **S3/GCS** (object storage), cataloged by **DataHub** (on K8s)
+5. **ML consumption** — **Kubeflow** training job reads from S3, writes embeddings to **Weaviate** (vector DB on K8s)
+6. **RAG retrieval** — Application queries **Weaviate**, governed by **DataHub** lineage
+
+**Trust plane:** DataHub tracks lineage from Postgres → Kafka → S3 → Kubeflow → Weaviate. **Open Policy Agent** (on K8s) enforces access. **Great Expectations** (on K8s) enforces quality.
+
+### Hybrid/Regulated Enterprise (GCP)
+
+1. **Source change** — Salesforce writes to Cloud SQL (Postgres)
+2. **CDC** — **Airbyte** (self-hosted on Kubernetes) captures change events, writes to **Pub/Sub** (managed)
+3. **Processing** — **Dataproc Serverless** (managed Spark) enriches events with lookup tables from **BigQuery**
+4. **Storage** — Enriched data lands in **BigQuery** (managed lakehouse)
+5. **ML consumption** — **Vertex AI** (managed) training job reads BigQuery, writes embeddings to **self-hosted Weaviate** (for sovereignty)
+6. **RAG retrieval** — Application queries **Weaviate**, governed by **DataHub** (self-hosted) lineage
+
+**Trust plane:** DataHub tracks lineage from Cloud SQL → Airbyte → BigQuery → Vertex AI → Weaviate. **Cloud IAM** enforces access. **Data Catalog** provides discovery. **Soda** (self-hosted quality checks) enforces policies.
+
+## Failure Modes
+
+### Over-Engineering
+
+The most common failure mode is **over-engineering the reference architecture**. Teams read about Kubernetes-native data platforms and assume they need to run every component on Kubernetes. They provision Strimzi, Spark Operator, Trino, Airflow, and DataHub — all before they've ingested a single data product.
+
+Six months later, they have a complex platform that no one can operate. Kafka brokers crash due to misconfigured memory limits. Airflow DAGs fail because TLS certificates expired. The platform team spends 80% of their time on incident response, not building data products.
+
+**How to avoid:** Start with Managed-Cloud-First or Hybrid. Only adopt Kubernetes-Centric components when you have a specific, documented reason: "We need multi-cloud portability because we're migrating from AWS to GCP," or "We need custom Spark executor tuning because our GPU-based inference jobs require 128GB memory per executor."
+
+### Premature Kubernetes
+
+The second failure mode is **premature Kubernetes adoption**. Teams assume Kubernetes is the future, so they deploy data components on Kubernetes *before they have platform engineering expertise*.
+
+Kubernetes is a powerful abstraction, but it's also operationally complex. If your team has never operated Kafka or Spark *at all*, running them on Kubernetes adds a second layer of complexity. You'll debug Kafka rebalancing failures *and* Kubernetes pod scheduling issues *at the same time*.
+
+**How to avoid:** Use managed services (Cloud Composer, MWAA, Dataproc Serverless) until you've operated the underlying tools (Airflow, Spark) in production for 6-12 months. Once you understand their failure modes, you can evaluate whether Kubernetes adds value or just complexity.
+
+### Vendor Lock-In Without Exit Planning
+
+The third failure mode is **accepting vendor lock-in without an exit plan**. Teams choose BigQuery or Snowflake, build hundreds of SQL-based data products, and then realize two years later that they can't migrate without rewriting every query.
+
+Vendor lock-in is not inherently bad. BigQuery is fast, reliable, and scales automatically. But if you *assume* you'll never migrate, you'll make architectural decisions that make future migration prohibitively expensive: hard-coding BigQuery-specific SQL functions, storing embeddings in BigQuery vector columns, coupling orchestration logic to BigQuery APIs.
+
+**How to avoid:** Self-host the governance layer (DataHub or OpenMetadata) even if you use managed storage. Store data in open formats (Parquet, Iceberg) in object storage (S3, GCS), not proprietary warehouse formats. Use abstraction layers (dbt for SQL transformations, Trino for federated queries) so that switching from BigQuery to Snowflake requires changing configuration, not rewriting code.
+
+## Summary
+
+**Reference architecture patterns** assemble the layer cake into coherent, opinionated systems. The three archetypes are:
+
+1. **Managed-Cloud-First** — delegate infrastructure to cloud vendors. Best for teams without platform expertise, batch-heavy workloads, and fast time-to-value. Trade-offs: vendor lock-in, higher cost at scale, less control.
+
+2. **Kubernetes-Centric** — run data components as containerized workloads on Kubernetes. Best for multi-cloud portability, sovereignty, and cost optimization at scale. Trade-offs: high operational complexity, requires a platform engineering team, longer time-to-value.
+
+3. **Hybrid/Regulated Enterprise (recommended default)** — use managed services for commodity components, self-host for differentiated or regulated capabilities. Best for most organizations. Trade-offs: requires architectural judgment, more complex than Managed-Cloud-First but simpler than Kubernetes-Centric.
+
+**AI accountability** integrates into reference architecture by treating training data, embeddings, and retrieval sources as governed data products in the same lakehouse. Model-consumption lineage is tracked in the same catalog as analytics lineage.
+
+**Composable building blocks** let you mix archetypes: Managed-Cloud-First for analytics, Kubernetes-Centric for real-time ML. The key is to make explicit decisions for each layer and document integration points.
+
+**Avoid failure modes:** over-engineering (running Kubernetes before you need it), premature Kubernetes (adopting K8s before you understand the underlying tools), and vendor lock-in without exit planning (coupling to proprietary APIs without abstraction layers).
+
+In Lesson 5, we'll map organizational anti-patterns (shadow IT, ivory tower platforms, federated chaos) to architecture failures, and show how the operating model from Lesson 2 prevents them.

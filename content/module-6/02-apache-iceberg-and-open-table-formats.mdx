@@ -1,0 +1,517 @@
+---
+title: "Apache Iceberg & Open Table Formats"
+quiz:
+  - question: "What problem does hidden partitioning in Apache Iceberg solve?"
+    options:
+      - "It automatically encrypts partition metadata"
+      - "It eliminates user errors from manually specifying partition predicates in WHERE clauses (correct)"
+      - "It hides partitions from query engines for security"
+      - "It compresses partition files to save storage costs"
+    correctIndex: 1
+  - question: "Which catalog option provides git-like versioning and branch semantics for Iceberg tables?"
+    options:
+      - "Hive Metastore"
+      - "Unity Catalog"
+      - "Nessie (correct)"
+      - "Polaris"
+    correctIndex: 2
+  - question: "What is the primary architectural advantage of Apache Iceberg over Delta Lake?"
+    options:
+      - "Iceberg is faster for all query types"
+      - "Iceberg supports more data formats"
+      - "Iceberg is fully engine-neutral with no vendor lock-in (correct)"
+      - "Iceberg requires less storage space"
+    correctIndex: 2
+---
+
+## Overview
+
+In the previous lesson, you learned why the lakehouse architecture emerged and how it bridges the warehouse/lake divide. Now you face a concrete decision: **which table format should you use, and which catalog should manage it?** The ecosystem offers three major open table formats — **Apache Iceberg**, **Delta Lake**, and **Apache Hudi** — plus multiple catalog implementations that sit above them. Choosing the wrong combination locks you into a vendor ecosystem, creates hidden operational complexity, or forces expensive migrations later.
+
+This lesson provides a technical deep-dive into **Apache Iceberg**, examines its metadata architecture, explains why **hidden partitioning** and **time travel** are not just features but architectural enablers, and teaches you to select both a table format and a catalog based on your engine ecosystem, governance requirements, and multi-team coordination needs. By the end, you will understand why catalog selection is just as critical as format selection, and you will know the decision framework for evaluating Iceberg, Delta, and Hudi in production contexts.
+
+---
+
+## The Problem: Proprietary Formats and Missing Guarantees
+
+Traditional data lakes stored files in **Parquet** or **Avro** format with no metadata layer. Every query engine read raw files, applied its own schema inference, and had no visibility into:
+
+- **Atomicity:** Did this write succeed completely, or did it leave partial files?
+- **Isolation:** Can I read consistent data while another job is writing?
+- **Schema evolution:** If a column was added last week, which files have it?
+- **Partitioning mistakes:** Users wrote `WHERE date = '2024-01-15'` but forgot the partition column was `dt`, not `date`, causing full table scans.
+- **Time travel:** How do I query yesterday's data for debugging or reproducibility?
+
+Data warehouses solved these problems with **catalog services** and **transaction logs**, but lakehouses needed the same guarantees over object storage. **Apache Iceberg** introduced a metadata layer that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation — all while remaining **engine-neutral** (Spark, Trino, Flink, Dremio, and Athena all speak Iceberg natively).
+
+The second problem is **catalog selection**. The table format defines how data and metadata are structured on disk, but the **catalog** is the service that:
+
+- Maintains the **current metadata pointer** (which snapshot is "latest"?)
+- Provides **namespace management** (databases, schemas, tables)
+- Enables **discoverability** (list all tables, check schema)
+- Coordinates **multi-engine access** (Spark writes, Trino reads, both see the same snapshot)
+
+Choosing Iceberg without choosing a catalog is like buying a car without deciding where to park it. The catalog is where governance, versioning, and cross-team coordination happen.
+
+---
+
+## Apache Iceberg: Metadata Layer Architecture
+
+Iceberg's core innovation is a **layered metadata structure** that decouples schema, partitioning, and file tracking from the query engine.
+
+<MermaidDiagram chart={`graph TD
+    Catalog[Catalog Service<br/>Hive, Nessie, REST, Polaris]
+    Metadata[Metadata File<br/>metadata/v1.json]
+    ManifestList[Manifest List<br/>snap-12345-manifest-list.avro]
+    Manifest1[Manifest File 1<br/>manifest-file-001.avro]
+    Manifest2[Manifest File 2<br/>manifest-file-002.avro]
+    Data1[Data Files<br/>part-0001.parquet]
+    Data2[Data Files<br/>part-0002.parquet]
+    Data3[Data Files<br/>part-0003.parquet]
+
+    Catalog -->|Points to current| Metadata
+    Metadata -->|References snapshot| ManifestList
+    ManifestList -->|Lists| Manifest1
+    ManifestList -->|Lists| Manifest2
+    Manifest1 -->|Tracks| Data1
+    Manifest1 -->|Tracks| Data2
+    Manifest2 -->|Tracks| Data3
+
+    style Catalog fill:#ebf8ff,stroke:#3182ce
+    style Metadata fill:#fef5e7,stroke:#f39c12
+    style ManifestList fill:#e8f5e9,stroke:#4caf50
+    style Manifest1 fill:#e8f5e9,stroke:#4caf50
+    style Manifest2 fill:#e8f5e9,stroke:#4caf50
+`} />
+
+### Five-Layer Hierarchy
+
+1. **Catalog:** The external service (Hive Metastore, Nessie, REST catalog, Polaris, Unity Catalog) that stores the **current metadata file location**. When you run `SELECT * FROM orders`, the catalog returns the path to `metadata/v47.json`.
+
+2. **Metadata File:** A JSON file containing:
+   - **Current schema** (column names, types, nullability)
+   - **Partition spec** (how data is partitioned — hour(ts), day(ts), bucket(user_id, 16))
+   - **Current snapshot ID** (pointer to the latest manifest list)
+   - **Snapshot history** (list of all prior snapshots for time travel)
+   - **Table properties** (write format, compression codec)
+
+3. **Manifest List:** An Avro file listing all manifest files for this snapshot. Each entry includes:
+   - Manifest file path
+   - Partition value ranges covered by this manifest
+   - Add/delete status (did this snapshot add or remove data files?)
+
+4. **Manifest Files:** Avro files listing individual data files. Each entry includes:
+   - Data file path (e.g., `s3://bucket/orders/data/part-0042.parquet`)
+   - File size, record count, column-level statistics (min, max, null count)
+   - Partition values for this file
+
+5. **Data Files:** The actual Parquet (or Avro, ORC) files containing table data.
+
+### Why This Layering Matters
+
+- **Query planning is fast:** Iceberg reads the metadata file (KB), scans the manifest list (MB), and uses column statistics to prune 90%+ of data files before touching object storage.
+- **Writes are atomic:** A new snapshot is committed by writing a new metadata file and atomically updating the catalog pointer. No partial writes are visible.
+- **Time travel is cheap:** Every snapshot is immutable. To query yesterday's data, the catalog returns `metadata/v42.json` instead of `v47.json`.
+
+---
+
+## Snapshots: Immutable Table States
+
+Every write operation (INSERT, UPDATE, DELETE, MERGE) creates a new **snapshot**. A snapshot is an **immutable pointer** to the complete table state at a moment in time.
+
+### Snapshot Workflow
+
+1. **Append:** A Spark job writes 1000 new Parquet files. Iceberg creates a new manifest file listing these files, appends it to the manifest list, and writes `metadata/v48.json` pointing to the new snapshot.
+
+2. **Overwrite:** A batch job rewrites partition `date=2024-01-15`. Iceberg marks old data files as deleted in the new manifest, adds new data files, and creates snapshot 49.
+
+3. **Delete:** A GDPR deletion removes 500 records. Iceberg writes new data files (without the deleted rows), marks old files as deleted, and creates snapshot 50.
+
+Each snapshot has:
+- **Snapshot ID:** Unique 64-bit integer
+- **Timestamp:** When the snapshot was committed
+- **Parent snapshot ID:** The snapshot this write built upon (forms a DAG)
+- **Manifest list:** Pointer to the list of manifests for this snapshot
+
+### Time Travel Queries
+
+<CodeBlock code={`-- Query the table as it existed at snapshot 12345
+SELECT * FROM orders FOR SYSTEM_VERSION AS OF 12345
+WHERE order_status = 'shipped';
+
+-- Query the table as it existed at a specific timestamp
+SELECT * FROM orders FOR SYSTEM_TIME AS OF '2024-06-15 08:00:00'
+WHERE region = 'us-east-1';
+
+-- Compare today's revenue vs. yesterday's
+SELECT
+  current.total_revenue - yesterday.total_revenue AS revenue_change
+FROM
+  (SELECT SUM(amount) AS total_revenue FROM orders) AS current,
+  (SELECT SUM(amount) AS total_revenue 
+   FROM orders FOR SYSTEM_TIME AS OF CURRENT_DATE - INTERVAL '1' DAY) AS yesterday;
+`} language="sql" filename="time_travel.sql" />
+
+**Why this matters for AI/ML reproducibility:** If your training pipeline reads `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying `FOR SYSTEM_TIME AS OF '2024-06-19 09:00:00'`. This eliminates "data drift" between training and debugging.
+
+---
+
+## Hidden Partitioning: No More User Errors
+
+Traditional Hive-style partitioning exposes partition columns in the query:
+
+<CodeBlock code={`-- Hive partitioning: user must know the partition column is 'dt'
+SELECT * FROM events
+WHERE dt = '2024-06-15' AND user_id = 'abc123';
+
+-- Forgot the partition column? Full table scan.
+SELECT * FROM events
+WHERE event_time >= '2024-06-15 00:00:00';
+`} language="sql" filename="hive_partitioning.sql" />
+
+Iceberg introduces **hidden partitioning** with **partition transforms**. You define how to partition the table in the metadata, and the query engine automatically applies the transform without user intervention.
+
+### Partition Transforms
+
+<CodeBlock code={`-- Create an Iceberg table with hidden partitioning
+CREATE TABLE events (
+  event_time TIMESTAMP,
+  user_id STRING,
+  event_type STRING,
+  payload STRING
+)
+USING iceberg
+PARTITIONED BY (hours(event_time), bucket(user_id, 16));
+
+-- Users query naturally — Iceberg rewrites predicates automatically
+SELECT * FROM events
+WHERE event_time >= '2024-06-15 08:00:00'
+  AND event_time < '2024-06-15 09:00:00'
+  AND user_id = 'abc123';
+
+-- Iceberg transforms this into:
+-- WHERE hour(event_time) = 498720 AND bucket(user_id, 16) = 7
+`} language="python" filename="iceberg_partitioning.py" />
+
+**Available transforms:**
+
+- `year(ts)`, `month(ts)`, `day(ts)`, `hour(ts)` — extract date/time components
+- `bucket(column, N)` — hash-based bucketing into N buckets
+- `truncate(column, width)` — truncate strings or numbers to width
+- `identity(column)` — use the column value directly (equivalent to Hive partitioning)
+
+### Benefits
+
+- **No user errors:** Analysts query `event_time >= '2024-06-15'` without knowing the table is partitioned by hour.
+- **Partition evolution:** You can change partitioning (e.g., from daily to hourly) without rewriting data — only new writes use the new spec.
+- **Fewer partitions:** Bucketing distributes data evenly without creating thousands of tiny partitions (a common Hive anti-pattern).
+
+---
+
+## Schema Evolution: Safe Changes Without Rewrites
+
+Iceberg supports **schema evolution** operations that modify the table schema without rewriting existing data files.
+
+### Supported Operations
+
+- **Add column:** New column appears in all queries; old files return `NULL` for the new column.
+- **Drop column:** Column disappears from queries; old files are unchanged (data is not deleted).
+- **Rename column:** Query engines see the new name; column IDs map the new name to old data.
+- **Reorder columns:** Change column order in the schema; does not affect data files.
+- **Change nullability:** Mark a column as `NOT NULL` (validated on write).
+
+<CodeBlock code={`-- Add a new column
+ALTER TABLE orders ADD COLUMN discount_pct DOUBLE;
+
+-- Rename a column (old queries continue to work via column ID mapping)
+ALTER TABLE orders RENAME COLUMN customer_name TO customer_full_name;
+
+-- Drop a column (data is not deleted, just hidden)
+ALTER TABLE orders DROP COLUMN legacy_field;
+`} language="sql" filename="schema_evolution.sql" />
+
+**How it works:** Iceberg assigns a unique **column ID** to every column at creation time. When you rename `customer_name` to `customer_full_name`, the metadata file updates the name but keeps the same column ID. Queries using the new name are transparently mapped to the old column ID in existing data files.
+
+---
+
+## Compaction: Merging Small Files
+
+Streaming writes and frequent appends create **thousands of small files**, which degrades read performance (too many object storage requests). Iceberg provides **compaction** to merge small files into larger ones.
+
+<CodeBlock code={`-- Manually trigger compaction (Spark SQL)
+CALL system.rewrite_data_files(
+  table => 'prod.events',
+  strategy => 'binpack',
+  options => map('target-file-size-bytes', '536870912') -- 512 MB
+);
+
+-- Schedule compaction as a maintenance job
+-- Run nightly via Airflow or Kubernetes CronJob
+spark-submit \
+  --class com.example.IcebergCompaction \
+  --conf spark.sql.catalog.prod=org.apache.iceberg.spark.SparkCatalog \
+  compaction-job.jar
+`} language="bash" filename="compaction.sh" />
+
+**Compaction strategies:**
+
+- **binpack:** Combine small files into larger files up to `target-file-size-bytes`.
+- **sort:** Rewrite files in sorted order by specified columns (improves range query performance).
+- **z-order:** Multi-dimensional clustering for columns frequently queried together.
+
+**When to compact:**
+
+- Nightly for high-frequency streaming tables
+- After large batch loads with many small files
+- Before query-heavy workloads (e.g., dashboard refresh)
+
+---
+
+## Catalog Selection: The Missing Half of the Decision
+
+The table format (Iceberg, Delta, Hudi) defines how data is stored. The **catalog** defines how tables are **discovered, versioned, and coordinated** across engines.
+
+### What a Catalog Provides
+
+1. **Metadata pointer management:** Stores the current location of the metadata file (e.g., `s3://bucket/orders/metadata/v47.json`).
+2. **Namespace hierarchy:** Organizes tables into databases/schemas (e.g., `prod.orders`, `staging.orders`).
+3. **Discoverability:** Lists all tables, checks schema, enables `SHOW TABLES` and `DESCRIBE TABLE`.
+4. **Multi-engine coordination:** Spark writes, Trino reads, both see the same snapshot atomically.
+5. **Access control:** Integrates with identity providers (LDAP, SAML, OIDC) to enforce read/write permissions.
+
+### Catalog Options
+
+<MermaidDiagram chart={`graph LR
+    Hive[Hive Metastore<br/>Legacy, widely supported]
+    Nessie[Nessie<br/>Git-like versioning]
+    REST[REST Catalog<br/>Standard API]
+    Polaris[Polaris<br/>Snowflake-backed]
+    Unity[Unity Catalog<br/>Databricks]
+
+    Hive --> |Mature, limited features| Choice[Catalog Choice]
+    Nessie --> |Branching, isolation| Choice
+    REST --> |Engine-neutral| Choice
+    Polaris --> |Snowflake integration| Choice
+    Unity --> |Databricks integration| Choice
+
+    style Hive fill:#fef5e7,stroke:#f39c12
+    style Nessie fill:#ebf8ff,stroke:#3182ce
+    style REST fill:#e8f5e9,stroke:#4caf50
+    style Polaris fill:#fef0f0,stroke:#e74c3c
+    style Unity fill:#f3e5f5,stroke:#9c27b0
+`} />
+
+#### Hive Metastore (Legacy)
+
+- **Pros:** Widely supported, mature, works with all Iceberg-compatible engines.
+- **Cons:** No versioning, no branching, no fine-grained access control, single point of failure.
+- **Use case:** Migration from Hive tables, environments already running Hive Metastore.
+
+#### Nessie (Git-like Versioning)
+
+- **Pros:** Branch and tag semantics (`main`, `dev`, `release-v1.2`), commit history, merge/rebase, multi-table transactions.
+- **Cons:** Requires standalone service, fewer integrations than Hive Metastore.
+- **Use case:** Teams needing isolated environments (dev/staging/prod), reproducible releases, experimental branches.
+
+<CodeBlock code={`-- Create a branch for experimental feature development
+CREATE BRANCH dev.experimental_pricing FROM main;
+
+-- Write to the branch
+INSERT INTO dev.experimental_pricing.orders VALUES (...);
+
+-- Query main branch (unchanged)
+SELECT * FROM main.orders;
+
+-- Merge branch into main after testing
+MERGE BRANCH dev.experimental_pricing INTO main;
+`} language="sql" filename="nessie_branching.sql" />
+
+#### REST Catalog (Standard API)
+
+- **Pros:** Engine-neutral, standard HTTP API, easy to implement custom catalogs.
+- **Cons:** Requires building or deploying a catalog server.
+- **Use case:** Multi-cloud environments, custom governance requirements, avoiding vendor lock-in.
+
+#### Polaris (Snowflake-backed)
+
+- **Pros:** Managed service, integrates with Snowflake's security model, supports Iceberg and Delta.
+- **Cons:** Ties you to Snowflake ecosystem.
+- **Use case:** Organizations already using Snowflake, need managed catalog without operational overhead.
+
+#### Unity Catalog (Databricks)
+
+- **Pros:** Centralized governance, fine-grained ACLs, lineage tracking, Delta/Iceberg support.
+- **Cons:** Ties you to Databricks ecosystem.
+- **Use case:** Databricks-centric data platforms, need unified governance across Delta and Iceberg.
+
+---
+
+## Delta Lake and Hudi: Comparison Framework
+
+Apache Iceberg is not the only open table format. **Delta Lake** (Databricks) and **Apache Hudi** (Uber) offer overlapping features with different trade-offs.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Iceberg["Apache Iceberg"]
+        I1[Engine-neutral]
+        I2[Hidden partitioning]
+        I3[Catalog-agnostic]
+        I4[Snapshot isolation]
+    end
+
+    subgraph Delta["Delta Lake"]
+        D1[Databricks-optimized]
+        D2[Transaction log]
+        D3[MERGE/UPDATE/DELETE]
+        D4[Spark-centric]
+    end
+
+    subgraph Hudi["Apache Hudi"]
+        H1[Record-level upserts]
+        H2[Incremental processing]
+        H3[Copy-on-write + merge-on-read]
+        H4[Streaming-first]
+    end
+
+    style Iceberg fill:#ebf8ff,stroke:#3182ce
+    style Delta fill:#fef5e7,stroke:#f39c12
+    style Hudi fill:#e8f5e9,stroke:#4caf50
+`} />
+
+### Delta Lake
+
+- **Strengths:** Deep Databricks integration, transaction log for ACID, time travel, `MERGE`/`UPDATE`/`DELETE` support.
+- **Weaknesses:** Spark-centric (limited support in Trino/Flink), Databricks proprietary extensions (Liquid Clustering, Deletion Vectors).
+- **Use case:** Databricks-centric organizations, Spark-heavy workloads.
+
+### Apache Hudi
+
+- **Strengths:** Record-level upserts, incremental processing (read only changed records), copy-on-write and merge-on-read storage modes.
+- **Weaknesses:** Spark-centric, complex configuration, fewer query engine integrations.
+- **Use case:** Streaming CDC pipelines, frequent upserts, incremental ETL.
+
+### Apache Iceberg
+
+- **Strengths:** Engine-neutral (Spark, Trino, Flink, Dremio, Athena), hidden partitioning, catalog-agnostic, strongest multi-engine story.
+- **Weaknesses:** Fewer vendor-managed features (no Databricks Liquid Clustering equivalent), requires separate catalog service.
+- **Use case:** Multi-engine environments, avoiding vendor lock-in, governance-heavy organizations.
+
+---
+
+## Decision Framework: Format + Catalog Selection
+
+### Format Selection Criteria
+
+1. **Engine ecosystem:**
+   - Spark-only or Databricks-centric → **Delta Lake**
+   - Multi-engine (Spark + Trino + Flink) → **Iceberg**
+   - Streaming CDC with frequent upserts → **Hudi**
+
+2. **Governance requirements:**
+   - Need git-like versioning and branching → **Iceberg + Nessie**
+   - Databricks Unity Catalog governance → **Delta Lake + Unity Catalog**
+   - Custom governance → **Iceberg + REST Catalog**
+
+3. **Community momentum:**
+   - Iceberg: adopted by AWS (Athena), Google (BigQuery), Snowflake (Polaris), Apache (Flink, Spark)
+   - Delta: adopted by Databricks, Microsoft (Fabric), limited external support
+   - Hudi: niche use cases, strong in streaming CDC
+
+### Catalog Selection Criteria
+
+1. **Operational overhead:**
+   - Managed service → **Polaris** (Snowflake), **Unity Catalog** (Databricks)
+   - Self-managed → **Hive Metastore** (mature), **Nessie** (advanced)
+
+2. **Versioning and isolation:**
+   - Need branching/tagging → **Nessie**
+   - Single-branch production → **Hive Metastore**, **REST Catalog**
+
+3. **Vendor lock-in tolerance:**
+   - Avoid lock-in → **REST Catalog**, **Nessie**
+   - Already committed to vendor → **Polaris** (Snowflake), **Unity Catalog** (Databricks)
+
+---
+
+## Reference Architecture: Iceberg + REST Catalog
+
+<MermaidDiagram chart={`graph TD
+    S3[Object Storage<br/>S3, GCS, ADLS]
+    Catalog[REST Catalog<br/>Metadata pointer service]
+    Spark[Apache Spark<br/>Batch writes]
+    Flink[Apache Flink<br/>Streaming writes]
+    Trino[Trino<br/>Ad-hoc queries]
+    Superset[Apache Superset<br/>Dashboards]
+
+    Spark --> |Write Iceberg tables| S3
+    Flink --> |Stream Iceberg tables| S3
+    Trino --> |Query Iceberg tables| S3
+    Superset --> |Read via Trino| Trino
+
+    Spark --> |Register snapshot| Catalog
+    Flink --> |Register snapshot| Catalog
+    Trino --> |Fetch metadata| Catalog
+    Catalog --> |Points to metadata| S3
+
+    style S3 fill:#fef5e7,stroke:#f39c12
+    style Catalog fill:#ebf8ff,stroke:#3182ce
+    style Spark fill:#e8f5e9,stroke:#4caf50
+    style Flink fill:#e8f5e9,stroke:#4caf50
+    style Trino fill:#fef0f0,stroke:#e74c3c
+`} />
+
+**Workflow:**
+
+1. **Spark batch job** writes 10,000 Parquet files to S3, creates manifest files, writes new metadata file, updates REST Catalog.
+2. **Flink streaming job** appends real-time events to the same table, creates new snapshot, updates REST Catalog.
+3. **Trino** fetches metadata from REST Catalog, reads manifest files, prunes data files, executes query.
+4. **Superset** dashboards query via Trino, see the latest snapshot atomically.
+
+This architecture is **vendor-neutral**, **multi-engine**, and **governed** through the REST Catalog.
+
+---
+
+## Failure Modes and Anti-Patterns
+
+### 1. **Choosing a format without choosing a catalog**
+
+**Symptom:** You create Iceberg tables with `HadoopCatalog` (local filesystem metadata), but multiple engines cannot coordinate snapshots.
+
+**Why it fails:** `HadoopCatalog` is single-machine only. In distributed environments, you need a centralized catalog (Hive, Nessie, REST, Polaris).
+
+**Fix:** Deploy a REST Catalog or use a managed catalog (Polaris, Unity Catalog).
+
+### 2. **Ignoring compaction for streaming tables**
+
+**Symptom:** Query performance degrades over time as file count grows to millions.
+
+**Why it fails:** Streaming writes create small files. Reading 1 million files is slower than reading 1000 files, even if total data size is the same.
+
+**Fix:** Schedule nightly compaction jobs (`rewrite_data_files`) to merge small files.
+
+### 3. **Using identity partitioning when hidden partitioning fits**
+
+**Symptom:** Users write `WHERE dt = '2024-06-15'` queries, but some forget the partition column and trigger full table scans.
+
+**Why it fails:** Exposing partition columns in queries invites user errors.
+
+**Fix:** Use `PARTITIONED BY (day(event_time))` and let Iceberg rewrite predicates automatically.
+
+### 4. **Vendor lock-in via proprietary extensions**
+
+**Symptom:** You use Databricks Delta Lake with Liquid Clustering, then need to migrate to Trino — but Liquid Clustering is Databricks-only.
+
+**Why it fails:** Proprietary extensions tie you to a single vendor.
+
+**Fix:** Stick to open table format standards (Iceberg, Delta OSS) and avoid vendor-specific features unless you commit to that vendor long-term.
+
+---
+
+## Summary
+
+**Apache Iceberg** is an open table format that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation over object storage. Its **metadata layer architecture** (catalog → metadata → manifests → data files) enables fast query planning, atomic writes, and cheap time travel. **Hidden partitioning** eliminates user errors by automatically rewriting predicates, and **schema evolution** allows safe column changes without rewriting data.
+
+**Catalog selection** is just as critical as format selection. The catalog provides namespace management, discoverability, and multi-engine coordination. **Nessie** offers git-like versioning, **REST Catalog** ensures vendor neutrality, and **Polaris/Unity Catalog** provide managed services tied to Snowflake/Databricks.
+
+The **default recommendation** is **Iceberg + REST Catalog** for multi-engine environments, **Iceberg + Nessie** for teams needing branching/isolation, and **Delta Lake + Unity Catalog** for Databricks-centric organizations. Avoid **HadoopCatalog** in production, ignore compaction at your peril, and resist vendor lock-in unless you are fully committed.
+
+In the next lesson, you will learn how to **design data products** on top of lakehouse tables — the interface layer where raw Iceberg tables become discoverable, governed, and consumable datasets for analytics and ML teams.

@@ -1,0 +1,233 @@
+---
+title: "Why LLM Applications Need Data Infrastructure"
+quiz:
+  - question: "What is the primary reason LLM applications need retrieval infrastructure?"
+    options:
+      - "To improve inference latency"
+      - "To ground responses in current, factual data beyond the model's training cutoff (correct)"
+      - "To reduce model hosting costs"
+      - "To enable multi-language support"
+    correctIndex: 1
+  - question: "How does LLM data infrastructure relate to the governed data platform from Module 6?"
+    options:
+      - "It replaces the data catalog with a vector index"
+      - "It consumes the same governed data products through a vector search serving path (correct)"
+      - "It requires a separate, isolated data pipeline"
+      - "It only works with unstructured data sources"
+    correctIndex: 1
+  - question: "Which data problem is MOST likely to break an LLM application in production?"
+    options:
+      - "Model parameter count is too small"
+      - "Stale vector index causing retrieval of outdated knowledge (correct)"
+      - "Inference latency exceeding 2 seconds"
+      - "Model using too much GPU memory"
+    correctIndex: 1
+---
+
+## The Knowledge Freshness Problem
+
+A customer asks your LLM-powered support assistant: *"What's the return policy for subscriptions purchased after June 1st?"*
+
+Your foundation model was trained on data through January 2025. Your company changed the return policy in April 2026. The model confidently states the old policy — because that's what it learned during training.
+
+This is the **knowledge freshness problem**. Foundation models have a **training cutoff** — a date beyond which they have no knowledge. The world changes daily: product features ship, policies update, documentation evolves, competitors launch, regulations change. A model frozen in time cannot answer questions about the present.
+
+The naive fix is to retrain the model. But retraining is expensive, slow, and still leaves a gap between the last training run and the current moment. Even if you could retrain daily, the model would lag reality by hours or days.
+
+The production fix is **retrieval-augmented generation (RAG)**. Instead of encoding all knowledge into model weights, you keep a **retrieval index** of current documents. When a user asks a question, you:
+
+1. **Retrieve** the most relevant documents from the index (using vector search, more on this in Lesson 2)
+2. **Augment** the model's prompt with those documents as context
+3. **Generate** a response grounded in the retrieved facts
+
+The model acts as a **language interface** to your knowledge base, not as the knowledge base itself. This architectural split keeps knowledge fresh — you update the index, not the model.
+
+<MermaidDiagram chart={`graph TD
+    User[User Question] --> Retrieval[Retrieval System]
+    Retrieval --> Index[Vector Index<br/>Current Documents]
+    Retrieval --> Context[Retrieved Context]
+    Context --> LLM[Foundation Model]
+    User --> LLM
+    LLM --> Response[Grounded Response]
+    
+    Update[Document Updates] -.->|Continuous Sync| Index
+    
+    style Index fill:#fef0f0,stroke:#cc0000
+    style LLM fill:#e0f0ff,stroke:#0066cc
+    style Context fill:#daf2f2,stroke:#007f7f
+    
+    classDef updateFlow stroke-dasharray: 5 5
+    class Update updateFlow
+`} />
+
+Knowledge freshness is a **data infrastructure problem**, not a modeling problem. The challenge is: how do you keep the retrieval index synchronized with the source data? How do you propagate updates from the data platform to the vector index in seconds or minutes, not hours or days?
+
+This requires the same data engineering patterns you saw in Modules 5-6: **change data capture** to detect updates, **event-driven pipelines** to transform and index new documents, **monitoring** to detect stale indexes, **lineage tracking** to understand which documents contribute to which answers.
+
+LLM applications need data infrastructure for the same reason traditional ML applications do: **models consume data products**. The difference is in the serving path — vector search instead of feature serving — but the upstream governance, quality, and orchestration requirements are identical.
+
+## Hallucination Grounding
+
+Even when a model has seen relevant training data, it can **hallucinate** — generate plausible-sounding statements that are factually incorrect. This happens because language models are trained to predict the next token, not to verify truth. They learn statistical patterns in text, not a knowledge graph of verified facts.
+
+Hallucination is especially dangerous in domains where accuracy matters: healthcare (incorrect dosage), legal (wrong precedent), finance (misquoted regulation), engineering (unsafe configuration).
+
+Retrieval provides **grounding** — a factual anchor that constrains the model's generation. Instead of relying on the model's parametric memory (which may be incomplete or wrong), you explicitly provide the correct information in the prompt context.
+
+Here's the key insight: **retrieval shifts the failure mode from hallucination to retrieval failure**. The model can still fail — but now it fails by retrieving the wrong document, not by fabricating an answer from learned patterns. Retrieval failures are debuggable (you can inspect the retrieved documents) and fixable (you can improve the index or the query). Hallucinations are opaque (you can't see why the model chose that answer) and unpredictable (the same question may hallucinate differently across runs).
+
+This is why production LLM applications use RAG for factual question-answering, even when the model "knows" the answer. Retrieval provides an **audit trail** — you can see which documents contributed to the response — and a **correction path** — you can update the index to fix the answer going forward.
+
+Grounding also enables **citation**. A retrieval-augmented response can cite the source documents it used: "According to the return policy document (updated April 2026), subscriptions purchased after June 1st are non-refundable." This increases user trust and allows them to verify the answer independently.
+
+But grounding only works if the retrieval index contains the right documents. If the index is stale, incomplete, or poorly curated, retrieval amplifies the problem — the model is now grounded in *wrong* information. This is why LLM data infrastructure must enforce the same **data quality** standards as the rest of the platform: schema validation, freshness SLAs, lineage tracking, access controls.
+
+## The Retrieval Problem
+
+Suppose your knowledge base contains 10,000 documents. A user asks a question. Which 3-5 documents should you retrieve to answer it?
+
+This is the **retrieval problem**: finding the most relevant context from a large corpus, given a natural-language query. It's a search problem — but not the keyword search you're used to from databases or text editors.
+
+Consider the question: *"How do I reset my password?"*
+
+A keyword search would look for documents containing the words "reset" and "password". But the most helpful document might use the phrase "recover your account" or "forgotten credentials" instead. Keyword matching fails because natural language is **variable** — the same concept can be expressed in many different ways.
+
+The modern solution is **semantic search** using **embeddings**. An embedding is a vector representation of text — a point in high-dimensional space where semantically similar texts are close together. You embed both the query and all the documents, then retrieve the documents whose embeddings are nearest to the query embedding.
+
+This works because the embedding model (often a fine-tuned transformer) has learned to represent meaning, not just keywords. The question "How do I reset my password?" and the document "To recover your account, click Forgot Password" are semantically similar, even though they share few words. Their embeddings will be close in vector space.
+
+Semantic search is the foundation of LLM retrieval infrastructure. You need:
+
+- An **embedding model** to convert text to vectors
+- A **vector database** to store and search embeddings efficiently
+- A **chunking strategy** to split long documents into retrievable segments
+- A **reranking model** to refine the initial retrieval results
+
+Each of these is a data engineering decision. Which embedding model? (Tradeoff: accuracy vs inference cost.) How big are chunks? (Tradeoff: context completeness vs retrieval precision.) Do you rerank? (Tradeoff: latency vs relevance.) These decisions affect retrieval quality, which directly affects the accuracy of the LLM's responses.
+
+The retrieval problem is also a **scale problem**. Embedding 10,000 documents is easy. Embedding 10 million documents, keeping the index fresh as documents change, and serving sub-100ms retrieval queries is hard. This requires data infrastructure: batch embedding pipelines, incremental index updates, distributed vector search, caching layers.
+
+And the retrieval problem is a **relevance problem**. Semantic search retrieves documents that are *semantically similar* to the query — but similarity is not the same as relevance. A user asking "What's the return policy?" doesn't want a document about return logistics or return fraud prevention — they want the customer-facing policy. Relevance requires understanding **user intent** and filtering by metadata (document type, recency, access permissions).
+
+This is why retrieval is a first-class data infrastructure concern. It's not a one-time setup — it's an ongoing engineering effort that consumes the same data products, applies the same governance, and requires the same monitoring as the rest of your data platform.
+
+## LLM Data Infrastructure Consumes Governed Data Products
+
+Here's the architectural principle that ties everything together: **LLM data infrastructure is not a separate platform**. It's a **serving path** that consumes the same governed data products you built in Module 6.
+
+Think back to the data product definition: a curated, documented, access-controlled dataset with defined quality SLAs. A data product might be:
+
+- A Salesforce customer database exposed as a feature store
+- A financial transactions table used for fraud detection
+- A document corpus used for retrieval-augmented generation
+
+The first two are traditional ML use cases — they feed features into a model. The third is an LLM use case — it feeds context into a retrieval system. But all three are **data products**. They share the same governance requirements:
+
+- **Quality**: Schema validation, completeness checks, freshness SLAs
+- **Lineage**: Tracking how raw data flows into the product
+- **Access control**: Enforcing permissions at the row or document level
+- **Discoverability**: Cataloged with metadata, owners, and documentation
+
+The difference is in the **serving layer**. Traditional ML serves features via a low-latency feature store (lookup by entity ID). LLM applications serve context via a vector index (search by embedding similarity). But both serving layers consume the same upstream data products.
+
+<MermaidDiagram chart={`graph TD
+    Raw[Raw Data Sources] --> Platform[Data Platform]
+    Platform --> Product1[Data Product:<br/>Customer Features]
+    Platform --> Product2[Data Product:<br/>Document Corpus]
+    
+    Product1 --> FeatureStore[Feature Store<br/>Serving Layer]
+    Product2 --> VectorIndex[Vector Index<br/>Serving Layer]
+    
+    FeatureStore --> MLModel[ML Model Inference]
+    VectorIndex --> RAG[RAG System]
+    
+    Platform -.->|Catalog| Catalog[Data Catalog]
+    Platform -.->|Lineage| Lineage[Lineage Graph]
+    Platform -.->|Access Control| ACL[Access Control]
+    
+    style Product1 fill:#daf2f2,stroke:#007f7f
+    style Product2 fill:#daf2f2,stroke:#007f7f
+    style VectorIndex fill:#fef0f0,stroke:#cc0000
+    style FeatureStore fill:#e0f0ff,stroke:#0066cc
+    
+    classDef governance stroke-dasharray: 5 5
+    class Catalog,Lineage,ACL governance
+`} />
+
+This architectural view has critical implications:
+
+**Implication 1: Reuse existing data pipelines.** You don't need a separate ETL for LLM data. The document corpus is already produced by the same orchestration framework (Airflow, Dagster) that produces feature tables. Add a downstream step to embed and index the documents.
+
+**Implication 2: Enforce consistent governance.** Access controls must propagate from the data catalog to the vector index. If a user doesn't have permission to view a document in the source system, they shouldn't retrieve it in a RAG query. This requires **row-level security** in the vector index, not just document-level filtering.
+
+**Implication 3: Monitor the full pipeline.** A stale vector index is a data quality failure, just like a stale feature table. The same observability tools (data quality tests, freshness monitoring, lineage tracking) apply to both serving paths.
+
+**Implication 4: The same team owns both.** LLM data infrastructure is not the LLM team's responsibility — it's the data platform team's responsibility. The LLM team consumes data products; the data team produces and governs them.
+
+This is the paradigm shift that organizations miss when they build LLM applications. They treat retrieval as a one-off engineering task — "just embed the docs and stick them in Pinecone" — instead of recognizing it as a data product with ongoing quality, governance, and operational requirements.
+
+## The Data Problems That Break LLM Applications
+
+LLM applications fail in production for the same reasons traditional ML applications fail: **data problems**, not model problems. The model is rarely the bottleneck — OpenAI's GPT-4, Anthropic's Claude, and Google's Gemini are all highly capable. The failure modes are in the data infrastructure that feeds the model.
+
+### Failure Mode 1: Stale Knowledge
+
+The vector index is built from a snapshot of the document corpus. New documents are added weekly, updated documents are refreshed manually, deleted documents remain in the index. The index drifts out of sync with reality.
+
+A customer asks about a product feature that launched yesterday. The retrieval system returns old documentation. The LLM generates a response based on the deprecated feature set. The customer gets wrong information.
+
+**Root cause:** No automated sync between the source data and the vector index. The embedding pipeline runs on a manual schedule, not triggered by data updates.
+
+**Fix:** Treat the vector index as a **materialized view** of the source data. Use change data capture (CDC) to detect updates in the source system. Trigger incremental re-embedding and index updates automatically. Monitor index freshness with the same SLAs as feature tables.
+
+### Failure Mode 2: Retrieval Failure
+
+The user asks a domain-specific question using technical jargon. The embedding model was trained on general web text and doesn't understand the specialized vocabulary. The semantic search retrieves irrelevant documents. The LLM generates a generic, unhelpful response.
+
+**Root cause:** The embedding model is out-of-domain. General-purpose embeddings (e.g., OpenAI's `text-embedding-ada-002`) work well for broad queries but struggle with niche terminology, acronyms, or domain-specific concepts.
+
+**Fix:** Fine-tune the embedding model on in-domain data. This is a data engineering task: collect query-document pairs from production logs, curate a training set of positive (relevant) and negative (irrelevant) examples, retrain the embedding model, evaluate retrieval quality on a held-out test set. Repeat this loop as the domain evolves.
+
+### Failure Mode 3: Access Control Leakage
+
+A user submits a query to a company-wide RAG system. The retrieval system searches the full document index, which includes HR records, financial reports, and internal memos. The system retrieves a confidential document the user doesn't have permission to see. The LLM quotes that document in its response.
+
+**Root cause:** The vector index doesn't enforce row-level security. Access controls exist in the source system (e.g., Google Drive folder permissions) but aren't propagated to the vector index.
+
+**Fix:** Store access control metadata (ACLs, user groups, sensitivity labels) alongside document embeddings. At query time, filter the retrieval candidates by the user's permissions before running the similarity search. This is a data governance requirement — the same pattern used for feature stores in Module 6.
+
+### Failure Mode 4: Evaluation Gaps
+
+The LLM application ships to production. Users start complaining that the answers are wrong, incomplete, or irrelevant. The team has no way to diagnose the problem because they didn't build evaluation infrastructure.
+
+**Root cause:** No systematic measurement of retrieval quality or generation accuracy. The team tested the application manually on a few example queries but didn't collect a benchmark dataset or automate evaluation.
+
+**Fix:** Build an **evaluation pipeline** that measures retrieval and generation separately. For retrieval: track precision@k (what fraction of the top-k retrieved documents are relevant?), recall (what fraction of relevant documents were retrieved?), MRR (mean reciprocal rank of the first relevant result). For generation: track faithfulness (does the response contradict the retrieved context?), relevance (does the response answer the question?), citation accuracy (are the cited documents actually used?). Run this pipeline on every data or model change.
+
+## When RAG vs Fine-Tuning vs Prompt Engineering
+
+You have three tools for adapting an LLM to your domain: **retrieval-augmented generation (RAG)**, **fine-tuning**, and **prompt engineering**. Each solves a different class of problem. Choosing the wrong tool is a common failure mode.
+
+**Use RAG when you need factual grounding or knowledge freshness.** RAG is the default for question-answering, summarization, and any task where the model must reference specific documents, data, or policies. RAG works because it shifts the burden of knowledge from model parameters to the retrieval index. Examples: customer support assistants, internal search, compliance Q&A, technical documentation chatbots.
+
+**Use fine-tuning when you need behavior, style, or task adaptation.** Fine-tuning adjusts the model's weights to change *how* it responds, not *what* it knows. Use fine-tuning to teach the model a specific tone (formal, friendly, concise), a domain-specific reasoning pattern (medical diagnosis, legal analysis), or a structured output format (JSON, SQL, code). Fine-tuning does not fix stale knowledge — the model still has a training cutoff. Examples: code completion, SQL generation, medical triage, customer service tone matching.
+
+**Use prompt engineering when the model already has the capability but needs better instructions.** Prompt engineering is the fastest, cheapest option — you change the system prompt or few-shot examples, not the model or the data. Use it when the model is already close to the desired behavior but needs clarification, constraints, or examples. Prompt engineering is your first attempt; if it doesn't work, escalate to RAG or fine-tuning. Examples: output formatting, reasoning chain-of-thought, error handling instructions.
+
+**Decision framework:**
+
+1. **Does the task require current, factual knowledge?** → RAG.
+2. **Does the task require behavior change but not new knowledge?** → Fine-tuning.
+3. **Does the task just need clearer instructions?** → Prompt engineering.
+
+Most production applications combine all three. A customer support assistant uses RAG to retrieve relevant help articles, fine-tuning to match the company's support tone, and prompt engineering to structure the response format. The key is recognizing which tool solves which problem — and knowing that RAG is a data infrastructure concern, not a prompt hack.
+
+## Summary
+
+LLM applications need data infrastructure for three reasons: **knowledge freshness**, **hallucination grounding**, and **retrieval at scale**. Foundation models have training cutoffs, can fabricate incorrect answers, and cannot search large corpora efficiently. Retrieval-augmented generation solves all three by consuming governed data products through a vector search serving path.
+
+LLM data infrastructure is not a separate platform — it's an extension of the data platform you built in Modules 5-6. The same governance (catalog, lineage, access control), quality (schema validation, freshness monitoring), and orchestration (CDC, incremental pipelines) apply to vector indexes as to feature stores.
+
+The failure modes are data failures: stale indexes, irrelevant retrieval, access control leakage, evaluation gaps. Fixing these requires data engineering discipline — automated sync, domain-specific embeddings, row-level security, systematic evaluation.
+
+The next lesson covers the technical implementation: how to build, index, and query vector embeddings for semantic search.

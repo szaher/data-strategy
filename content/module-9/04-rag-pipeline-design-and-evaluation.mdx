@@ -1,0 +1,361 @@
+---
+title: "RAG Pipeline Design & Evaluation"
+quiz:
+  - question: "What are the two layers of evaluation in RAG systems?"
+    options:
+      - "Retrieval metrics and end-to-end quality metrics"
+      - "Batch and streaming pipeline evaluation"
+      - "Training phase and serving phase evaluation"
+      - "Offline and online performance testing"
+    correctIndex: 0
+  - question: "Which failure mode occurs when irrelevant documents mislead the LLM's response?"
+    options:
+      - "Chunk boundary artifacts"
+      - "Context poisoning"
+      - "Retrieval drift"
+      - "Stale knowledge"
+    correctIndex: 1
+  - question: "In end-to-end RAG evaluation, what does groundedness measure?"
+    options:
+      - "The relevance of retrieved documents"
+      - "The speed of the retrieval pipeline"
+      - "Whether the LLM response is supported by retrieved documents"
+      - "The diversity of retrieved sources"
+    correctIndex: 2
+---
+
+## The Problem: Unvalidated RAG
+
+You've built a Retrieval-Augmented Generation pipeline: documents are chunked, embedded, indexed in vector search, and fed to an LLM to answer user queries. On the first test query, the system returns a fluent, confident answer. You ship it.
+
+Two weeks later, support tickets flood in. Customers report hallucinations — the system cites documents that don't exist. Searches return irrelevant documents. Responses reference outdated information from stale indexes. Answers leak data from documents the user shouldn't have access to. Each complaint reveals a different failure mode, and you have no metrics to diagnose which layer failed.
+
+**RAG pipelines fail silently.** A broken retrieval layer can return zero relevant documents while the LLM still generates a convincing answer. A perfect retrieval layer can surface the right documents while the LLM ignores them and hallucinates. Without systematic evaluation at each stage, you're flying blind.
+
+The solution is **two-layered evaluation**: measure retrieval quality independently, measure end-to-end generation quality independently, and maintain regression suites that catch failures before they reach production.
+
+---
+
+## The Default: Two-Layered Evaluation Architecture
+
+RAG pipelines have **two distinct failure surfaces** that require separate evaluation frameworks:
+
+1. **Retrieval layer** — did the system find the right documents?
+2. **End-to-end layer** — did the final answer satisfy the user's need safely and correctly?
+
+<MermaidDiagram chart={`graph TD
+    A[User Query] --> B[Query Embedding]
+    B --> C[Vector Search]
+    C --> D[Reranking]
+    D --> E[Retrieved Documents]
+    E --> F[Prompt Augmentation]
+    F --> G[LLM Generation]
+    G --> H[Citation Extraction]
+    H --> I[Final Response]
+    
+    E -.->|Retrieval Metrics| J[Recall@K<br/>Precision@K<br/>Ranking Quality<br/>Index Freshness]
+    I -.->|E2E Metrics| K[Groundedness<br/>Citation Correctness<br/>Answer Correctness<br/>Safety<br/>Auth Leakage<br/>Task Success<br/>Latency<br/>Cost]
+    
+    style J fill:#fef0f0,stroke:#dc2626
+    style K fill:#f0f9ff,stroke:#0066cc
+    style E fill:#fff7ed,stroke:#ea580c
+    style I fill:#f0fdf4,stroke:#16a34a
+`} />
+
+### Retrieval Layer Evaluation
+
+The retrieval layer answers: **given a query, did we surface the right documents?**
+
+**Recall@K** measures the fraction of relevant documents retrieved in the top K results. If 5 documents are relevant and 3 appear in the top 10 results, recall@10 is 0.6. High recall ensures the system doesn't miss critical information.
+
+**Precision@K** measures the fraction of retrieved documents that are actually relevant. If 10 documents are returned and 7 are relevant, precision@10 is 0.7. High precision reduces noise in the context window and keeps LLM costs down.
+
+**Ranking quality** measures whether the most relevant documents appear first. Metrics like NDCG (Normalized Discounted Cumulative Gain) penalize systems that bury the best documents at rank 9 when they should be at rank 1. Ranking matters because LLMs exhibit **lost-in-the-middle** behavior — they over-weight the first and last documents in the context window.
+
+**Index freshness** tracks the lag between document updates and index availability. If a product's price changes in the database but the vector index still surfaces the old price for 2 hours, freshness is degraded. Track the timestamp of the last indexed batch and alert when staleness exceeds SLA thresholds.
+
+### End-to-End Layer Evaluation
+
+The end-to-end layer answers: **given a query and retrieved documents, did the final response satisfy the user's need safely and correctly?**
+
+**Groundedness** measures whether the LLM's response is supported by the retrieved documents. A grounded response contains only claims that can be traced back to the context. Ungrounded responses hallucinate facts not present in the documents. Evaluate groundedness with an LLM-as-judge: pass the response and retrieved documents to a second LLM and ask "Is every claim in this response supported by the documents?"
+
+**Citation correctness** measures whether citations point to the correct documents and passages. If the response cites "Document 3, paragraph 2" but the claim actually appears in Document 5, the citation is incorrect. Incorrect citations erode user trust even when the answer is factually correct.
+
+**Answer correctness** measures whether the response accurately answers the user's query. For fact-seeking queries ("What is the capital of France?"), correctness is binary. For open-ended queries ("Explain photosynthesis"), use LLM-as-judge with rubrics. Compare the response against a reference answer or evaluate completeness, accuracy, and clarity on a scale.
+
+**Safety** measures whether the response avoids harmful content, bias, or sensitive information leakage. Run safety classifiers on the final response. Check for PII leakage, hate speech, violence, sexual content, and other policy violations. RAG systems can inadvertently surface internal documents or customer data if retrieval filters fail.
+
+**Authorization leakage** measures whether the response includes information the user isn't authorized to see. If a customer service agent queries the system and receives data from another customer's account, authorization has leaked. Implement pre-retrieval filtering by user permissions and post-generation audit trails that log which documents informed each response.
+
+**Task success** measures whether the user's goal was achieved. For customer support RAG, task success means the issue was resolved without escalation. For code documentation RAG, task success means the developer could complete their task without asking follow-up questions. Measure via user feedback, session logs, or downstream metrics like ticket resolution rate.
+
+**Latency** measures end-to-end response time from query submission to final answer. RAG pipelines involve multiple network hops: embedding API, vector database, reranking service, LLM inference. Set latency budgets per component and alert when the p95 latency exceeds SLA. Track whether latency degradation originates in retrieval, reranking, or generation.
+
+**Cost** measures the total expense per query: embedding API fees, vector database queries, LLM input/output tokens, reranking compute. Calculate cost per query and cost per session. Monitor whether cost scales linearly with traffic or whether inefficiencies (e.g., retrieving too many documents) drive super-linear growth. Balance cost against quality — sometimes retrieving fewer documents or using a smaller reranker degrades accuracy unacceptably.
+
+<MermaidDiagram chart={`graph TD
+    A[Evaluation Dataset] --> B[Ground Truth Q&A Pairs]
+    B --> C[Expected Retrieved Docs]
+    B --> D[Expected Answer]
+    
+    E[RAG Pipeline] --> F[Actual Retrieved Docs]
+    F --> G[Actual Answer]
+    
+    C --> H[Retrieval Metrics]
+    F --> H
+    H --> I[Recall@K<br/>Precision@K<br/>NDCG]
+    
+    D --> J[E2E Metrics]
+    G --> J
+    F --> J
+    J --> K[Groundedness<br/>Citation Correctness<br/>Answer Correctness<br/>Safety]
+    
+    I --> L[Regression Suite]
+    K --> L
+    L --> M[Alert on Degradation]
+    
+    style A fill:#fef0f0,stroke:#dc2626
+    style H fill:#fff7ed,stroke:#ea580c
+    style J fill:#f0f9ff,stroke:#0066cc
+    style L fill:#f0fdf4,stroke:#16a34a
+`} />
+
+---
+
+## Evaluation Datasets: Curated Q&A Pairs
+
+RAG evaluation requires **ground truth datasets** that specify:
+
+1. A user query
+2. The set of relevant documents that should be retrieved
+3. An expected answer (or evaluation rubric)
+
+**Build evaluation datasets from real usage logs.** Sample queries from production traffic, have domain experts label which documents are relevant, and write reference answers. Start with 50-100 representative queries covering common patterns (fact lookup, multi-hop reasoning, summarization) and edge cases (ambiguous queries, no-answer queries, adversarial queries).
+
+**Version evaluation datasets alongside model and index changes.** When you reindex documents with a new chunking strategy, re-evaluate the entire suite. When you switch embedding models, re-run retrieval metrics. Track metrics over time to detect regressions.
+
+**Include adversarial examples** that test failure modes:
+
+- Queries with no relevant documents (should return "I don't know")
+- Queries with contradictory documents (should acknowledge uncertainty)
+- Queries designed to trigger authorization leakage (should reject gracefully)
+- Queries with ambiguous pronouns or missing context (should ask for clarification)
+
+**Maintain separate test sets for retrieval and end-to-end evaluation.** Retrieval test sets only need queries and relevant document IDs — no reference answers. End-to-end test sets need queries, retrieved documents, and reference answers or rubrics.
+
+<CodeBlock code={`import json
+from typing import List, Dict, Tuple
+
+def evaluate_retrieval(
+    query: str,
+    retrieved_doc_ids: List[str],
+    relevant_doc_ids: List[str],
+    k: int = 10
+) -> Dict[str, float]:
+    """Compute retrieval metrics for a single query."""
+    retrieved_set = set(retrieved_doc_ids[:k])
+    relevant_set = set(relevant_doc_ids)
+    
+    # Recall@K: fraction of relevant docs retrieved
+    recall_at_k = len(retrieved_set & relevant_set) / len(relevant_set) if relevant_set else 0.0
+    
+    # Precision@K: fraction of retrieved docs that are relevant
+    precision_at_k = len(retrieved_set & relevant_set) / k if k > 0 else 0.0
+    
+    # NDCG@K: ranking quality
+    dcg = sum(
+        (1 if doc_id in relevant_set else 0) / (i + 2) ** 0.5
+        for i, doc_id in enumerate(retrieved_doc_ids[:k])
+    )
+    idcg = sum(1 / (i + 2) ** 0.5 for i in range(min(k, len(relevant_set))))
+    ndcg_at_k = dcg / idcg if idcg > 0 else 0.0
+    
+    return {
+        "recall@k": recall_at_k,
+        "precision@k": precision_at_k,
+        "ndcg@k": ndcg_at_k
+    }
+
+def evaluate_groundedness(
+    response: str,
+    retrieved_docs: List[str],
+    llm_judge
+) -> Tuple[bool, str]:
+    """Use LLM-as-judge to assess groundedness."""
+    prompt = f"""You are evaluating whether a response is grounded in the provided documents.
+
+DOCUMENTS:
+{chr(10).join(f"[{i+1}] {doc}" for i, doc in enumerate(retrieved_docs))}
+
+RESPONSE:
+{response}
+
+Is every claim in the response supported by the documents? Answer YES or NO, then explain.
+"""
+    judgment = llm_judge.generate(prompt)
+    is_grounded = judgment.strip().upper().startswith("YES")
+    return is_grounded, judgment
+
+def evaluate_rag_pipeline(
+    test_cases: List[Dict],
+    rag_pipeline,
+    llm_judge
+) -> Dict[str, float]:
+    """Run full evaluation suite on RAG pipeline."""
+    retrieval_metrics = []
+    groundedness_scores = []
+    
+    for case in test_cases:
+        query = case["query"]
+        relevant_docs = case["relevant_doc_ids"]
+        
+        # Run RAG pipeline
+        result = rag_pipeline.run(query)
+        retrieved_doc_ids = [doc["id"] for doc in result["retrieved_docs"]]
+        response = result["response"]
+        
+        # Evaluate retrieval
+        metrics = evaluate_retrieval(query, retrieved_doc_ids, relevant_docs, k=10)
+        retrieval_metrics.append(metrics)
+        
+        # Evaluate groundedness
+        is_grounded, _ = evaluate_groundedness(
+            response,
+            [doc["text"] for doc in result["retrieved_docs"]],
+            llm_judge
+        )
+        groundedness_scores.append(1.0 if is_grounded else 0.0)
+    
+    # Aggregate metrics
+    avg_recall = sum(m["recall@k"] for m in retrieval_metrics) / len(retrieval_metrics)
+    avg_precision = sum(m["precision@k"] for m in retrieval_metrics) / len(retrieval_metrics)
+    avg_ndcg = sum(m["ndcg@k"] for m in retrieval_metrics) / len(retrieval_metrics)
+    avg_groundedness = sum(groundedness_scores) / len(groundedness_scores)
+    
+    return {
+        "avg_recall@10": avg_recall,
+        "avg_precision@10": avg_precision,
+        "avg_ndcg@10": avg_ndcg,
+        "groundedness_rate": avg_groundedness
+    }
+
+# Example usage
+test_cases = [
+    {
+        "query": "What is the refund policy for electronics?",
+        "relevant_doc_ids": ["doc_123", "doc_456"],
+        "reference_answer": "Electronics can be returned within 30 days with original packaging."
+    },
+    # ... more test cases
+]
+
+results = evaluate_rag_pipeline(test_cases, my_rag_pipeline, my_llm_judge)
+print(json.dumps(results, indent=2))
+`} language="python" filename="rag_evaluation.py" />
+
+---
+
+## The Decision Framework: Which Metrics Matter Most
+
+Not all RAG applications have the same quality requirements. Prioritize metrics based on your use case:
+
+**For customer support RAG:**
+
+- **Task success** is paramount — did the customer's issue get resolved?
+- **Safety and authorization leakage** are critical — one leaked customer record destroys trust
+- **Latency** must stay below 2-3 seconds — longer delays frustrate users
+- **Recall@K** matters more than precision — missing a relevant FAQ is worse than surfacing an extra document
+
+**For legal document RAG:**
+
+- **Citation correctness** is mandatory — lawyers must verify sources
+- **Groundedness** is critical — hallucinations have legal consequences
+- **Recall@K** must be near 100% — missing a relevant precedent is unacceptable
+- **Cost** is secondary — accuracy justifies higher per-query costs
+
+**For code documentation RAG:**
+
+- **Answer correctness** is key — wrong code examples break builds
+- **Index freshness** matters — stale docs reference deprecated APIs
+- **Latency** can be higher (5-10 seconds) — developers tolerate wait times for quality
+- **Precision@K** matters more than recall — surfacing 3 perfect examples beats 20 mediocre ones
+
+**For consumer chatbot RAG:**
+
+- **Groundedness** prevents embarrassing hallucinations that go viral on social media
+- **Latency** must be under 1 second — conversational flow demands speed
+- **Cost** drives viability at scale — shave tokens wherever possible
+- **Safety** avoids PR disasters — one offensive response shuts down the product
+
+Set **SLA thresholds** for critical metrics and alert when they degrade. For example:
+
+- Recall@10 must stay above 0.85
+- Groundedness rate must stay above 0.95
+- p95 latency must stay below 2 seconds
+- Cost per query must stay below $0.02
+
+Run evaluations **on every code change, reindex, and model swap.** Treat evaluation like integration tests — failures block deployment.
+
+---
+
+## Failure Modes: What Breaks in Production
+
+RAG pipelines exhibit **failure modes** that traditional software doesn't encounter:
+
+### Context Poisoning
+
+**Context poisoning** occurs when irrelevant or adversarial documents mislead the LLM's response. If a user query retrieves a spam document that claims "The capital of France is Berlin," a poorly calibrated LLM may parrot the false claim.
+
+**Mitigations:**
+
+- Use reranking models to demote low-quality documents before feeding them to the LLM
+- Implement source credibility scoring — trust official docs over user-generated content
+- Add a prompt instruction: "If documents contradict each other, state the conflict explicitly"
+- Monitor for retrieval of documents with low engagement scores or flagged content
+
+### Stale Knowledge
+
+**Stale knowledge** occurs when the vector index lags behind the source-of-truth database. A customer queries the RAG system about a product's price. The database updated the price 10 minutes ago, but the index refresh job runs hourly. The LLM cites the outdated price.
+
+**Mitigations:**
+
+- Reduce index refresh latency — switch from batch to incremental indexing
+- Tag each document with a timestamp and display "as of [timestamp]" in responses
+- Implement cache invalidation: when a document updates, immediately mark its embedding as stale
+- For critical data (prices, inventory), bypass RAG and query the database directly
+
+### Retrieval Drift
+
+**Retrieval drift** occurs when the embedding model and indexed documents diverge over time. You initially indexed documents with `text-embedding-ada-002`. Six months later, you switch to `text-embedding-3-large` for queries but don't reindex. Query embeddings live in a different space than document embeddings, so retrieval quality collapses.
+
+**Mitigations:**
+
+- Version-lock embedding models — if you change the query embedding model, reindex all documents
+- Monitor embedding model drift: sample queries before and after model changes and compare top-K results
+- Store the embedding model version in the index metadata and alert when query and index versions mismatch
+
+### Chunk Boundary Artifacts
+
+**Chunk boundary artifacts** occur when critical information spans two chunks and neither chunk alone is sufficient to answer the query. A user asks "What are the side effects of Drug X?" The sentence "Drug X may cause nausea, headache, and dizziness" is split across two chunks because it fell on a 512-token boundary. Chunk 1 ends with "Drug X may cause nausea" and Chunk 2 starts with "headache, and dizziness." Neither chunk alone is complete.
+
+**Mitigations:**
+
+- Use **semantic chunking** instead of fixed-length chunking — split on sentence or paragraph boundaries
+- Implement **overlapping chunks** — each chunk includes the last 50 tokens of the previous chunk and the first 50 tokens of the next chunk
+- Add a **multi-hop retrieval** stage: if the LLM detects incomplete information, issue a second query to retrieve adjacent chunks
+- For structured documents (legal contracts, API docs), chunk by logical sections (clauses, function definitions) rather than token counts
+
+---
+
+## Key Takeaways
+
+RAG pipelines require **two-layered evaluation** because retrieval failures and generation failures have different root causes and different fixes. Measure retrieval quality (recall, precision, ranking) independently from end-to-end quality (groundedness, citation correctness, answer correctness, safety).
+
+Build **evaluation datasets** from real usage logs and version them alongside code and index changes. Include adversarial examples that test failure modes — no-answer queries, contradictory documents, authorization leakage attempts.
+
+Prioritize metrics based on your use case. Customer support RAG optimizes for task success and latency. Legal document RAG optimizes for citation correctness and groundedness. Code documentation RAG optimizes for answer correctness and index freshness.
+
+**Failure modes** unique to RAG include context poisoning (irrelevant documents mislead the LLM), stale knowledge (index lags behind source-of-truth), retrieval drift (embedding model version mismatch), and chunk boundary artifacts (critical information split across chunks).
+
+Treat RAG evaluation like integration tests. Run the full suite on every deployment. Alert when SLA thresholds degrade. The cost of a hallucination in production far exceeds the cost of an extra evaluation run.

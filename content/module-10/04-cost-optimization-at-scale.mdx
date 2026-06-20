@@ -1,0 +1,397 @@
+---
+title: "Cost Optimization at Scale"
+---
+
+## The Problem: Cloud Bill Shock at Scale
+
+Your data platform is in production. Dashboards are live, ML models are training, data pipelines run on schedule, and stakeholders are happy with the insights. Then the cloud bill arrives — and it's 40% higher than projected. Engineering time is spent investigating cost anomalies instead of building features. Finance asks for a chargeback model. Leadership questions whether "all this data infrastructure" is worth the expense.
+
+**Cost optimization at scale** is not about cutting corners or choosing the cheapest tools — it's about **understanding the unit economics of your platform** and making TCO-informed decisions that align spend with business value. At production scale, a 10% optimization in storage tiering or compute right-sizing translates to meaningful budget savings. But premature optimization before measuring, or ignoring operational overhead in the name of lower cloud bills, creates technical debt that costs more in engineering time than it saves in infrastructure spend.
+
+The pattern: **measure unit economics, tier by access frequency, right-size compute for workload type, implement chargeback to align incentives, and make TCO-based decisions that include operational cost**. The anti-pattern: optimizing without measurement, ignoring operational overhead, treating all cost as bad cost, or chasing marginal savings that introduce brittleness.
+
+---
+
+## Unit Economics at Platform Scale
+
+**Unit economics** extends the FinOps principles from Module 2 Lesson 4 to production-scale platforms. Instead of tracking aggregate spend, you track **cost per unit of work delivered**: cost per pipeline run, cost per terabyte stored, cost per query served, cost per feature retrieval, cost per AI request, cost per embedding generation.
+
+Why unit economics matter:
+
+- **Benchmarking** — you can compare cost per query across months or across teams. If cost per query doubles but query volume is flat, you have a regression to investigate.
+- **Capacity planning** — if you know cost per TB processed and you expect data volume to triple next quarter, you can forecast the infrastructure budget with precision.
+- **ROI measurement** — you can answer "what does it cost to serve this dashboard?" or "how much does this ML model cost per prediction?" without hand-waving.
+- **Chargeback fairness** — you can allocate costs to teams proportional to their consumption, not their political influence.
+
+**Common unit cost metrics** for data platforms:
+
+| Metric                        | What It Tracks                                      | Why It Matters                                      |
+|-------------------------------|-----------------------------------------------------|-----------------------------------------------------|
+| Cost per pipeline run         | Compute + orchestration cost divided by run count   | Spot regressions in pipeline efficiency             |
+| Cost per TB stored            | Storage bill divided by total data stored           | Identify opportunities for tiering or compression   |
+| Cost per TB processed         | Compute bill divided by data volume processed       | Right-size clusters, detect inefficient queries     |
+| Cost per query served         | Query engine cost divided by query count            | Optimize query patterns, cache hit rate             |
+| Cost per feature retrieval    | Feature store cost divided by retrieval count       | Tune batch vs. online serving mix                   |
+| Cost per AI request           | LLM API cost divided by request count               | Monitor prompt efficiency, model selection          |
+| Cost per embedding generation | Embedding model cost divided by vectors generated   | Choose embedding models by cost/quality tradeoff    |
+
+**Example**: Your feature store processes 10 million feature retrievals per day. The infrastructure costs \$3,000/day. Unit cost: **\$0.0003 per retrieval**. If you add a caching layer that reduces retrievals by 30%, unit cost drops to \$0.00021 — a 30% savings that justifies the engineering investment in caching.
+
+<MermaidDiagram chart={`graph TD
+    A[Infrastructure Bill] --> B[Allocate to Services]
+    B --> C[Data Pipelines: $5k/mo]
+    B --> D[Query Engine: $8k/mo]
+    B --> E[Feature Store: $3k/mo]
+    B --> F[AI/ML Inference: $4k/mo]
+    
+    C --> C1[Pipeline Runs: 120k/mo]
+    C1 --> C2[Unit Cost: $0.042 per run]
+    
+    D --> D1[Queries Served: 2M/mo]
+    D1 --> D2[Unit Cost: $0.004 per query]
+    
+    E --> E1[Feature Retrievals: 300M/mo]
+    E1 --> E2[Unit Cost: $0.00001 per retrieval]
+    
+    F --> F1[AI Requests: 500k/mo]
+    F1 --> F2[Unit Cost: $0.008 per request]
+    
+    style A fill:#fff5f5,stroke:#e53e3e
+    style C2 fill:#ebf8ff,stroke:#3182ce
+    style D2 fill:#ebf8ff,stroke:#3182ce
+    style E2 fill:#ebf8ff,stroke:#3182ce
+    style F2 fill:#ebf8ff,stroke:#3182ce
+`} />
+
+Unit economics surfaces **cost regressions** before they compound. If cost per query doubles from one week to the next but query volume is stable, you investigate immediately — maybe someone deployed an inefficient join, or the query planner regressed, or a table grew large without re-clustering. Without unit economics, you notice the problem when the end-of-month bill arrives and forensics are harder.
+
+---
+
+## Storage Tiering Optimization
+
+**Storage tiering** exploits the access frequency distribution of data. Most production data platforms follow a **power law**: 20% of data accounts for 80% of queries, and 50% of data is rarely accessed after the first week. Hot storage (SSD-backed, low-latency) costs 10x more than cold storage (object storage, higher latency). Paying hot-storage prices for data that's queried once a month is waste.
+
+**Lifecycle automation** moves data across tiers based on last-access timestamps:
+
+- **Hot tier** — actively queried data. SSD-backed storage, single-digit millisecond latency. Example: BigQuery active storage, S3 Standard.
+- **Warm tier** — occasionally queried data. Slightly higher latency, lower cost. Example: BigQuery long-term storage (data not modified in 90 days gets 50% discount), S3 Infrequent Access.
+- **Cold tier** — archival data queried rarely. Minutes to hours to retrieve. Example: S3 Glacier, Azure Archive.
+- **Archive tier** — compliance/audit retention. Retrieval takes hours to days. Lowest cost per TB. Example: S3 Glacier Deep Archive.
+
+**At scale**, storage tiering is **policy-driven and automated**:
+
+1. **Define access patterns** — query logs reveal which datasets are hot, warm, cold.
+2. **Set tier policies** — data untouched for 30 days moves to warm tier, 90 days to cold, 1 year to archive.
+3. **Automate transitions** — lifecycle rules apply policies without manual intervention.
+4. **Monitor retrieval costs** — if cold data is frequently retrieved, the retrieval fees may exceed the storage savings. Promote it back to warm tier.
+
+**Common tiering mistake**: moving data to cold storage to save on storage costs, then incurring 10x the savings in retrieval fees because stakeholders still query it monthly. **Best practice**: track retrieval frequency before tiering. If a dataset is queried more than once per quarter, keep it in warm tier.
+
+<CodeBlock code={`-- Storage tiering analysis query (BigQuery example)
+WITH table_access AS (
+  SELECT
+    table_schema AS dataset,
+    table_name,
+    MAX(last_modified_time) AS last_modified,
+    COUNT(*) AS query_count_last_30d
+  FROM \`project.region-us.INFORMATION_SCHEMA.JOBS\`
+  WHERE creation_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
+    AND statement_type = 'SELECT'
+  GROUP BY dataset, table_name
+),
+storage_cost AS (
+  SELECT
+    table_schema AS dataset,
+    table_name,
+    ROUND(size_bytes / POW(10, 12), 2) AS size_tb,
+    ROUND(size_bytes / POW(10, 12) * 0.02, 2) AS active_storage_cost_usd,
+    ROUND(size_bytes / POW(10, 12) * 0.01, 2) AS longterm_storage_cost_usd
+  FROM \`project.dataset.INFORMATION_SCHEMA.TABLE_STORAGE\`
+)
+SELECT
+  s.dataset,
+  s.table_name,
+  s.size_tb,
+  IFNULL(a.query_count_last_30d, 0) AS queries_last_30d,
+  IFNULL(a.last_modified, TIMESTAMP('1970-01-01')) AS last_modified,
+  s.active_storage_cost_usd AS current_monthly_cost,
+  s.longterm_storage_cost_usd AS longterm_monthly_cost,
+  ROUND(s.active_storage_cost_usd - s.longterm_storage_cost_usd, 2) AS potential_monthly_savings,
+  CASE
+    WHEN IFNULL(a.query_count_last_30d, 0) = 0 
+      AND DATE_DIFF(CURRENT_DATE(), DATE(IFNULL(a.last_modified, TIMESTAMP('1970-01-01'))), DAY) > 90
+      THEN 'Move to cold tier'
+    WHEN IFNULL(a.query_count_last_30d, 0) < 5
+      AND DATE_DIFF(CURRENT_DATE(), DATE(IFNULL(a.last_modified, TIMESTAMP('1970-01-01'))), DAY) > 30
+      THEN 'Move to warm tier'
+    ELSE 'Keep in hot tier'
+  END AS tiering_recommendation
+FROM storage_cost s
+LEFT JOIN table_access a
+  ON s.dataset = a.dataset AND s.table_name = a.table_name
+WHERE s.size_tb > 0.1  -- Only consider tables > 100 GB
+ORDER BY potential_monthly_savings DESC
+LIMIT 50;
+`} language="sql" filename="storage_tiering_analysis.sql" />
+
+This query identifies tables larger than 100 GB, calculates current storage cost vs. long-term storage cost, and recommends tiering based on access frequency. Run it monthly and implement the top 10 recommendations to capture low-hanging savings.
+
+---
+
+## Compute Right-Sizing: Spot, Reserved, Autoscaling
+
+**Compute right-sizing** matches compute resources to workload type. The failure mode: running all workloads on the same instance type and pricing model, overpaying for batch jobs that could run on spot instances and under-provisioning for latency-sensitive services that need reserved capacity.
+
+**Three workload types** with different compute strategies:
+
+### Batch Workloads: Spot/Preemptible Instances
+
+Batch jobs (ETL pipelines, training runs, report generation) are **interruptible** — if a spot instance is reclaimed, the job retries. Spot instances cost 50-80% less than on-demand. At scale, running all batch compute on spot saves tens of thousands per month.
+
+**Best practices**:
+- Use **fault-tolerant orchestrators** (Airflow with retries, Kubernetes jobs with restart policies).
+- Set **maximum runtime limits** so jobs don't run indefinitely on slow spot instances.
+- **Checkpoint long-running jobs** so they resume from the last checkpoint instead of restarting from scratch.
+
+**When not to use spot**: jobs with hard SLAs (must complete by 8am for dashboard refresh) or jobs that can't checkpoint (stateful transformations that must complete in one pass).
+
+### Steady-State Workloads: Reserved Instances
+
+Services that run 24/7 (query engines, API servers, feature stores) have **predictable baseline load**. Reserved instances (1-year or 3-year commitments) cost 30-50% less than on-demand. If your query engine runs 12 nodes continuously, commit to reserved capacity for those 12 nodes.
+
+**Best practices**:
+- Reserve for **baseline capacity**, not peak. Use autoscaling or on-demand for spikes.
+- **Monitor utilization** — if reserved instances sit idle, you're paying for capacity you don't use. Better to over-provision on-demand than under-utilize reserved.
+- **Review commitments quarterly** — if baseline load drops (team consolidates dashboards, query efficiency improves), downsize reserved capacity at renewal.
+
+### Bursty Workloads: Autoscaling
+
+User-facing services with **variable load** (dashboards with morning spike, ML inference with campaign-driven bursts) need **autoscaling**. Provision for average load, autoscale to handle peak.
+
+**Best practices**:
+- Set **aggressive scale-down policies** so instances terminate quickly after load drops. Idle instances cost the same as busy ones.
+- Use **predictive autoscaling** if load is periodic (every morning at 9am). Pre-scale before the spike instead of reacting after latency degrades.
+- **Right-size instance types** — if average CPU is 20%, you're over-provisioned. Use smaller instance types and scale horizontally instead of vertically.
+
+<MermaidDiagram chart={`graph TD
+    A[Workload Analysis] --> B{Workload Type}
+    
+    B -->|Batch ETL, Training| C[Spot/Preemptible]
+    C --> C1[50-80% cost savings]
+    C --> C2[Fault-tolerant orchestration]
+    C --> C3[Checkpoint long jobs]
+    
+    B -->|24/7 Query Engine, APIs| D[Reserved Instances]
+    D --> D1[30-50% cost savings]
+    D --> D2[Commit to baseline capacity]
+    D --> D3[Review quarterly]
+    
+    B -->|Bursty Dashboards, Inference| E[Autoscaling On-Demand]
+    E --> E1[Provision for average]
+    E --> E2[Scale for peak]
+    E --> E3[Aggressive scale-down]
+    
+    C1 --> F[Cost Optimization Decision]
+    D1 --> F
+    E1 --> F
+    
+    style A fill:#fff5f5,stroke:#e53e3e
+    style C fill:#c6f6d5,stroke:#38a169
+    style D fill:#bee3f8,stroke:#3182ce
+    style E fill:#feebc8,stroke:#dd6b20
+    style F fill:#e6fffa,stroke:#319795
+`} />
+
+**Example**: A machine learning platform runs 100 training jobs per day (batch), serves 50 models via API (steady-state), and handles inference spikes during product launches (bursty). Right-sized compute strategy:
+
+- **Training jobs**: 100% spot instances with Kubernetes job retries. Average job runtime: 2 hours. If a spot instance is reclaimed, job retries on the next available spot node. **Cost**: \$0.10/hr × 200 instance-hours/day = \$20/day. On-demand cost would be \$0.40/hr × 200 = \$80/day. **Savings: \$60/day, \$1,800/month**.
+- **API serving**: 20 reserved instances (baseline load), 10 on-demand instances for autoscaling headroom. **Cost**: 20 × \$0.20/hr (reserved) + 10 × \$0.40/hr (on-demand) × 730 hrs/month = \$2,920 + \$2,920 = \$5,840/month. Fully on-demand cost: 30 × \$0.40/hr × 730 = \$8,760/month. **Savings: \$2,920/month**.
+- **Inference spikes**: Autoscaling from 5 to 50 instances during launch campaigns. Average utilization: 10 instances. **Cost**: 10 × \$0.40/hr × 730 = \$2,920/month. Peak capacity cost if always provisioned: 50 × \$0.40/hr × 730 = \$14,600/month. **Savings: \$11,680/month**.
+
+Total monthly savings from right-sizing: **\$16,400**. Annual: **\$196,800**.
+
+---
+
+## Chargeback Models: Making Teams Accountable
+
+**Chargeback** allocates infrastructure costs to teams proportional to their consumption. Without chargeback, teams treat infrastructure as "free" — no incentive to optimize query patterns, clean up unused datasets, or right-size compute. With chargeback, teams see the cost of their decisions and self-optimize.
+
+**Why chargeback matters at scale**:
+
+- **Accountability** — teams that consume 80% of compute budget are visible. No more "tragedy of the commons" where everyone over-consumes.
+- **Prioritization** — if a dashboard costs \$500/month to run, stakeholders can decide if the insights justify the expense. Some dashboards get deprecated, freeing budget for higher-value use cases.
+- **Behavior change** — when teams see their monthly bill, they start asking "can we cache this?" or "do we need to run this daily or is weekly enough?" Optimization happens organically.
+
+**Chargeback implementation**:
+
+1. **Tag resources by team** — every pipeline, dataset, cluster, and service is tagged with the owning team.
+2. **Calculate unit costs** — cost per pipeline run, cost per TB stored, cost per query.
+3. **Allocate shared costs** — infrastructure used by multiple teams (orchestration platform, metadata catalog) is allocated proportionally or treated as a shared service cost.
+4. **Publish monthly bills** — each team gets a bill showing their consumption and cost breakdown.
+5. **Set internal pricing** — you can charge teams at cloud cost (pass-through) or add a markup to fund platform engineering. Some organizations charge below cost to encourage adoption in early stages.
+
+**Internal pricing models**:
+
+| Model               | When to Use                                                                 |
+|---------------------|-----------------------------------------------------------------------------|
+| **Pass-through**    | Charge teams exactly what cloud provider charges. Simple, transparent.      |
+| **Cost-plus**       | Cloud cost + 20% markup to fund platform engineering team.                  |
+| **Tiered pricing**  | Discounts for teams that commit to volume (like reserved instances).        |
+| **Freemium**        | First 100 pipeline runs free, then \$0.05/run. Encourages adoption.         |
+
+**Common chargeback mistake**: charging teams for infrastructure they don't control (shared clusters that platform team over-provisioned). **Best practice**: teams are only charged for resources they request or consume. Shared infrastructure costs are allocated proportionally or absorbed by platform budget.
+
+<CodeBlock code={`# Chargeback allocation script (Python example)
+import pandas as pd
+
+# Load resource tagging data
+resources = pd.read_csv('cloud_resources.csv')  # columns: resource_id, resource_type, team, cost_usd
+
+# Calculate team-level cost
+team_costs = resources.groupby(['team', 'resource_type']).agg({
+    'cost_usd': 'sum',
+    'resource_id': 'count'
+}).rename(columns={'resource_id': 'resource_count'}).reset_index()
+
+# Calculate unit costs for common resource types
+unit_costs = {
+    'pipeline_run': resources[resources['resource_type'] == 'pipeline']['cost_usd'].sum() / 
+                    resources[resources['resource_type'] == 'pipeline']['resource_id'].count(),
+    'tb_stored': resources[resources['resource_type'] == 'storage']['cost_usd'].sum() / 
+                 resources[resources['resource_type'] == 'storage']['resource_id'].sum(),  # Assumes resource_id holds TB count
+    'query': resources[resources['resource_type'] == 'query_engine']['cost_usd'].sum() / 
+             resources[resources['resource_type'] == 'query_engine']['resource_id'].sum()  # Assumes resource_id holds query count
+}
+
+# Generate chargeback report
+for team in team_costs['team'].unique():
+    team_data = team_costs[team_costs['team'] == team]
+    total_cost = team_data['cost_usd'].sum()
+    print(f"\n--- {team.upper()} Monthly Bill ---")
+    print(f"Total Cost: ${total_cost:,.2f}\n")
+    print(team_data[['resource_type', 'resource_count', 'cost_usd']].to_string(index=False))
+    print("\nUnit Cost Benchmarks:")
+    print(f"  Pipeline run: ${unit_costs['pipeline_run']:.4f}")
+    print(f"  TB stored: ${unit_costs['tb_stored']:.2f}")
+    print(f"  Query served: ${unit_costs['query']:.4f}")
+    print(f"\nOptimization opportunities: Review high-cost resources and compare to benchmarks.")
+`} language="python" filename="chargeback_allocation.py" />
+
+This script reads resource tagging data, calculates team-level costs, and generates monthly bills with unit cost benchmarks. Teams compare their unit costs to the organization-wide average and identify optimization opportunities.
+
+---
+
+## TCO-Based Decisions: Operational Cost Matters
+
+**Total Cost of Ownership (TCO)** includes infrastructure cost **plus operational cost** — engineering time to deploy, maintain, troubleshoot, upgrade, and scale. A tool with a lower cloud bill but higher operational overhead may be more expensive in TCO terms.
+
+**TCO example: Self-hosted Kafka vs. Managed Streaming**
+
+| Factor                  | Self-Hosted Kafka                     | Managed Streaming (Confluent Cloud, AWS MSK) |
+|-------------------------|---------------------------------------|---------------------------------------------|
+| **Infrastructure cost** | \$5,000/month (EC2 instances, disks)  | \$8,000/month (managed service)             |
+| **Operational cost**    | 2 engineers × 20% time × \$150k/yr = \$5,000/month | 0.5 engineers × 10% time × \$150k/yr = \$625/month |
+| **Total monthly TCO**   | **\$10,000**                          | **\$8,625**                                 |
+
+The managed service costs \$3,000/month more in infrastructure but **saves \$4,375/month in engineering time**. TCO is lower, even though the cloud bill is higher. The saved engineering time can be redirected to higher-leverage projects (building features instead of patching Kafka brokers).
+
+**When to self-host**:
+- You have **deep expertise** in the tool and can operate it more efficiently than the managed service.
+- You have **unique requirements** not supported by managed offerings (custom partitioning, specialized connectors).
+- You are at **very large scale** where managed service costs become prohibitive (some organizations self-host at petabyte scale because managed pricing is superlinear).
+
+**When to use managed services**:
+- You are **building fast** and don't want to invest engineering time in operational toil.
+- The tool is **not a core competency** (you don't want to become Kafka experts; you want to ship product features).
+- The managed service offers **better SLAs** than you can achieve self-hosting (multi-region failover, automatic backups, upgrade automation).
+
+<MermaidDiagram chart={`graph LR
+    A[Decision: Self-Host vs. Managed] --> B[Calculate Infrastructure Cost]
+    A --> C[Calculate Operational Cost]
+    
+    B --> B1[Self-Host: $5k/mo]
+    B --> B2[Managed: $8k/mo]
+    
+    C --> C1[Self-Host: 2 eng × 20% × $12.5k/mo = $5k/mo]
+    C --> C2[Managed: 0.5 eng × 10% × $12.5k/mo = $625/mo]
+    
+    B1 --> D[Self-Host TCO: $10k/mo]
+    C1 --> D
+    
+    B2 --> E[Managed TCO: $8,625/mo]
+    C2 --> E
+    
+    D --> F{Compare TCO}
+    E --> F
+    
+    F -->|Managed TCO Lower| G[Choose Managed Service]
+    F -->|Self-Host TCO Lower| H[Choose Self-Host]
+    
+    G --> I[Redirect Engineering Time to Product Features]
+    H --> J[Requires Deep Operational Expertise]
+    
+    style A fill:#fff5f5,stroke:#e53e3e
+    style D fill:#feebc8,stroke:#dd6b20
+    style E fill:#c6f6d5,stroke:#38a169
+    style G fill:#bee3f8,stroke:#3182ce
+    style I fill:#e6fffa,stroke:#319795
+`} />
+
+**TCO-based decision framework**:
+
+1. **List all costs** — infrastructure (cloud bill) and operational (engineering time, incident response, upgrades, scaling).
+2. **Estimate engineering time** — how many engineer-hours per month to run this service? Multiply by loaded hourly cost (salary + benefits + overhead, typically \$75-150/hr).
+3. **Include risk costs** — if downtime costs \$10k/hour and the self-hosted solution has 2x the incident rate of managed, factor that into TCO.
+4. **Compare TCO, not just infrastructure cost** — choose the option with lower total cost over 12 months.
+5. **Re-evaluate annually** — as scale changes, TCO may shift. Managed services may become prohibitively expensive at massive scale, or self-hosting operational burden may drop as the team gains expertise.
+
+---
+
+## Decision Framework: Where to Optimize First
+
+At scale, you have dozens of optimization opportunities. **Prioritize by ROI**: savings divided by implementation effort.
+
+**High ROI optimizations** (do these first):
+
+1. **Storage tiering for cold data** — automated lifecycle policies, minimal engineering effort, 30-50% storage savings on cold data.
+2. **Spot instances for batch workloads** — change cluster configuration, savings appear immediately, 50-80% compute savings.
+3. **Reserved instances for steady-state workloads** — one-time commitment decision, 30-50% savings for predictable baseline load.
+4. **Query result caching** — implement caching layer, 20-40% query cost reduction for repeated queries.
+
+**Medium ROI optimizations** (do these after high ROI wins):
+
+5. **Right-sizing over-provisioned instances** — requires monitoring and tuning, 10-30% savings.
+6. **Compression for high-volume datasets** — one-time migration, 20-50% storage savings, faster queries.
+7. **Chargeback implementation** — requires tagging and reporting infrastructure, drives organic optimization by teams.
+
+**Low ROI optimizations** (defer unless marginal savings matter):
+
+8. **Micro-optimizations in query performance** — shaving 5% off query cost requires deep query tuning, low savings unless query volume is massive.
+9. **Custom-built tooling to replace managed services** — high engineering effort, TCO often higher than managed services unless you're at extreme scale.
+10. **Premature optimization** — optimizing before measuring. Without unit economics, you don't know where the cost is, so you optimize blindly.
+
+**Cost optimization is iterative**. Start with high ROI wins, measure impact, publish unit cost trends, and let teams self-optimize via chargeback. Avoid the trap of optimizing infrastructure cost while ignoring operational cost — TCO is the north star, not cloud bill size.
+
+---
+
+## Failure Modes
+
+**Optimizing without measuring** — you migrate to a "cheaper" tool without tracking unit costs before and after. Post-migration, total cost increases due to higher operational overhead. **Fix**: establish baseline unit costs before optimization, measure again after, confirm ROI.
+
+**Ignoring operational cost** — you choose the self-hosted option because cloud bill is lower, but engineering team spends 40% of time on operational toil. **Fix**: calculate TCO including engineering time, not just infrastructure cost.
+
+**Treating all cost as bad cost** — you cut infrastructure spend to hit a budget target, but latency degrades and stakeholders lose trust in the platform. **Fix**: optimize for cost-per-value delivered, not absolute cost. Some workloads justify premium infrastructure.
+
+**Premature optimization** — you spend a week optimizing a pipeline that costs \$50/month instead of the query engine that costs \$8,000/month. **Fix**: rank optimization opportunities by savings potential, tackle the largest cost drivers first.
+
+**Chargeback without guardrails** — teams see their bill and respond by deleting production datasets or disabling critical pipelines to avoid charges. **Fix**: chargeback is for visibility and accountability, not punishment. Set spending limits with alerts, not hard cutoffs.
+
+---
+
+## Summary
+
+Cost optimization at scale is a **measurement-driven discipline**. Track unit economics (cost per pipeline run, per TB stored, per query served), implement storage tiering to move cold data to cheaper tiers, right-size compute by matching workload type to pricing model (spot for batch, reserved for steady-state, autoscaling for bursty), establish chargeback to make teams accountable for consumption, and make TCO-based decisions that include operational cost.
+
+The pattern: measure before optimizing, start with high ROI wins (tiering, spot, reserved), publish unit cost trends, let chargeback drive organic optimization, and re-evaluate TCO as scale changes. The anti-pattern: optimizing without baseline metrics, ignoring engineering time in TCO calculations, chasing marginal savings while missing major cost drivers, and treating infrastructure cost in isolation from business value delivered.
+
+Next lesson: **Compliance and Governance at Scale** — data classification, access auditing, regulatory frameworks, and operationalizing compliance without blocking velocity.

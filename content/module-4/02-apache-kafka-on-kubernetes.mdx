@@ -1,0 +1,594 @@
+---
+title: "Apache Kafka on Kubernetes"
+quiz:
+  - question: "What is the scope of ordering guarantees in Apache Kafka?"
+    options:
+      - "Ordering is guaranteed across all partitions in a topic"
+      - "Ordering is guaranteed only within a single partition"
+      - "Ordering is guaranteed only if you use exactly-once semantics"
+      - "Kafka provides no ordering guarantees"
+    correctIndex: 1
+  - question: "What is the practical recommended delivery semantic for most production workloads?"
+    options:
+      - "At-most-once with optimistic retries"
+      - "Exactly-once everywhere for guaranteed correctness"
+      - "At-least-once with idempotent consumers"
+      - "Best-effort delivery with manual reconciliation"
+    correctIndex: 2
+  - question: "How does Strimzi simplify Kafka operations on Kubernetes?"
+    options:
+      - "It replaces Kafka with a cloud-managed service"
+      - "It provides declarative CRDs for Kafka clusters, topics, and users"
+      - "It eliminates the need for ZooKeeper or KRaft"
+      - "It automatically scales partitions based on consumer lag"
+    correctIndex: 1
+---
+
+## Overview
+
+**Apache Kafka** is a distributed event streaming platform that has become the de facto standard for high-throughput messaging, event sourcing, and change data capture in modern data architectures. When deployed on **Kubernetes** using the **Strimzi operator**, Kafka becomes a declarative, cloud-native component of your data platform that integrates seamlessly with container orchestration, autoscaling, and GitOps workflows.
+
+This lesson covers Kafka fundamentals (topics, partitions, consumer groups), delivery semantics (at-most-once, at-least-once, exactly-once), production operations (capacity planning, lag monitoring, rebalancing), and the Strimzi operator's role in making Kafka a first-class Kubernetes citizen. You'll learn the most common misconceptions—especially around ordering guarantees and exactly-once semantics—and how to build resilient event-driven systems that handle failures gracefully.
+
+By the end of this lesson, you will understand how to deploy production-ready Kafka clusters on Kubernetes, design partition strategies that balance parallelism with ordering, implement idempotent consumers to achieve reliable at-least-once processing, and operate Kafka at scale using declarative infrastructure.
+
+---
+
+## The Problem: Messaging Without Guarantees
+
+In distributed systems, components need to communicate asynchronously. Traditional message queues (RabbitMQ, SQS, Redis Pub/Sub) provide basic publish-subscribe semantics, but they fall short in several critical areas:
+
+- **No durable replay** — once a message is consumed, it's gone. If a downstream system needs to reprocess historical events (e.g., to rebuild a materialized view or train an ML model), the data is lost.
+- **Limited ordering** — most queues guarantee FIFO delivery only within a single queue or topic, but not across partitions or consumers. This makes it hard to model real-world event streams where ordering matters (e.g., "user created" must come before "user updated").
+- **Weak fault tolerance** — if a consumer crashes mid-processing, the message is either lost (at-most-once) or redelivered indefinitely (at-least-once with no idempotency). There's no mechanism to track which messages have been fully processed.
+- **No scalability through partitioning** — most queues are single-leader systems. To scale reads, you need complex sharding or replication logic.
+
+**Apache Kafka** solves these problems by modeling messages as a **distributed, append-only log**. Each message is written to a partition, assigned a monotonically increasing offset, and retained for a configurable period (days, weeks, or indefinitely). Consumers track their own offsets, enabling replay, parallel processing, and precise failure recovery.
+
+> **Key Insight:** Kafka is not a traditional message queue. It's a **distributed commit log** that happens to support pub/sub semantics. This distinction is critical for understanding its behavior.
+
+---
+
+## Kafka Fundamentals
+
+### Topics, Partitions, and Offsets
+
+A **topic** is a logical stream of events (e.g., `user-signups`, `payment-events`, `clickstream`). Each topic is divided into one or more **partitions**, which are the unit of parallelism and ordering.
+
+- **Partition** — an ordered, immutable sequence of messages. Each message in a partition is assigned a unique **offset** (a 64-bit integer starting from 0).
+- **Offset** — the position of a message within a partition. Offsets are durable and never reused. If a consumer reads offset 42, it knows exactly which message it received, and can resume from offset 43 after a crash.
+- **Replication** — each partition has one **leader** (handles all reads and writes) and zero or more **replicas** (followers that replicate data for fault tolerance). The **in-sync replica (ISR)** set contains replicas that are fully caught up with the leader.
+
+**CRITICAL:** Ordering is guaranteed **only within a partition**, not across partitions. If you write two events to the same partition, they will be read in the same order. If you write them to different partitions, there is no ordering guarantee.
+
+This is the most common source of bugs in Kafka-based systems. If your use case requires strict ordering (e.g., a sequence of database updates for the same user), you must route all events for that user to the same partition using a **partition key**.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Topic["Topic: user-events"]
+        P0["Partition 0<br/>offset 0: user:alice created<br/>offset 1: user:alice updated<br/>offset 2: user:alice deleted"]
+        P1["Partition 1<br/>offset 0: user:bob created<br/>offset 1: user:bob updated"]
+        P2["Partition 2<br/>offset 0: user:carol created"]
+    end
+    Producer["Producer<br/>(partition key = user_id)"] --> P0
+    Producer --> P1
+    Producer --> P2
+    P0 --> CG1["Consumer Group 1<br/>Consumer A reads P0+P1"]
+    P1 --> CG1
+    P2 --> CG2["Consumer Group 1<br/>Consumer B reads P2"]
+    style P0 fill:#e0f0ff,stroke:#0066cc
+    style P1 fill:#e0f0ff,stroke:#0066cc
+    style P2 fill:#e0f0ff,stroke:#0066cc
+    style Producer fill:#daf2f2,stroke:#0066cc
+    style CG1 fill:#fef0f0,stroke:#cc0066
+    style CG2 fill:#fef0f0,stroke:#cc0066
+`} />
+
+### Producers, Consumers, and Consumer Groups
+
+**Producers** write messages to topics. They choose which partition to write to based on:
+1. An explicit partition number (if provided)
+2. A partition key (hashed to determine the partition)
+3. Round-robin (if no key is provided)
+
+**Consumers** read messages from topics. A consumer belongs to a **consumer group**, which is a logical set of consumers that cooperate to read a topic. Key properties:
+
+- Each partition is consumed by exactly one consumer in a group (no two consumers in the same group read the same partition).
+- If there are more partitions than consumers, some consumers handle multiple partitions.
+- If there are more consumers than partitions, some consumers are idle (this is why you should not create more consumer instances than partitions).
+- Different consumer groups read the same topic independently. Each group tracks its own offsets.
+
+This design enables **horizontal scalability** (add more consumers to a group to parallelize processing) and **multi-subscriber semantics** (different applications can read the same topic without interfering).
+
+> **Example:** A `user-events` topic with 3 partitions can be read by a consumer group with 3 consumers (one per partition), while a separate analytics consumer group reads the same topic to build a real-time dashboard.
+
+### Retention: Kafka as a Log, Not a Database
+
+Kafka retains messages for a configurable period, regardless of whether they've been consumed. Retention can be:
+
+- **Time-based** — delete messages older than N days (e.g., `retention.ms=604800000` for 7 days)
+- **Size-based** — delete oldest messages when a partition exceeds N gigabytes (e.g., `retention.bytes=10737418240` for 10 GB)
+- **Compacted** — keep only the latest message for each key (useful for changelog topics in event sourcing)
+
+**This is not a database.** Kafka is designed for **ephemeral event streams**, not long-term storage. If you need to query historical events, materialize them into a database (Postgres, BigQuery, Iceberg) or a compacted Kafka topic.
+
+---
+
+## Delivery Semantics
+
+Kafka supports three delivery guarantees, each with different trade-offs:
+
+### At-Most-Once
+
+Messages are delivered **zero or one time**. If a consumer crashes after reading a message but before processing it, the message is lost.
+
+**Use case:** Metrics, logs, or events where occasional loss is acceptable (e.g., page view analytics).
+
+**Implementation:** Consumers commit offsets immediately after reading, before processing.
+
+### At-Least-Once
+
+Messages are delivered **one or more times**. If a consumer crashes after processing but before committing the offset, the message will be redelivered.
+
+**Use case:** The default for most production workloads. Requires idempotent consumers to handle duplicates safely.
+
+**Implementation:** Consumers process messages first, then commit offsets. If the consumer crashes between these steps, the message is reprocessed.
+
+### Exactly-Once Semantics (EOS)
+
+Kafka provides **transactional writes** that guarantee each message is processed exactly once, even in the presence of failures. This is implemented using:
+
+- **Idempotent producers** — deduplicate messages at the broker level using sequence numbers
+- **Transactional consumers** — commit offsets and output messages atomically within a transaction
+
+**Trade-offs:** EOS has significant overhead (higher latency, lower throughput, more complex configuration). It's only necessary for critical financial transactions or compliance-sensitive workloads.
+
+> **Practical Recommendation:** **Use at-least-once with idempotent consumers.** This is the sweet spot for most systems. Design your consumers to be idempotent (safe to run multiple times), and use **idempotency keys** to deduplicate at the application level.
+
+### Idempotency Keys
+
+An **idempotency key** is a unique identifier embedded in each message (e.g., `payment_id`, `order_id`, `event_id`). Consumers check a database or cache to see if they've already processed a message with that key. If so, they skip it.
+
+**Example:** A payment processor reads a `payment-events` topic. Each message contains a `payment_id`. Before processing, the consumer checks a `processed_payments` table. If the payment is already there, the consumer acknowledges the message without reprocessing it.
+
+This pattern is simpler and more performant than Kafka's transactional exactly-once semantics, and it works across multiple downstream systems (not just Kafka-to-Kafka flows).
+
+---
+
+## Strimzi Operator on Kubernetes
+
+**Strimzi** is a CNCF project that provides **Kubernetes operators** for running Kafka on Kubernetes. It replaces manual Kafka cluster management with declarative **Custom Resource Definitions (CRDs)**.
+
+### Core CRDs
+
+- **Kafka** — defines a Kafka cluster (brokers, ZooKeeper/KRaft, storage, networking)
+- **KafkaTopic** — defines a topic (partitions, replication, retention)
+- **KafkaUser** — defines a user with SASL/SCRAM or mTLS authentication and ACLs
+
+Strimzi watches these CRDs and reconciles the actual Kafka state with the desired state. If you update a `KafkaTopic` manifest (e.g., increase partitions), Strimzi automatically applies the change to the Kafka cluster.
+
+### Production Topology
+
+A production Kafka cluster on Kubernetes should have:
+
+- **3 or more broker pods** — for fault tolerance (tolerates 1 broker failure with replication factor 3)
+- **Rack awareness** — spread brokers across Kubernetes nodes or availability zones using pod anti-affinity
+- **Persistent volumes** — use a storage class with high IOPS (e.g., SSD-backed `gp3` on AWS, `pd-ssd` on GCP)
+- **Resource limits** — set CPU and memory limits to prevent noisy neighbor issues
+- **Monitoring** — export metrics to Prometheus (Strimzi provides built-in Prometheus exporters)
+
+<MermaidDiagram chart={`graph TD
+    subgraph K8s["Kubernetes Cluster"]
+        subgraph Strimzi["Strimzi Operator"]
+            SO["Strimzi Controller<br/>(watches Kafka CRDs)"]
+        end
+        subgraph Kafka["Kafka Cluster (Strimzi-managed)"]
+            B0["Broker 0<br/>(leader for P0, P3)"]
+            B1["Broker 1<br/>(leader for P1, P4)"]
+            B2["Broker 2<br/>(leader for P2, P5)"]
+            ZK["ZooKeeper / KRaft<br/>(cluster metadata)"]
+        end
+        subgraph Storage["Persistent Volumes"]
+            PV0["PV 0 (SSD)"]
+            PV1["PV 1 (SSD)"]
+            PV2["PV 2 (SSD)"]
+        end
+        subgraph Consumers["Consumer Applications"]
+            CG1["Consumer Group 1<br/>(analytics)"]
+            CG2["Consumer Group 2<br/>(CDC sink)"]
+        end
+    end
+    SO -->|reconciles| B0
+    SO -->|reconciles| B1
+    SO -->|reconciles| B2
+    B0 --> PV0
+    B1 --> PV1
+    B2 --> PV2
+    B0 --> ZK
+    B1 --> ZK
+    B2 --> ZK
+    B0 -->|streams| CG1
+    B1 -->|streams| CG1
+    B2 -->|streams| CG2
+    style SO fill:#daf2f2,stroke:#0066cc
+    style B0 fill:#e0f0ff,stroke:#0066cc
+    style B1 fill:#e0f0ff,stroke:#0066cc
+    style B2 fill:#e0f0ff,stroke:#0066cc
+    style ZK fill:#f2f2f2,stroke:#666666
+    style PV0 fill:#fef0f0,stroke:#cc0066
+    style PV1 fill:#fef0f0,stroke:#cc0066
+    style PV2 fill:#fef0f0,stroke:#cc0066
+    style CG1 fill:#fff4e6,stroke:#cc6600
+    style CG2 fill:#fff4e6,stroke:#cc6600
+`} />
+
+### Example: Kafka Cluster Manifest
+
+Here's a production-ready Strimzi `Kafka` manifest:
+
+<CodeBlock code={`apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: production-cluster
+  namespace: kafka
+spec:
+  kafka:
+    version: 3.6.0
+    replicas: 3
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: scram-sha-512
+    config:
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      log.retention.hours: 168  # 7 days
+      log.segment.bytes: 1073741824  # 1 GB
+      auto.create.topics.enable: false  # force declarative topic creation
+    storage:
+      type: persistent-claim
+      size: 500Gi
+      class: fast-ssd
+      deleteClaim: false
+    resources:
+      requests:
+        memory: 8Gi
+        cpu: 2
+      limits:
+        memory: 8Gi
+        cpu: 4
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+    rack:
+      topologyKey: topology.kubernetes.io/zone
+  zookeeper:
+    replicas: 3
+    storage:
+      type: persistent-claim
+      size: 100Gi
+      class: fast-ssd
+      deleteClaim: false
+    resources:
+      requests:
+        memory: 2Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+`} language="yaml" filename="kafka-cluster.yaml" />
+
+**Key configuration choices:**
+
+- **`replicas: 3`** — three brokers for high availability
+- **`offsets.topic.replication.factor: 3`** — consumer offsets are replicated to all brokers
+- **`min.insync.replicas: 2`** — writes require acknowledgment from at least 2 replicas (tolerates 1 broker failure)
+- **`auto.create.topics.enable: false`** — prevent accidental topic creation; use `KafkaTopic` CRDs instead
+- **`rack.topologyKey`** — spread brokers across availability zones (requires nodes to be labeled with `topology.kubernetes.io/zone`)
+- **`storage.class: fast-ssd`** — use high-IOPS storage for low-latency writes
+
+---
+
+## Production Operations
+
+### Capacity Planning
+
+**Partitions:**
+- Start with **1 partition per expected concurrent consumer** (e.g., if you want to run 10 consumer instances, create 10 partitions).
+- **Avoid over-partitioning** — each partition has overhead (file handles, memory, replication lag). A common rule of thumb is **100-1000 partitions per broker**.
+- **Partition count is hard to change** — you can add partitions (breaks ordering for existing keys), but you cannot remove them. Plan ahead.
+
+**Throughput:**
+- A single partition can handle **10-100 MB/s** depending on message size and replication factor.
+- Measure your actual throughput under load. Use `kafka-producer-perf-test` and `kafka-consumer-perf-test` to benchmark.
+
+**Storage:**
+- Calculate total storage as: `(throughput in MB/s) × (retention in seconds) × (replication factor)`.
+- Example: 10 MB/s throughput, 7-day retention, replication factor 3 → `10 × 604800 × 3 = 18.1 TB`.
+- Add 20-30% headroom for compaction and operational buffer.
+
+### Consumer Lag Monitoring
+
+**Consumer lag** is the difference between the latest offset in a partition and the offset a consumer has committed. It measures how far behind a consumer is.
+
+- **Lag = 0** — consumer is caught up
+- **Lag > 0 and stable** — consumer is processing at the same rate as producers
+- **Lag increasing** — consumer is falling behind (under-provisioned, slow processing, or downstream system is bottlenecked)
+
+**Monitoring tools:**
+- **Prometheus + Grafana** — Strimzi exports consumer lag metrics to Prometheus (`kafka_consumergroup_lag`)
+- **`kafka-consumer-groups.sh`** — CLI tool to inspect lag: `kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group my-group --describe`
+- **Burrow** — LinkedIn's consumer lag monitoring tool (detects stalls and stuck consumers)
+
+**Remediation strategies:**
+- **Scale consumers horizontally** — add more consumer instances (up to the partition count)
+- **Optimize consumer processing** — batch writes, use asynchronous I/O, cache lookups
+- **Increase retention** — if lag is temporary (e.g., due to a deploy), extend retention to prevent message loss
+
+### Replay and Backfill Strategies
+
+Because Kafka retains messages, you can **replay** historical events by resetting a consumer group's offset to an earlier position.
+
+**Use cases:**
+- Rebuilding a materialized view after a schema change
+- Reprocessing events after fixing a bug in consumer logic
+- Backfilling a new consumer that joined late
+
+**How to replay:**
+1. Stop the consumer group
+2. Use `kafka-consumer-groups.sh` to reset offsets:
+   ```bash
+   kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+     --group my-group --topic my-topic \
+     --reset-offsets --to-earliest --execute
+   ```
+3. Restart the consumer group
+
+**Caution:** If your consumer has side effects (writes to a database, sends emails), replaying will re-execute those side effects. Use idempotency keys to prevent duplicates.
+
+### Dead-Letter Topics
+
+A **dead-letter topic (DLT)** is a separate Kafka topic where **poison messages** (messages that cause repeated consumer failures) are sent for manual inspection.
+
+**Pattern:**
+1. Consumer reads a message from `payments-topic`.
+2. Processing fails (e.g., invalid JSON, missing field, downstream API is down).
+3. Consumer retries up to N times (e.g., 3 retries with exponential backoff).
+4. After N failures, the consumer writes the message to `payments-topic-dlt` with error metadata.
+5. The consumer acknowledges the original message (moves on).
+
+**Dead-letter topic schema:**
+```json
+{
+  "original_topic": "payments-topic",
+  "original_partition": 5,
+  "original_offset": 12345,
+  "error": "JSONDecodeError: Expecting value at line 1 column 1",
+  "timestamp": "2026-06-18T14:23:00Z",
+  "payload": "<original message>"
+}
+```
+
+**Operational workflow:**
+- Monitor DLT volume (spikes indicate upstream producer issues).
+- Replay DLT messages after fixing the root cause (e.g., schema validation in producers).
+
+### Rebalancing and Partition Reassignment
+
+**Rebalancing** happens when:
+- A consumer joins or leaves a consumer group
+- A partition is added to a topic
+- A consumer crashes
+
+During rebalancing, **no messages are consumed** (stop-the-world pause). Minimize rebalancing by:
+- Using **static membership** (`group.instance.id`) — prevents rebalancing on consumer restarts
+- Tuning `session.timeout.ms` and `heartbeat.interval.ms` to avoid premature evictions
+- Deploying consumer updates with rolling restarts
+
+**Partition reassignment** is the process of moving partition replicas to different brokers (e.g., to rebalance load after adding a new broker). Use `kafka-reassign-partitions.sh` or Cruise Control (LinkedIn's automated rebalancing tool).
+
+---
+
+## Failure Handling
+
+### Poison Message Handling
+
+A **poison message** is a message that causes a consumer to crash or enter an infinite retry loop (e.g., malformed JSON, a bug in deserialization logic, or a payload that violates business rules).
+
+**Without dead-letter topics:**
+- The consumer crashes, restarts, re-reads the poison message, crashes again (infinite loop).
+- The partition is blocked — no messages after the poison message can be processed.
+
+**With dead-letter topics:**
+- The consumer retries the message a fixed number of times.
+- After exhausting retries, the consumer sends the message to a DLT and moves on.
+- An operator inspects the DLT, fixes the producer, and replays the DLT.
+
+### Consumer Crash Recovery
+
+When a consumer crashes, **offset management** determines what happens next:
+
+- **Auto-commit enabled (`enable.auto.commit=true`):** Offsets are committed periodically (every 5 seconds by default). If the consumer crashes after reading a message but before committing, the message is reprocessed (at-least-once).
+- **Manual commit:** The consumer explicitly commits offsets after successful processing. This gives precise control but requires careful error handling.
+
+**Best practice:** Disable auto-commit and commit offsets manually after processing batches of messages. Use try/catch blocks to handle transient errors (retry) vs. fatal errors (send to DLT).
+
+### Broker Failure and In-Sync Replicas (ISR)
+
+Kafka tolerates broker failures using **replication**. Each partition has:
+- **Leader replica** — handles all reads and writes
+- **Follower replicas** — replicate data from the leader
+
+The **in-sync replica (ISR)** set contains all replicas that are fully caught up with the leader. If a follower falls behind (e.g., due to network issues), it is removed from the ISR.
+
+**When a broker fails:**
+1. If the failed broker was a **follower**, no data is lost. The partition remains available.
+2. If the failed broker was a **leader**, Kafka elects a new leader from the ISR. Producers and consumers automatically reconnect to the new leader.
+
+**Configuration tuning:**
+- **`min.insync.replicas=2`** — requires at least 2 replicas (leader + 1 follower) to acknowledge writes. Prevents data loss if a single broker fails.
+- **`acks=all`** — producers wait for all in-sync replicas to acknowledge writes (strongest durability guarantee).
+
+> **Warning:** If all ISR replicas fail (e.g., entire availability zone goes down), the partition becomes unavailable. To recover, you must either wait for a replica to come back online or perform **unclean leader election** (`unclean.leader.election.enable=true`), which risks data loss.
+
+---
+
+## Message Flow: Producer to Consumer with Offset Tracking
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant Producer
+    participant Broker
+    participant Partition as Partition 0
+    participant ConsumerGroup as Consumer Group
+    participant Consumer
+    participant OffsetStore as __consumer_offsets
+
+    Producer->>Broker: send(key=user123, value=event)
+    Broker->>Partition: append to log (offset=42)
+    Partition-->>Broker: ack (offset=42)
+    Broker-->>Producer: ack (offset=42)
+
+    Consumer->>Broker: poll(topic, partition=0, offset=42)
+    Broker->>Partition: read(offset=42)
+    Partition-->>Broker: message at offset 42
+    Broker-->>Consumer: message + offset 42
+
+    Consumer->>Consumer: process message
+    Consumer->>OffsetStore: commit offset 43
+    OffsetStore-->>Consumer: ack
+
+    Note over Consumer,OffsetStore: If consumer crashes here,<br/>it will resume from offset 43<br/>(at-least-once delivery)
+`} />
+
+**Key steps:**
+1. Producer writes a message to a partition (Kafka assigns offset 42).
+2. Broker appends the message to the log and acknowledges the producer.
+3. Consumer polls the topic and receives the message at offset 42.
+4. Consumer processes the message.
+5. Consumer commits offset 43 (the next offset to read) to the `__consumer_offsets` topic.
+6. If the consumer crashes after step 4 but before step 5, it will re-read offset 42 (at-least-once delivery).
+
+---
+
+## Decision Framework
+
+When designing a Kafka-based system, make these decisions explicitly:
+
+### 1. Partition Strategy
+
+**Question:** How do I choose the partition for each message?
+
+- **If ordering matters:** Use a partition key (e.g., `user_id`, `device_id`, `session_id`). All events for the same key go to the same partition.
+- **If ordering doesn't matter:** Use round-robin (no partition key). This maximizes parallelism.
+- **If you need global ordering:** Use a single partition. This limits throughput to ~100 MB/s and eliminates parallel consumers.
+
+> **Common mistake:** Assuming Kafka provides global ordering across partitions. It does not.
+
+### 2. Replication Factor
+
+**Question:** How many replicas should each partition have?
+
+- **Production default:** 3 replicas (tolerates 1 broker failure with `min.insync.replicas=2`)
+- **High availability:** 5 replicas (tolerates 2 broker failures with `min.insync.replicas=3`)
+- **Dev/test:** 1 replica (no fault tolerance, faster for testing)
+
+### 3. Retention Policy
+
+**Question:** How long should messages be retained?
+
+- **Event sourcing / CDC:** Indefinite retention (use log compaction)
+- **Analytics / ML training:** 30-90 days (enough to rebuild models)
+- **Ephemeral events (clickstream, logs):** 1-7 days
+
+> **Storage cost:** Retaining 1 TB/day for 30 days with replication factor 3 = 90 TB. Use compaction or export to object storage (S3, GCS) for long-term retention.
+
+### 4. Delivery Semantic
+
+**Question:** What delivery guarantee do I need?
+
+- **At-least-once + idempotent consumers** — the practical default for most workloads
+- **At-most-once** — acceptable for non-critical events (metrics, logs)
+- **Exactly-once** — only for financial transactions or compliance-sensitive workloads (high overhead)
+
+### 5. Consumer Scaling
+
+**Question:** How many consumer instances should I run?
+
+- **Start with:** 1 consumer per partition (maximum parallelism)
+- **If consumers are idle:** Reduce consumer count or increase partition count
+- **If consumers are lagging:** Add more partitions (breaks ordering!) or optimize consumer processing
+
+---
+
+## Failure Modes and Anti-Patterns
+
+### Anti-Pattern 1: Assuming Global Ordering Across Partitions
+
+**Symptom:** Events for different users are processed out of order, causing data corruption (e.g., "user updated" arrives before "user created").
+
+**Root cause:** Messages were written to different partitions (round-robin), which have no ordering guarantee.
+
+**Fix:** Use a partition key (e.g., `user_id`) to ensure all events for the same user go to the same partition.
+
+### Anti-Pattern 2: Using Exactly-Once Everywhere
+
+**Symptom:** Low throughput, high latency, complex producer/consumer configuration.
+
+**Root cause:** Exactly-once semantics require transactional writes, which add overhead (two-phase commit, offset fencing).
+
+**Fix:** Use at-least-once with idempotent consumers. Reserve exactly-once for critical flows (payments, billing).
+
+### Anti-Pattern 3: No Dead-Letter Topic
+
+**Symptom:** A single malformed message blocks an entire partition. Consumers crash in a loop.
+
+**Root cause:** No fallback path for poison messages.
+
+**Fix:** Implement a dead-letter topic pattern. After N retries, send the message to a DLT and move on.
+
+### Anti-Pattern 4: Auto-Commit with Slow Processing
+
+**Symptom:** Messages are marked as consumed (offsets auto-committed) before processing completes. If the consumer crashes, those messages are lost.
+
+**Root cause:** `enable.auto.commit=true` commits offsets every 5 seconds, regardless of processing status.
+
+**Fix:** Disable auto-commit. Commit offsets manually after successful processing.
+
+### Anti-Pattern 5: Over-Partitioning
+
+**Symptom:** Kafka brokers run out of file handles or memory. Rebalancing takes minutes.
+
+**Root cause:** Too many partitions (e.g., 10,000 partitions on 3 brokers = 3,333 partitions per broker).
+
+**Fix:** Limit partitions to 100-1000 per broker. Use fewer, larger partitions unless you need extreme parallelism.
+
+---
+
+## Summary
+
+**Apache Kafka on Kubernetes** transforms event streaming from an operational burden into a declarative, cloud-native platform component. By understanding **topics, partitions, and offsets**, you can design systems that balance parallelism (multiple partitions) with ordering guarantees (partition keys). By choosing **at-least-once delivery with idempotent consumers**, you achieve reliable processing without the overhead of exactly-once semantics. By deploying Kafka using the **Strimzi operator**, you gain declarative cluster management, automatic failover, and seamless integration with Kubernetes tooling.
+
+The critical insights from this lesson are:
+
+1. **Ordering is per-partition, not global** — use partition keys when ordering matters.
+2. **At-least-once + idempotency is the practical default** — avoid the complexity of exactly-once unless required.
+3. **Kafka is a log, not a queue** — messages are retained for replay, not deleted after consumption.
+4. **Dead-letter topics prevent poison messages from blocking partitions** — always have a fallback path.
+5. **Strimzi makes Kafka a Kubernetes-native citizen** — use CRDs to manage clusters, topics, and users declaratively.
+
+In the next lesson, we'll explore **change data capture (CDC)** with Debezium, which uses Kafka to stream database changes in real time—enabling event-driven architectures, materialized views, and cross-system data synchronization without polling or custom triggers.

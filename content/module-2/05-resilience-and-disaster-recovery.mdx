@@ -1,0 +1,341 @@
+---
+title: "Resilience & Disaster Recovery"
+quiz:
+  - question: "What is the primary distinction between high availability (HA) and disaster recovery (DR)?"
+    options:
+      - "HA uses multi-AZ deployment, DR uses multi-region deployment"
+      - "HA prevents downtime during normal failures, DR restores service after catastrophic events"
+      - "HA is for databases, DR is for compute workloads"
+      - "HA requires load balancers, DR requires backups"
+    correctIndex: 1
+  - question: "Why must data platforms assign service-tiered RPO/RTO targets rather than uniform recovery guarantees?"
+    options:
+      - "Different data products have different business criticality and cost tolerances"
+      - "Cloud providers only support tiered recovery SLAs"
+      - "Kubernetes cannot enforce uniform recovery policies"
+      - "Real-time pipelines always require cross-region replication"
+    correctIndex: 0
+  - question: "What is the most critical failure mode in disaster recovery planning?"
+    options:
+      - "Missing cross-region network bandwidth"
+      - "Insufficient backup storage capacity"
+      - "Untested recovery procedures and backups that have never been restored"
+      - "Using active-passive instead of active-active replication"
+    correctIndex: 2
+---
+
+## Overview
+
+A data platform that cannot survive failures is not a platform — it is a liability. Yet resilience is routinely conflated with replication, and disaster recovery is treated as "we have backups somewhere." The result: platforms that claim high availability but collapse under zone failures, recovery runbooks that have never been executed, and business-critical pipelines with no tested restore path.
+
+**Replication is not disaster recovery.** Replicating Kafka messages across three brokers in the same availability zone protects against broker crashes but does nothing if the zone itself becomes unavailable. Streaming the same data to two regions does not constitute a recovery plan if you have no procedure to failover, verify consistency, or restore processing state.
+
+This lesson establishes the architectural boundaries between **high availability** (preventing downtime during normal failures) and **disaster recovery** (restoring service after catastrophic events). You will see why data platforms require **service-tiered RPO/RTO targets** rather than uniform recovery guarantees, how to design multi-AZ deployments that survive zone failures, and why **restore testing** is the only validation that matters. By the end, you will understand that disaster recovery is not a backup policy — it is an operational discipline with runbooks, drills, and consistency tradeoffs baked into every layer of the platform.
+
+## Failure Domains and Blast Radius
+
+Every infrastructure component exists within a **failure domain** — a boundary within which a single failure can take down all enclosed resources. The smallest failure domain is a single disk. The largest is a multi-region cloud outage. Between those extremes lie zones, clusters, networks, and services.
+
+**Availability zones (AZs)** are the fundamental failure domain for cloud infrastructure. A zone is a physically isolated data center within a region, with independent power, cooling, and networking. Zone failures are rare but not hypothetical — they happen due to power grid faults, network partitions, and cooling system breakdowns. A data platform deployed entirely within a single AZ has a blast radius equal to the entire platform: if the zone fails, everything fails.
+
+**Regions** are collections of zones within a geographic area. Multi-region deployments protect against zone failures and regional disasters (hurricanes, earthquakes, regulatory shutdowns), but they introduce latency, data sovereignty constraints, and significantly higher replication costs. Most platforms tolerate multi-AZ single-region risk because cross-region DR is reserved for Tier 1 services with <15-minute RTO requirements.
+
+**Clusters and services** introduce logical failure domains orthogonal to physical zones. A misconfigured Kubernetes control plane can render an entire cluster unavailable even if all zones are healthy. A runaway query in a shared analytics cluster can starve other workloads of resources. Understanding these layered failure domains is essential: you cannot design recovery procedures until you know what can fail together.
+
+Data platforms naturally span multiple failure domains because storage, compute, and metadata layers are often deployed separately:
+
+- **Object storage (S3, GCS, Azure Blob)** is zone-redundant by default within a region, but not cross-region unless explicitly configured.
+- **Kafka brokers** are distributed across zones with in-sync replicas (ISR), but leadership elections during zone failures can pause production for 10-30 seconds.
+- **Spark executors and Flink TaskManagers** are stateless compute spread across zones, but job state in checkpoints may reside in a single zone's persistent volume.
+- **Metadata stores (Hive Metastore, Unity Catalog, Glue)** are typically multi-AZ for the control plane but may have single-zone caches or leader nodes.
+
+The blast radius question for each layer: what stops working if this component fails, and for how long?
+
+<MermaidDiagram chart={`graph TB
+    subgraph Region["Region: US-East-1"]
+        subgraph Zone1["Zone 1"]
+            K1[Kafka Broker 1<br/>Leader for Topic A]
+            S1[Spark Executor Pool]
+            P1[Persistent Volume<br/>Flink Checkpoints]
+        end
+        subgraph Zone2["Zone 2"]
+            K2[Kafka Broker 2<br/>ISR for Topic A]
+            S2[Spark Executor Pool]
+            M1[Hive Metastore<br/>Active Leader]
+        end
+        subgraph Zone3["Zone 3"]
+            K3[Kafka Broker 3<br/>ISR for Topic A]
+            S3[Spark Executor Pool]
+            M2[Hive Metastore<br/>Standby Replica]
+        end
+        Storage[Object Storage<br/>S3 Standard<br/>Zone-Redundant]
+    end
+    
+    K1 -.->|Replication| K2
+    K2 -.->|Replication| K3
+    S1 --> Storage
+    S2 --> Storage
+    S3 --> Storage
+    M1 -.->|Sync| M2
+    
+    style Zone1 fill:#fee,stroke:#c33
+    style K1 fill:#fcc,stroke:#c33
+    style P1 fill:#fcc,stroke:#c33
+    style Storage fill:#efe,stroke:#3a3
+    
+    classDef failureDomain fill:#ebf8ff,stroke:#3182ce
+    class Zone1,Zone2,Zone3 failureDomain
+`} />
+
+In this deployment, **Zone 1 failure** would:
+1. Trigger Kafka leader election to Zone 2 or Zone 3 (10-30s production pause)
+2. Kill Spark executors in Zone 1, YARN/K8s reschedules to Zones 2-3 (30-60s task delay)
+3. Lose Flink checkpoints in the persistent volume unless replicated elsewhere (potential data loss)
+4. Object storage remains available (zone-redundant by design)
+5. Hive Metastore remains available (leader is in Zone 2)
+
+The platform survives, but with transient unavailability windows. This is **high availability**, not disaster recovery.
+
+## High Availability Patterns
+
+High availability means the platform continues operating through individual component failures with minimal or no downtime. HA is achieved through redundancy, automated failover, and stateless design — not through backups or cross-region replication.
+
+### Multi-AZ Deployment for Stateful Services
+
+Stateful services (databases, message brokers, metadata stores) must distribute replicas across zones. The replication strategy determines consistency guarantees and failover speed:
+
+- **Kafka ISR (in-sync replicas):** Leader writes are acknowledged only after `min.insync.replicas` replicas acknowledge. If the leader fails, a replica from the ISR is elected. Under-replicated partitions (URPs) indicate a replica has fallen behind, increasing the risk of data loss during failover.
+- **ZooKeeper/KRaft quorum:** ZooKeeper ensembles (now deprecated in favor of KRaft) require a majority quorum to accept writes. A 5-node ensemble across 3 zones (2-2-1 distribution) tolerates 2 node failures but cannot tolerate a 2-zone failure. KRaft uses a Raft-based quorum with similar properties.
+- **Etcd (Kubernetes control plane):** Etcd requires a quorum majority. A 3-node etcd cluster across 3 zones tolerates 1 zone failure; a 5-node cluster tolerates 2 zone failures. Under-provisioned etcd is the most common cause of Kubernetes control plane outages.
+
+### Leader Election and Quorum
+
+Leader-based replication introduces a tradeoff: writes go to a single leader (strong consistency), but leader failover causes a brief unavailability window. The speed of failover depends on failure detection and quorum re-election time:
+
+- **Kafka:** Leader election completes in 10-30 seconds under normal conditions, but can take minutes if ISR replicas are out of sync or if Zookeeper itself is degraded.
+- **Etcd:** Leader election typically completes in <5 seconds for a healthy cluster with low-latency inter-zone networking.
+- **Databases (Postgres, MySQL):** Automatic failover with tools like Patroni (Postgres) or Orchestrator (MySQL) takes 15-60 seconds, depending on replication lag and health check configuration.
+
+> **Warning:** Leader election is not instantaneous. Clients must retry writes during failover windows. Applications that assume zero downtime without retry logic will experience user-visible errors during zone failures.
+
+### Connection Draining and Graceful Shutdown
+
+Stateless compute services (Spark executors, Flink TaskManagers, API servers) should implement connection draining during shutdown. When a pod receives a SIGTERM, it should:
+1. Stop accepting new requests
+2. Complete in-flight requests (up to a grace period, typically 30-90 seconds)
+3. Exit cleanly
+
+Kubernetes enforces a `terminationGracePeriodSeconds` (default 30s), after which it sends SIGKILL. Jobs that take longer than the grace period to finish will be forcibly killed, potentially leaving incomplete state. Configure grace periods based on actual task duration (P95 latency + buffer), not arbitrary defaults.
+
+### Circuit Breakers for Downstream Dependencies
+
+Data pipelines often depend on external APIs, feature stores, or metadata services. If a downstream service becomes slow or unavailable, without circuit breakers the pipeline will retry indefinitely, exhausting resources and amplifying the outage. A circuit breaker monitors failure rates and latency percentiles, and "opens" (fails fast) when thresholds are exceeded, preventing cascading failures.
+
+Example: A real-time feature enrichment pipeline queries a feature store. If the feature store latency exceeds 500ms for 10 consecutive requests, the circuit breaker opens, and the pipeline publishes events without enrichment (degraded mode) rather than blocking all processing.
+
+### Stateless Compute Scaling
+
+Spark executors, Flink TaskManagers, and Kubernetes pods should be stateless and horizontally scalable. If a zone fails, the scheduler redistributes workloads to surviving zones. This requires:
+- **No local state on ephemeral disks** — all state must be in checkpoints, external storage, or distributed caches
+- **Pod anti-affinity rules** to spread replicas across zones
+- **Cluster autoscaling** to replace lost capacity quickly
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant Client
+    participant LB as Load Balancer
+    participant Zone1 as API Pod (Zone 1)
+    participant Zone2 as API Pod (Zone 2)
+    participant DB as Database (Multi-AZ)
+    
+    Client->>LB: Request 1
+    LB->>Zone1: Route to Zone 1
+    Zone1->>DB: Query
+    DB-->>Zone1: Response
+    Zone1-->>LB: 200 OK
+    LB-->>Client: Success
+    
+    Note over Zone1: Zone 1 failure begins
+    
+    Client->>LB: Request 2
+    LB->>Zone1: Route to Zone 1
+    Zone1--xLB: Timeout (no response)
+    LB->>Zone2: Retry to Zone 2
+    Zone2->>DB: Query
+    DB-->>Zone2: Response
+    Zone2-->>LB: 200 OK
+    LB-->>Client: Success (after retry)
+    
+    Note over LB: Mark Zone 1 unhealthy
+    
+    Client->>LB: Request 3
+    LB->>Zone2: Route to Zone 2 only
+    Zone2->>DB: Query
+    DB-->>Zone2: Response
+    Zone2-->>LB: 200 OK
+    LB-->>Client: Success (no retry needed)
+`} />
+
+This is HA in action: the load balancer detects zone failure, retries to a healthy zone, and marks the failed zone unhealthy. Requests continue with slightly elevated latency during failover (one retry), but no requests are lost.
+
+## Disaster Recovery (Distinct from HA)
+
+**Disaster recovery** is the process of restoring service after a catastrophic failure that exceeds HA tolerances — a full region outage, a ransomware attack that corrupts primary and replica data, or a cascading failure that takes down all zones simultaneously. DR is not replication. DR is a set of procedures, tested regularly, that restore data and service from backups or secondary regions with known consistency tradeoffs.
+
+The two metrics that define a DR plan are:
+
+- **RPO (Recovery Point Objective):** The maximum acceptable data loss, measured in time. RPO of 1 hour means you can lose up to 1 hour of writes during a disaster.
+- **RTO (Recovery Time Objective):** The maximum acceptable downtime, measured in time. RTO of 15 minutes means service must be restored within 15 minutes of declaring a disaster.
+
+Lower RPO and RTO require more expensive infrastructure (cross-region replication, faster backups, automated failover), so DR targets must be **service-tiered** based on business criticality.
+
+### Service-Tiered RPO/RTO
+
+Not every data product requires the same recovery guarantees. A real-time fraud detection pipeline and a monthly analytics dashboard have radically different criticality, and the cost of maintaining <1-minute RPO for non-critical workloads is unjustifiable.
+
+**Tier 1 — Business-Critical Real-Time**
+- RPO: <1 minute
+- RTO: <15 minutes
+- Examples: Fraud detection, payment processing, real-time recommendations
+- DR Strategy: Active-active cross-region with automated failover, continuous replication, tested runbooks
+
+**Tier 2 — Important Batch Analytics**
+- RPO: <1 hour
+- RTO: <4 hours
+- Examples: Daily revenue dashboards, hourly model retraining, operational reports
+- DR Strategy: Active-passive with hourly backups, manual failover with runbooks, tested restore procedures
+
+**Tier 3 — Historical/Archive**
+- RPO: <24 hours
+- RTO: <24 hours
+- Examples: Compliance logs, historical data warehouse, archived model artifacts
+- DR Strategy: Periodic backups (daily or weekly), restore-from-backup only, infrequent restore tests
+
+> **Principle:** Assign RPO/RTO based on business impact, not technical convenience. If losing 24 hours of data would cost the business nothing, do not pay for sub-hour RPO. If 15 minutes of downtime would cause customer churn, do not settle for 4-hour RTO.
+
+### Cross-Region Replication Strategies
+
+**Active-Active (Multi-Region Writes)**
+- Both regions accept writes simultaneously
+- Requires conflict resolution (last-write-wins, CRDTs, manual merge)
+- Lowest RTO (<1 minute automatic failover) but highest complexity and cost
+- Used for globally distributed services (Google Spanner, DynamoDB Global Tables)
+
+**Active-Passive (Primary-Secondary)**
+- Primary region accepts writes, secondary region receives asynchronous replication
+- Failover to secondary is manual or semi-automated, requires promoting secondary to primary
+- Moderate RTO (5-30 minutes) and moderate cost
+- Most common strategy for data platforms (Kafka MirrorMaker, database replication, object storage cross-region copy)
+
+**Backup-Restore**
+- No live secondary; restore from periodic backups to object storage
+- Highest RTO (hours to days) but lowest cost
+- Suitable for Tier 3 services and archival data
+
+### Data Consistency Tradeoffs During Recovery
+
+**You will lose data or see inconsistency during recovery.** This is not a failure of the DR plan — it is an inherent property of distributed systems. Understanding the tradeoffs allows you to set correct expectations and design compensating controls.
+
+**Potential consistency issues:**
+1. **Lost writes:** If RPO is 1 hour and the disaster strikes 45 minutes after the last backup, 45 minutes of writes are lost.
+2. **Duplicate processing:** If a Kafka consumer fails over to a secondary region and resumes from the last committed offset, it may reprocess some messages already processed in the primary region (at-least-once semantics).
+3. **Inconsistent state across systems:** A transaction that spans Kafka (committed) and a database (not yet replicated) will appear partially completed after failover.
+4. **Stale secondary reads:** Active-passive replication introduces lag (seconds to minutes). If you failover before replication catches up, the secondary starts with stale data.
+
+**Design for eventual consistency during recovery:** Idempotent processing (deduplication), compensating transactions (rollback incomplete writes), and reconciliation jobs (compare source and target after recovery) are essential for Tier 1 pipelines.
+
+## Restore Testing — Backups You Haven't Tested Are Not Backups
+
+The most common DR failure mode is not failed backups — it is **untested backups**. Organizations spend thousands of dollars per month on cross-region replication and automated backups, then discover during an actual disaster that the backups are corrupt, incomplete, or incompatible with the current schema version.
+
+**Restore testing must be regular and automated.** A backup is not valid until you have restored it to a live environment and verified data integrity. This means:
+
+1. **Scheduled restore drills** (monthly for Tier 1, quarterly for Tier 2) where you restore the most recent backup to a staging environment and run validation queries.
+2. **Automated backup verification** that checks backup file integrity (checksums, metadata validation) immediately after creation.
+3. **Recovery runbooks** that are executable by on-call engineers, not tribal knowledge locked in one person's head. Runbooks should include exact commands, expected output, rollback procedures, and validation steps.
+
+### Chaos Engineering for DR
+
+**Chaos engineering** is the practice of deliberately injecting failures into production or staging environments to verify that HA and DR mechanisms work as designed. For data platforms, this includes:
+
+- **Zone failure simulation:** Drain all pods from a single AZ and observe Kafka leader election time, Spark task rescheduling latency, and whether any jobs fail.
+- **Network partition tests:** Use tools like `tc` (traffic control) or Istio fault injection to simulate inter-zone network delays or packet loss. Verify that quorum-based services (etcd, Kafka) remain available.
+- **Backup corruption tests:** Intentionally corrupt a backup file and verify that restore procedures detect and reject it.
+- **Failover drills:** Manually trigger a failover to a secondary region and measure actual RTO against target RTO. Identify steps in the runbook that took longer than expected.
+
+> **Chaos engineering is not optional for Tier 1 services.** If you have never tested failover under controlled conditions, you will experience it for the first time during an actual disaster — the worst possible moment to discover that your runbooks are wrong.
+
+## DR for the Recurring Integration Scenario
+
+Let's revisit the recurring integration scenario (source database → Kafka → lakehouse → feature store → model serving) and walk through recovery for each layer.
+
+### Source Database Fails
+
+**Failure mode:** The operational Postgres database becomes unavailable due to a corrupted disk, failed primary node, or zone outage.
+
+**HA response (Zone Failure):**
+- Postgres replica in another zone is promoted to primary (Patroni or RDS Multi-AZ)
+- Downtime: 15-60 seconds
+- Data loss: None (synchronous replication to replica)
+
+**DR response (Region Failure or Corruption):**
+- Restore from most recent backup (hourly snapshots to S3)
+- RPO: Up to 1 hour (last writes before snapshot are lost)
+- RTO: 30-60 minutes (restore snapshot, verify schema, repoint CDC connector)
+- **Consistency impact:** Kafka may have already ingested some rows that are lost in the restored database. Reconciliation job required to identify and backfill missing rows.
+
+### Kafka Loses a Broker (or Entire Zone)
+
+**HA response:**
+- Kafka leader election for affected partitions (10-30 seconds)
+- ISR replicas take over, no data loss if `min.insync.replicas >= 2`
+- Consumers experience brief lag spike during election
+
+**DR response (Multi-Zone Kafka Failure):**
+- Failover to secondary Kafka cluster in another region (MirrorMaker replication)
+- RPO: 1-5 minutes (replication lag)
+- RTO: 10-15 minutes (manual failover, repoint producers/consumers)
+- **Consistency impact:** Consumers must handle potential duplicate messages (at-least-once delivery). Idempotent processing required.
+
+### Lakehouse Becomes Unavailable
+
+**Failure mode:** S3 (or Delta Lake on S3) becomes unavailable due to region outage or accidental bucket deletion.
+
+**HA response:**
+- S3 is zone-redundant by default; zone failures do not affect availability
+- Accidental deletion: S3 Versioning allows recovery of deleted objects (if enabled)
+
+**DR response:**
+- Restore from cross-region replication bucket or backup
+- RPO: Depends on replication cadence (continuous for CRR, hourly/daily for backup jobs)
+- RTO: Hours to days (restore large datasets, rebuild Delta Lake transaction log, verify schema compatibility)
+- **Consistency impact:** Downstream feature store and models may have already consumed data that is lost in the restore. Reconciliation required.
+
+### Feature Store Goes Down
+
+**Failure mode:** Feature store (Feast, Tecton, or custom Redis/DynamoDB cache) loses data or becomes unavailable.
+
+**HA response:**
+- Multi-AZ Redis or DynamoDB with automatic failover (<30 seconds)
+- No data loss for committed writes
+
+**DR response:**
+- Rebuild feature store from lakehouse (offline store) or event log (Kafka)
+- RPO: None (features are derived from durable sources)
+- RTO: 1-4 hours (re-materialize features from lakehouse, warm cache)
+- **Consistency impact:** Real-time features may be missing during rebuild. Models degrade gracefully by using offline features or default values.
+
+Each layer has different blast radius, recovery speed, and consistency tradeoffs. The platform-level DR plan must account for all of them, including cross-layer dependencies (Kafka depends on ZooKeeper/KRaft, lakehouse depends on Hive Metastore, feature store depends on lakehouse).
+
+## Bridge to Module 3: Storage Architecture and Durability Decisions
+
+High availability and disaster recovery are consequences of storage architecture decisions. Where you store data, how many replicas you maintain, and whether you use synchronous or asynchronous replication all determine achievable RPO/RTO. Multi-AZ Kafka with `min.insync.replicas=2` provides sub-second RPO. Daily backups to S3 provide 24-hour RPO. You cannot retrofit low RPO onto a storage layer designed for cost optimization.
+
+**Module 3 (Data Storage & Lakehouse Architecture)** will unpack these durability tradeoffs in depth: the difference between S3 Standard (99.999999999% durability) and S3 One Zone-IA (single-zone risk), the consistency guarantees of Delta Lake transaction logs, and how Iceberg's metadata layer enables time-travel queries that simplify DR. The resilience patterns you have learned in this lesson — multi-AZ replication, service-tiered RPO/RTO, restore testing — are only implementable if the storage layer beneath them is architected for resilience from the start.
+
+## Summary
+
+Resilience is not replication, and disaster recovery is not backups. High availability prevents downtime during normal failures through multi-AZ deployment, leader election, and stateless scaling. Disaster recovery restores service after catastrophic events with tested procedures, known data loss (RPO), and bounded downtime (RTO).
+
+Data platforms must assign service-tiered recovery targets based on business criticality. Tier 1 real-time pipelines justify active-active cross-region replication and <15-minute RTO. Tier 3 archival data tolerates 24-hour RPO/RTO and backup-restore strategies. The failure mode that kills DR plans is untested recovery — backups that have never been restored, runbooks that have never been executed, and consistency assumptions that break under failover.
+
+In Module 3, you will see how storage architecture decisions (S3 durability classes, Delta Lake snapshots, Iceberg time-travel) enable or constrain the resilience patterns introduced here. Resilience begins at the storage layer, not the compute layer.

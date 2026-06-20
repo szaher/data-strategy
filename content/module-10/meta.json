@@ -1,0 +1,53 @@
+{
+  "id": 10,
+  "title": "Production Architecture & Platform Evolution",
+  "description": "Multi-tenancy, reliability, SRE, cost, migration, reference architectures, platform roadmaps",
+  "color": "#63b3ed",
+  "lessons": [
+    {
+      "slug": "01-why-production-data-platforms-are-different",
+      "title": "Why Production Data Platforms Are Different",
+      "description": "Day-2 operations, the gap between dev and production; reliability, cost, multi-tenancy, observability at scale",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-reference-architectures",
+      "title": "Reference Architectures",
+      "description": "Three composable blueprints: managed-cloud-first, Kubernetes-centric, hybrid/regulated; end-to-end integration scenario",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-multi-tenancy-reliability-and-sre-for-data",
+      "title": "Multi-Tenancy, Reliability & SRE for Data",
+      "description": "Tenant isolation, data-native SLIs, error budgets, burn-rate alerting, data incident runbooks",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-cost-optimization-at-scale",
+      "title": "Cost Optimization at Scale",
+      "description": "Unit economics at platform scale, storage tiering, compute right-sizing, chargeback models, TCO-based decisions",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["comparison", "flowchart"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-migration-strategies-and-platform-roadmaps",
+      "title": "Migration Strategies & Platform Roadmaps",
+      "description": "Strangler fig, parallel run, shadow mode; exit criteria, rollback plans, ownership transfer, decommission milestones",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

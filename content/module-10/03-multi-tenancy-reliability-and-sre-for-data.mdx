@@ -1,0 +1,550 @@
+---
+title: "Multi-Tenancy, Reliability & SRE for Data"
+quiz:
+  - question: "What is the primary difference between data-native SLIs and infrastructure SLIs?"
+    options:
+      - "Data-native SLIs track pipeline correctness like freshness and completeness, not just system availability"
+      - "Infrastructure SLIs are more important for data systems"
+      - "Data-native SLIs only measure query performance"
+      - "There is no meaningful difference between them"
+    correctIndex: 0
+  - question: "In a namespace-based multi-tenancy pattern, how is tenant isolation achieved?"
+    options:
+      - "Each tenant gets a dedicated physical cluster"
+      - "Tenants are separated at the database row level"
+      - "Logical isolation within a shared cluster using namespaces or projects"
+      - "Tenants run on completely separate cloud accounts"
+    correctIndex: 2
+  - question: "What does a 99.9% data freshness SLA allow per year?"
+    options:
+      - "8.7 hours of acceptable staleness"
+      - "1 hour of acceptable staleness"
+      - "24 hours of acceptable staleness"
+      - "Zero tolerance for stale data"
+    correctIndex: 0
+---
+
+## The Problem: Infrastructure Metrics Don't Tell the Data Story
+
+Your Kubernetes pods show 99.99% uptime. Your database CPU is at 30%. Your network latency is under 10ms. Every dashboard is green. Yet your customers are complaining that yesterday's sales data is missing from their morning reports.
+
+**Infrastructure SLIs** — availability, latency, throughput, error rates — measure the health of the **system**. But data platforms have a second, equally important reliability surface: the **data itself**. A pipeline can be "up" while producing incomplete, late, or incorrect data. A query service can return results in 100ms while serving stale data from six hours ago.
+
+Traditional SRE practices emerged from web services, where a request either succeeds or fails, and latency is the dominant quality signal. Data platforms require a different mental model: **data reliability** is orthogonal to **system reliability**. You can have both, neither, or one without the other.
+
+This lesson covers how to measure, monitor, and operate data platforms with the rigor of SRE, using **data-native SLIs** that capture what users actually care about: fresh, complete, correct data delivered on schedule.
+
+---
+
+## Multi-Tenancy Patterns for Data Platforms
+
+Before defining reliability targets, you need to understand your **isolation boundaries**. Multi-tenancy determines what can fail independently, what resources are shared, and where noisy-neighbor problems can occur.
+
+### Three Isolation Patterns
+
+<MermaidDiagram chart={`graph TD
+    subgraph Namespace["Namespace Isolation"]
+        NS1[Tenant A Namespace]
+        NS2[Tenant B Namespace]
+        NS3[Tenant C Namespace]
+        SC[Shared Cluster]
+        NS1 -.-> SC
+        NS2 -.-> SC
+        NS3 -.-> SC
+    end
+    
+    subgraph Cluster["Cluster Isolation"]
+        C1[Tenant A Cluster]
+        C2[Tenant B Cluster]
+        C3[Tenant C Cluster]
+    end
+    
+    subgraph Logical["Logical Isolation"]
+        T1[tenant_id = A rows]
+        T2[tenant_id = B rows]
+        T3[tenant_id = C rows]
+        SDB[(Shared DB)]
+        T1 -.-> SDB
+        T2 -.-> SDB
+        T3 -.-> SDB
+    end
+    
+    style Namespace fill:#e0f0ff,stroke:#0066cc
+    style Cluster fill:#daf2f2,stroke:#009999
+    style Logical fill:#fff0e0,stroke:#cc6600
+`} />
+
+**1. Namespace Isolation (Shared Cluster, Logical Boundaries)**
+
+Each tenant gets a Kubernetes namespace, BigQuery project, or S3 bucket prefix. The underlying cluster, warehouse, or storage layer is shared, but workloads are tagged and isolated by namespace.
+
+**Pros:**
+- High resource utilization — shared infrastructure scales efficiently
+- Lower operational cost — one cluster to manage
+- Fast tenant provisioning — create a namespace, not a cluster
+
+**Cons:**
+- **Noisy neighbor risk** — a tenant running a 10TB scan can saturate shared I/O
+- **Blast radius** — cluster-wide outages affect all tenants
+- **Security surface** — namespace escape vulnerabilities impact isolation
+
+**When to use:** SaaS platforms with many small-to-medium tenants where cost efficiency matters and tenants trust logical isolation.
+
+**2. Cluster Isolation (Dedicated Infrastructure per Tenant)**
+
+Each tenant gets a dedicated cluster, warehouse, or compute pool. No shared runtime resources.
+
+**Pros:**
+- **Strong isolation** — tenant A's query storm cannot impact tenant B
+- **Independent scaling** — each tenant scales to their own usage pattern
+- **Compliance-friendly** — tenants with regulatory requirements can get dedicated infrastructure
+
+**Cons:**
+- **Higher cost** — cluster overhead (control plane, idle capacity) multiplied by tenant count
+- **Operational burden** — upgrading 50 clusters vs. 1 cluster
+- **Resource underutilization** — small tenants waste capacity
+
+**When to use:** Enterprise SaaS with large tenants, regulated industries (healthcare, finance), or when tenants pay for dedicated infrastructure.
+
+**3. Logical Isolation (Row-Level or Schema-Level Separation)**
+
+All tenants share the same tables, but rows are tagged with a `tenant_id` column. Access control policies enforce row-level security.
+
+**Pros:**
+- **Simplest data model** — one schema, one set of pipelines
+- **Cross-tenant analytics** — easy to run platform-wide aggregations
+- **Maximum resource sharing** — no per-tenant overhead
+
+**Cons:**
+- **Weakest isolation** — query errors or schema changes affect all tenants
+- **Security complexity** — row-level security bugs expose data across tenants
+- **Performance unpredictability** — tenant A's full-table scan impacts tenant B's query
+
+**When to use:** Early-stage SaaS, internal multi-team platforms, or when cross-tenant aggregation is a primary use case.
+
+### Choosing an Isolation Pattern
+
+| Criterion | Namespace | Cluster | Logical |
+|-----------|-----------|---------|---------|
+| **Cost** | Medium | High | Low |
+| **Isolation strength** | Medium | High | Low |
+| **Noisy neighbor risk** | Medium | None | High |
+| **Operational complexity** | Medium | High | Low |
+| **Compliance support** | Medium | High | Low |
+| **Tenant count** | 10-100 | 1-20 | 100+ |
+
+Most platforms start with **logical isolation** for early customers, migrate to **namespace isolation** as they scale, and offer **cluster isolation** as a premium tier for enterprise customers.
+
+---
+
+## Data-Native SLIs: Measuring What Matters
+
+SRE is built on **Service Level Indicators (SLIs)** — quantitative measures of service quality. For data platforms, infrastructure SLIs are necessary but not sufficient. You need **data-native SLIs** that measure the correctness, timeliness, and completeness of the data itself.
+
+### The Data SLI Palette
+
+**1. Freshness SLI**
+
+**Definition:** Percentage of time that data is no older than the maximum acceptable age.
+
+**Example:** "Sales data should be no more than 1 hour old, measured every 5 minutes."
+
+**Measurement:**
+```python
+data_age_seconds = now() - last_updated_timestamp
+is_fresh = data_age_seconds <= 3600
+freshness_sli = count(is_fresh) / count(all_checks)
+```
+
+**Why it matters:** Stale data undermines decision-making. If yesterday's sales dashboard still shows two-day-old data at 9am, the SLI captures this as a freshness violation.
+
+**2. Completeness SLI**
+
+**Definition:** Percentage of expected records that actually arrived.
+
+**Example:** "99.9% of all e-commerce events from the last hour must be present in the data warehouse."
+
+**Measurement:**
+```python
+expected_count = upstream_source.count()
+actual_count = data_warehouse.count()
+completeness_sli = actual_count / expected_count
+```
+
+**Why it matters:** Missing data is invisible to infrastructure SLIs. A pipeline can succeed with 200 OK while silently dropping 10% of records due to a schema mismatch.
+
+**3. Pipeline Success Rate**
+
+**Definition:** Percentage of pipeline runs that complete successfully within their SLA window.
+
+**Example:** "Hourly ETL jobs must succeed within 50 minutes, 99.5% of the time."
+
+**Measurement:**
+```yaml
+# Prometheus-style recording rule
+pipeline_success_rate = 
+  sum(rate(pipeline_runs{status="success"}[1h])) /
+  sum(rate(pipeline_runs[1h]))
+```
+
+**Why it matters:** Late-but-successful pipelines still violate user expectations if they miss their delivery window.
+
+**4. Consumer Lag**
+
+**Definition:** How far behind real-time are downstream consumers?
+
+**Example:** "Kafka consumer lag must stay below 1000 messages, 99% of the time."
+
+**Measurement:**
+```python
+consumer_lag = latest_offset - consumer_offset
+is_healthy = consumer_lag < 1000
+consumer_lag_sli = count(is_healthy) / count(all_checks)
+```
+
+**Why it matters:** Low lag means near-real-time data availability. High lag means consumers are falling behind and data is getting stale.
+
+**5. Data Quality Pass Rate**
+
+**Definition:** Percentage of records passing validation rules.
+
+**Example:** "99.9% of ingested records must pass schema, null-check, and range validation."
+
+**Measurement:**
+```python
+passed = records_passing_all_checks
+failed = records_failing_any_check
+quality_sli = passed / (passed + failed)
+```
+
+**Why it matters:** Data can be fresh and complete but still wrong. Quality SLIs catch schema drift, bad nulls, and out-of-range values.
+
+**6. Query Availability**
+
+**Definition:** Percentage of queries that return results without errors.
+
+**Example:** "99.95% of queries must succeed within 30 seconds."
+
+**Measurement:**
+```yaml
+query_availability = 
+  sum(rate(queries{status="success"}[5m])) /
+  sum(rate(queries[5m]))
+```
+
+**Why it matters:** Users experience data unavailability as query failures, not pod restarts.
+
+**7. Recovery Time Objective (RTO)**
+
+**Definition:** Maximum acceptable time to restore service after an outage.
+
+**Example:** "Critical pipelines must resume within 15 minutes of failure detection."
+
+**Measurement:** Track incident duration from detection to resolution. RTO is the 95th percentile of this distribution.
+
+**Why it matters:** Availability SLIs measure steady-state; RTO measures how fast you recover from failure.
+
+**8. Retrieval-Index Freshness**
+
+**Definition:** How up-to-date are the indexes used for semantic search, RAG, or recommendations?
+
+**Example:** "Vector embeddings must be regenerated within 6 hours of source data updates, 99% of the time."
+
+**Measurement:**
+```python
+index_age = now() - last_index_build_time
+is_fresh = index_age <= 21600  # 6 hours
+index_freshness_sli = count(is_fresh) / count(checks)
+```
+
+**Why it matters:** Stale indexes return outdated search results, even if the underlying data is fresh.
+
+---
+
+## Data SLI Dashboard Concept
+
+<MermaidDiagram chart={`graph TD
+    subgraph Freshness["Data Freshness SLI"]
+        F1[Last Update: 45 min ago]
+        F2[Target: < 60 min]
+        F3[SLI: 99.8% ✓]
+    end
+    
+    subgraph Completeness["Data Completeness SLI"]
+        C1[Expected: 1.2M records]
+        C2[Actual: 1.198M records]
+        C3[SLI: 99.83% ✓]
+    end
+    
+    subgraph Quality["Data Quality SLI"]
+        Q1[Passed: 1.195M]
+        Q2[Failed: 3K]
+        Q3[SLI: 99.75% ✓]
+    end
+    
+    subgraph Pipeline["Pipeline Success SLI"]
+        P1[Succeeded: 23/24 runs]
+        P2[Failed: 1 run]
+        P3[SLI: 95.8% ⚠]
+    end
+    
+    subgraph Budget["Error Budget Status"]
+        B1[Remaining: 38 min this month]
+        B2[Consumed: 4h 22min]
+        B3[Burn Rate: 2.1x ⚠]
+    end
+    
+    Freshness --> Budget
+    Completeness --> Budget
+    Quality --> Budget
+    Pipeline --> Budget
+    
+    style Freshness fill:#d4edda,stroke:#28a745
+    style Completeness fill:#d4edda,stroke:#28a745
+    style Quality fill:#d4edda,stroke:#28a745
+    style Pipeline fill:#fff3cd,stroke:#ffc107
+    style Budget fill:#fff3cd,stroke:#ffc107
+`} />
+
+This dashboard shows **data-specific SLIs** rather than CPU or memory. Each panel answers a user-facing question:
+- Is my data fresh?
+- Is all my data present?
+- Is my data passing quality checks?
+- Are pipelines delivering on time?
+- How much error budget remains?
+
+---
+
+## Error Budgets for Data
+
+An **error budget** is the inverse of your SLA. If you promise 99.9% uptime, your error budget is 0.1% downtime — approximately **43 minutes per month** or **8.7 hours per year**.
+
+Error budgets give teams permission to take calculated risks: launching a new feature, running a risky migration, or deploying on Friday. As long as you stay within budget, you're meeting your reliability commitment.
+
+### Translating SLAs to Error Budgets
+
+| SLA | Downtime per Month | Downtime per Year |
+|-----|--------------------|--------------------|
+| 99% | 7.2 hours | 3.65 days |
+| 99.5% | 3.6 hours | 1.83 days |
+| 99.9% | 43 minutes | 8.7 hours |
+| 99.95% | 21 minutes | 4.4 hours |
+| 99.99% | 4.3 minutes | 52.6 minutes |
+
+For data systems, error budgets apply to **all data-native SLIs**, not just availability:
+
+- **Freshness budget:** "Data can be stale for up to 8.7 hours/year (99.9% SLA)."
+- **Completeness budget:** "We can drop up to 0.1% of records over a year."
+- **Quality budget:** "0.1% of records can fail validation over a year."
+
+### Error Budget Spend Patterns
+
+Error budgets are not spent evenly. A single bad deploy can consume a week's budget in 10 minutes. Tracking **burn rate** — how fast you're consuming budget — is critical.
+
+**Healthy burn rate:** You're consuming budget at exactly your SLA rate. A 99.9% SLA should consume 0.1% of your budget per month.
+
+**High burn rate:** You're consuming budget faster than planned. A 2x burn rate means you'll exhaust your monthly budget in two weeks.
+
+**Negative burn rate:** You're operating above your SLA target. This is fine, but it doesn't create "extra" budget for next month — budgets reset monthly.
+
+---
+
+## Burn-Rate Alerting: Alerting on Budget Consumption Speed
+
+Traditional alerting fires when a metric crosses a threshold: "CPU > 80%" or "error rate > 1%." This works for infrastructure, but for data SLIs, you care about **how fast you're burning through your error budget**.
+
+### The Problem with Threshold Alerts
+
+Imagine your freshness SLI drops to 99.5% (below your 99.9% target). A threshold alert fires immediately. But context matters:
+
+- If you've been at 99.99% for the past 28 days, you can afford a few hours at 99.5% without exceeding your monthly budget.
+- If you've already consumed 80% of your monthly budget, even a small dip is critical.
+
+**Burn-rate alerts** solve this by firing based on the **rate of budget consumption**, not just the current SLI value.
+
+### Burn-Rate Alert Rules
+
+<CodeBlock code={`# Multi-window burn-rate alert (Prometheus/Alertmanager style)
+# Fires when you're consuming error budget at 10x the acceptable rate
+
+groups:
+  - name: data_freshness_burn_rate
+    interval: 1m
+    rules:
+      - alert: DataFreshnessBurnRateHigh
+        expr: |
+          (
+            sum(rate(freshness_violations[1h])) / sum(rate(freshness_checks[1h])) > 0.01
+            and
+            sum(rate(freshness_violations[5m])) / sum(rate(freshness_checks[5m])) > 0.01
+          )
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Freshness error budget burning at 10x rate"
+          description: "Current burn rate will exhaust monthly budget in 3 days"
+
+      - alert: DataFreshnessBurnRateCritical
+        expr: |
+          (
+            sum(rate(freshness_violations[1h])) / sum(rate(freshness_checks[1h])) > 0.05
+            and
+            sum(rate(freshness_violations[5m])) / sum(rate(freshness_checks[5m])) > 0.05
+          )
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Freshness error budget burning at 50x rate"
+          description: "Current burn rate will exhaust monthly budget in 14 hours"
+`} language="yaml" filename="data-sli-alerts.yaml" />
+
+This rule fires when:
+1. The 1-hour burn rate exceeds 10x the SLA (0.01 for a 99.9% SLA)
+2. The 5-minute burn rate also exceeds 10x (confirming it's not a transient spike)
+3. The condition persists for 2 minutes
+
+The **two-window approach** prevents false positives from brief dips while catching sustained problems early.
+
+### Budget Exhaustion Response
+
+When you've spent 75% of your monthly error budget with a week left in the month, you enter **error budget exhaustion mode**:
+
+- **Freeze risky changes** — defer feature launches and migrations
+- **Increase monitoring** — watch burn rate every hour
+- **Staff on-call** — ensure fast response to any new incidents
+- **Root-cause analysis** — what consumed the budget, and how do we prevent it next month?
+
+Error budget exhaustion is not a failure — it's a signal to shift from "move fast" to "operate carefully."
+
+---
+
+## Data Incident Runbooks
+
+Infrastructure incidents get runbooks: "Kafka broker down," "Postgres replica lag," "Kubernetes node not ready." Data incidents need runbooks too:
+
+**Data freshness violation:**
+1. Check upstream data source — is it still emitting events?
+2. Check pipeline logs — is it stuck, failed, or running slowly?
+3. Check downstream consumers — are they blocked waiting for data?
+4. If pipeline is stuck: kill and restart. If data source is down: page the upstream team.
+
+**Data completeness violation:**
+1. Compare expected vs. actual record counts. Which source is missing records?
+2. Check for schema drift — did a column rename cause records to be filtered?
+3. Check for partition drops — did a date-based filter exclude valid data?
+4. If records are lost: trigger manual backfill. If filter is wrong: fix and re-run.
+
+**Data quality degradation:**
+1. Sample failed records. What validation rule are they failing?
+2. Check upstream schema changes. Did a new field break assumptions?
+3. Check for partial deployments. Is old and new schema data mixed?
+4. If schema changed: update validation rules. If data is corrupted: quarantine and backfill.
+
+**Pipeline failure:**
+1. Check logs for exception stack traces.
+2. Check resource exhaustion (OOM, disk full, timeout).
+3. Check upstream dependencies (API rate limit, database read-only mode).
+4. If transient: retry. If persistent: rollback and investigate.
+
+Runbooks should be **executable by on-call engineers who didn't write the pipeline**. Include:
+- Exact commands to run (don't assume familiarity with tooling)
+- Decision trees ("If X, do Y; else do Z")
+- Escalation paths ("If still broken after 15 minutes, page @data-platform-oncall")
+
+---
+
+## Chaos Engineering for Data Pipelines
+
+Chaos engineering tests resilience by intentionally injecting failures. For data platforms, this means:
+
+**1. Inject Upstream Data Delays**
+
+Slow down or pause upstream data sources. Does your pipeline detect staleness and alert? Do downstream consumers gracefully degrade?
+
+```bash
+# Simulate a 2-hour upstream delay
+curl -X POST http://chaos-controller/inject \
+  -d '{"target": "upstream-api", "delay": "2h"}'
+```
+
+**2. Inject Partial Data Loss**
+
+Drop 5% of records randomly. Does your completeness SLI catch it? Do you alert before users notice?
+
+```python
+# Chaos filter: drops 5% of Kafka messages
+if random.random() < 0.05:
+    return None  # Drop message
+```
+
+**3. Inject Schema Drift**
+
+Change an upstream field name or type mid-stream. Does your schema validation catch it? Do you quarantine bad records or crash?
+
+**4. Inject Resource Exhaustion**
+
+Max out CPU or memory on a worker node. Does the pipeline slow gracefully or fail catastrophically? Does auto-scaling kick in?
+
+**5. Inject Dependency Failures**
+
+Kill a downstream database or cache. Does the pipeline retry with backoff? Does it poison downstream systems with retries?
+
+Run chaos experiments during **business hours** (with notice) to test true resilience. If you only test at 3am, you'll never know if your on-call response works under pressure.
+
+---
+
+## Failure Modes to Avoid
+
+**1. Measuring Infrastructure SLIs Only**
+
+Tracking CPU, memory, and pod restarts while ignoring data freshness and completeness. Your dashboards are green, but users are seeing stale data.
+
+**Solution:** Define at least one data-native SLI for every critical pipeline. Freshness is a minimum.
+
+**2. No Data Runbooks**
+
+Infrastructure incidents have runbooks, but data incidents are handled ad-hoc. Every data freshness violation requires Sherlock Holmes-level investigation.
+
+**Solution:** Write runbooks for each data SLI violation type. Test them by running drills.
+
+**3. Uniform SLAs Across All Pipelines**
+
+Applying the same 99.9% SLA to both real-time fraud detection and monthly billing reports. Real-time pipelines need tighter SLAs; batch pipelines can tolerate looser ones.
+
+**Solution:** Tier your SLAs by pipeline criticality. Tier 1 (real-time, user-facing): 99.95%. Tier 2 (hourly analytics): 99.5%. Tier 3 (weekly reports): 99%.
+
+**4. No Error Budget Discipline**
+
+Treating error budgets as "nice to have" rather than enforceable policy. Teams ship risky changes even when the budget is exhausted.
+
+**Solution:** Make error budget status a required input for deploy approvals. If budget is exhausted, risky changes require VP-level approval.
+
+**5. Alerting on SLI Threshold Instead of Burn Rate**
+
+Firing alerts the moment your freshness SLI drops below 99.9%, even if you have 90% of your monthly budget remaining.
+
+**Solution:** Replace threshold alerts with burn-rate alerts. Alert when you're consuming budget faster than planned, not when you momentarily dip below target.
+
+---
+
+## Summary
+
+Traditional SRE practices — SLIs, SLAs, error budgets, burn-rate alerts — apply to data platforms, but require **data-native adaptations**. Infrastructure metrics measure the health of the system; data metrics measure the health of the **data**.
+
+**Key principles:**
+
+1. **Multi-tenancy patterns** — namespace (shared cluster), cluster (dedicated), logical (row-level) — determine isolation strength, cost, and operational complexity.
+
+2. **Data-native SLIs** — freshness, completeness, quality, pipeline success, consumer lag — measure what users care about.
+
+3. **Error budgets** translate SLAs into permission to take risks. A 99.9% SLA allows 8.7 hours of staleness per year.
+
+4. **Burn-rate alerts** fire when you're consuming budget too fast, not just when you cross a threshold.
+
+5. **Data incident runbooks** make on-call response repeatable for freshness, completeness, and quality violations.
+
+6. **Chaos engineering** tests data resilience by injecting delays, drops, and schema drift during business hours.
+
+Data platforms that adopt SRE rigor move from reactive firefighting to predictable, measurable reliability — and from "the data is usually right" to "we can prove the data is right 99.9% of the time."

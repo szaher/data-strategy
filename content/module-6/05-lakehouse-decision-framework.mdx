@@ -1,0 +1,331 @@
+---
+title: "Lakehouse Decision Framework"
+quiz:
+  - question: "When would a hybrid lakehouse-warehouse architecture be appropriate?"
+    options:
+      - "Only when you have unlimited budget"
+      - "When you have both interactive BI workloads and ML/engineering access needs (correct)"
+      - "When you're unsure about your data architecture"
+      - "When your data fits entirely in memory"
+    correctIndex: 1
+  - question: "What is the primary benefit of catalog-driven table management?"
+    options:
+      - "It reduces storage costs"
+      - "It enables centralized metadata governance and multi-engine table coordination (correct)"
+      - "It eliminates the need for backups"
+      - "It automatically optimizes query performance"
+    correctIndex: 1
+  - question: "In the decision framework, which factor most strongly favors a lakehouse over a warehouse?"
+    options:
+      - "Need for governed BI with high-concurrency interactive SQL"
+      - "Requirement for vendor-neutral open data with multi-engine access (correct)"
+      - "Preference for managed operations and minimal engineering"
+      - "Lack of AI/ML workloads in the organization"
+    correctIndex: 1
+---
+
+## Overview
+
+The **lakehouse vs warehouse** debate is rarely binary. Most enterprises need both — not as competing systems but as complementary platforms optimized for different workloads, teams, and access patterns.
+
+This lesson presents a **decision framework** for choosing lakehouse-primary, warehouse-primary, or hybrid architectures. You'll learn when each pattern fits, how to leverage **catalog-driven table management** to coordinate across engines, and how to avoid the failure modes of all-in strategies.
+
+The **learner artifact** for Module 6 is a complete lakehouse stack design: table format (Iceberg), catalog (Unity/Polaris), query engine (Trino/Spark), and data product contract — all connected through a unified catalog that makes governance enforceable.
+
+## The False Binary: Lakehouse OR Warehouse
+
+Many organizations frame data platform decisions as **either lakehouse or warehouse**. This framing is misleading. Each architecture excels at different workloads:
+
+**Warehouse strengths:**
+- **Governed BI and reporting** — mature access controls, audit trails, compliance-ready logging
+- **High-concurrency interactive SQL** — optimized for thousands of concurrent users running dashboard queries
+- **Managed operations** — automatic scaling, performance tuning, patching, backups handled by the vendor
+- **Mature tooling** — seamless integration with existing BI tools, ETL platforms, and analytics workflows
+
+**Lakehouse strengths:**
+- **Open data** — vendor-neutral formats (Parquet, Iceberg) prevent lock-in, enable multi-cloud portability
+- **Multi-engine access** — same table read by Spark (batch), Trino (SQL), Flink (streaming), PyTorch (ML)
+- **Large-scale processing** — elastic compute for petabyte-scale ETL, model training, feature engineering
+- **Reproducible datasets** — table versioning (Iceberg snapshots) enables time-travel queries, rollback, A/B testing
+- **Interoperability** — catalog APIs expose metadata to external systems (data catalogs, lineage tools, governance platforms)
+- **Cost at scale** — object storage pricing (pennies per GB-month) vs warehouse compute-storage coupling
+
+In practice, **most organizations end up with HYBRID**: warehouse for governed BI and high-concurrency reporting, lakehouse for engineering-heavy workloads, ML pipelines, and open data access.
+
+## Practical Enterprise Patterns
+
+Three common patterns emerge in real deployments:
+
+### Pattern A: Lakehouse-Primary
+
+**Architecture:** Iceberg tables + Unity Catalog + Trino/Spark, small warehouse for specific BI dashboards.
+
+**When it fits:**
+- Engineering-heavy organization (data scientists, ML engineers, analytics engineers outnumber BI analysts)
+- Multi-cloud or cloud-agnostic strategy (avoid vendor lock-in)
+- Large-scale batch processing (petabyte-scale ETL, model training)
+- Strong Python/Scala skill base (Spark, dbt-Spark, MLflow)
+- Cost-conscious at scale (object storage cheaper than warehouse storage)
+
+**Trade-offs:**
+- Higher operational burden (manage Trino clusters, Spark jobs, catalog infrastructure)
+- Weaker high-concurrency SQL performance (Trino supports thousands of queries/hour, but not tens of thousands)
+- Need custom integrations for some BI tools (Tableau/Looker prefer native warehouse connectors)
+
+**Example:** A fintech startup with 30 data engineers, 5 BI analysts. Iceberg + Trino for all data, Snowflake for executive dashboards.
+
+<MermaidDiagram chart={`graph LR
+    subgraph Storage["Object Storage (S3/GCS/ADLS)"]
+        IC[Iceberg Tables]
+    end
+    
+    subgraph Catalog["Unity Catalog"]
+        META[Table Metadata]
+    end
+    
+    subgraph Query["Primary Query Engines"]
+        TRINO[Trino - Interactive SQL]
+        SPARK[Spark - Batch ETL]
+        FLINK[Flink - Streaming]
+    end
+    
+    subgraph BI["BI Layer (Limited)"]
+        WH[Snowflake<br/>Executive Dashboards]
+    end
+    
+    IC --> META
+    META --> TRINO
+    META --> SPARK
+    META --> FLINK
+    TRINO --> WH
+    
+    style Storage fill:#ebf8ff,stroke:#3182ce
+    style Catalog fill:#f0fff4,stroke:#38a169
+    style Query fill:#fffbeb,stroke:#d69e2e
+    style BI fill:#fef5e7,stroke:#e67e22
+`} />
+
+### Pattern B: Warehouse-Primary
+
+**Architecture:** Snowflake/BigQuery for all governed data, lakehouse for ML/engineering experimentation.
+
+**When it fits:**
+- BI-heavy organization (hundreds of business analysts, fewer data engineers)
+- Mature warehouse investment (years of ETL pipelines, dashboards, governance workflows already in Snowflake/BigQuery)
+- High-concurrency interactive queries (thousands of concurrent users)
+- Preference for managed services (minimize operational burden)
+- Strong SQL skill base (analysts write SQL, not Python)
+
+**Trade-offs:**
+- Higher costs at scale (warehouse storage + compute more expensive than object storage + elastic engines)
+- Vendor lock-in (migrating petabytes out of a warehouse is costly and slow)
+- Limited multi-engine access (warehouse owns the data, external engines need expensive exports)
+
+**Example:** A retail company with 200 BI analysts, 10 data engineers. BigQuery for all reporting, lakehouse for ML feature stores.
+
+<MermaidDiagram chart={`graph LR
+    subgraph WH["Warehouse (Primary)"]
+        BQ[BigQuery<br/>All BI Data]
+    end
+    
+    subgraph Storage["Object Storage"]
+        IC[Iceberg Tables<br/>ML Features]
+    end
+    
+    subgraph Catalog["Unity Catalog"]
+        META[ML Table Metadata]
+    end
+    
+    subgraph ML["ML Engines"]
+        SPARK[Spark - Feature Eng]
+        PYTORCH[PyTorch - Training]
+    end
+    
+    BQ --> IC
+    IC --> META
+    META --> SPARK
+    META --> PYTORCH
+    
+    style WH fill:#ebf8ff,stroke:#3182ce
+    style Storage fill:#f0fff4,stroke:#38a169
+    style Catalog fill:#fffbeb,stroke:#d69e2e
+    style ML fill:#fef5e7,stroke:#e67e22
+`} />
+
+### Pattern C: True Hybrid
+
+**Architecture:** Both warehouse and lakehouse, with **data flow** between them and **catalog federation**.
+
+**When it fits:**
+- Large enterprise with diverse workloads (BI analysts, data engineers, ML teams all active)
+- Migration in progress (existing warehouse data, new lakehouse tables, need both during transition)
+- Regulatory requirements (some data must stay in warehouse for compliance, other data needs open access)
+- Multi-team ownership (BI team owns warehouse, data platform team owns lakehouse)
+
+**Trade-offs:**
+- Highest complexity (two systems to operate, synchronize, secure)
+- Data movement costs (replicating data between warehouse and lakehouse)
+- Governance fragmentation (need unified catalog to avoid metadata drift)
+
+**Example:** A bank with 500 analysts, 50 data engineers. Snowflake for regulated BI, Iceberg for ML/engineering, Unity Catalog federates both.
+
+<MermaidDiagram chart={`graph TB
+    subgraph WH["Warehouse"]
+        SF[Snowflake<br/>BI Tables]
+    end
+    
+    subgraph Storage["Object Storage"]
+        IC[Iceberg Tables<br/>ML/Engineering]
+    end
+    
+    subgraph Catalog["Unity Catalog (Federation)"]
+        WH_META[Warehouse Metadata]
+        LH_META[Lakehouse Metadata]
+    end
+    
+    subgraph Query["Query Engines"]
+        TRINO[Trino - Lakehouse SQL]
+        SPARK[Spark - ETL]
+    end
+    
+    SF --> WH_META
+    IC --> LH_META
+    WH_META --> Catalog
+    LH_META --> Catalog
+    Catalog --> TRINO
+    Catalog --> SPARK
+    SF <--> IC
+    
+    style WH fill:#ebf8ff,stroke:#3182ce
+    style Storage fill:#f0fff4,stroke:#38a169
+    style Catalog fill:#fffbeb,stroke:#d69e2e
+    style Query fill:#fef5e7,stroke:#e67e22
+`} />
+
+## Catalog-Driven Table Management
+
+The **catalog** is the single source of truth for all tables — whether in the warehouse, lakehouse, or both. Modern catalogs (Unity, Polaris, Iceberg REST Catalog) provide:
+
+**Multi-engine coordination:**
+- Same table definition visible to Spark, Trino, Flink, Snowflake (via external tables)
+- Schema evolution tracked in catalog, propagated to all engines
+- Snapshot history (Iceberg) stored in catalog metadata, enabling time-travel queries across engines
+
+**Namespace management:**
+- Organize tables into hierarchical namespaces (e.g., `analytics.sales.orders`, `ml.features.customer_embedding`)
+- Namespaces map to organizational ownership (BI team owns `analytics`, ML team owns `ml`)
+
+**Access control at catalog level:**
+- RBAC policies defined once in catalog, enforced by all query engines
+- Column-level masking (PII redaction) configured in catalog, applied transparently
+- Audit logs centralized (who queried which table, when, from which engine)
+
+**Migration path from Hive Metastore:**
+- Legacy Hive Metastore stores table metadata in a relational DB (MySQL/Postgres)
+- Modern catalogs (Unity, Polaris) expose REST APIs, support ACID operations, integrate with cloud IAM
+- Migration strategy: create Iceberg tables in modern catalog, backfill from Hive tables, deprecate Hive Metastore incrementally
+
+> **Catalog as the trust boundary:** The catalog is where data governance is enforced. Without a unified catalog, you have metadata drift — warehouse and lakehouse views of the same data diverge, access controls become inconsistent, lineage breaks.
+
+## Decision Framework
+
+Use this matrix to evaluate lakehouse vs warehouse vs hybrid:
+
+| **Criterion**                  | **Warehouse**                          | **Lakehouse**                          | **Hybrid**                              |
+|--------------------------------|----------------------------------------|----------------------------------------|-----------------------------------------|
+| **Team skills**                | SQL analysts, BI developers            | Data engineers, ML engineers           | Both skill sets present                 |
+| **Workload types**             | Interactive BI, high-concurrency SQL   | Batch ETL, ML training, streaming      | Mix of BI and engineering               |
+| **Data openness**              | Vendor lock-in acceptable              | Vendor-neutral formats required        | Some data open, some proprietary        |
+| **Cost model**                 | Predictable spend, managed budgets     | Elastic spend, optimize for scale      | Split: fixed BI, elastic engineering    |
+| **AI/ML needs**                | Minimal (BI-only)                      | Heavy (feature stores, model training) | ML team coexists with BI team           |
+| **Concurrency requirements**   | Thousands of concurrent users          | Hundreds of concurrent jobs            | Both use cases                          |
+| **Operational preference**     | Fully managed, minimal engineering     | Willing to operate infrastructure      | Managed BI, self-managed engineering    |
+
+**Decision tree:**
+
+<MermaidDiagram chart={`flowchart TD
+    START[Start] --> Q1{Do you have<br/>heavy ML/AI<br/>workloads?}
+    
+    Q1 -->|Yes| Q2{Is multi-engine<br/>access<br/>critical?}
+    Q1 -->|No| Q3{High-concurrency<br/>interactive SQL?}
+    
+    Q2 -->|Yes| LH[Lakehouse-Primary<br/>Pattern A]
+    Q2 -->|No| Q4{Existing<br/>warehouse<br/>investment?}
+    
+    Q3 -->|Yes| WH[Warehouse-Primary<br/>Pattern B]
+    Q3 -->|No| Q5{Cost sensitivity<br/>at scale?}
+    
+    Q4 -->|Yes| HYB1[Hybrid<br/>Pattern C]
+    Q4 -->|No| LH
+    
+    Q5 -->|High| LH
+    Q5 -->|Low| WH
+    
+    HYB1 --> CATALOG[Unified Catalog<br/>Required]
+    LH --> CATALOG
+    WH --> Q6{Future ML<br/>plans?}
+    Q6 -->|Yes| HYB2[Hybrid<br/>Pattern C]
+    Q6 -->|No| WH
+    
+    HYB2 --> CATALOG
+    
+    style START fill:#f0f0f0,stroke:#151515
+    style LH fill:#f0fff4,stroke:#38a169
+    style WH fill:#ebf8ff,stroke:#3182ce
+    style HYB1 fill:#fffbeb,stroke:#d69e2e
+    style HYB2 fill:#fffbeb,stroke:#d69e2e
+    style CATALOG fill:#fef5e7,stroke:#e67e22
+`} />
+
+**Anti-pattern detection:**
+- **All-in on lakehouse** when your organization is 80% BI analysts → operational burden will overwhelm your small engineering team
+- **All-in on warehouse** when you have petabyte-scale ML feature stores → storage costs spiral, vendor lock-in hardens
+- **No catalog strategy** → metadata drift, broken lineage, inconsistent access controls across systems
+- **Ignoring existing warehouse investment** → years of ETL pipelines, dashboards, and governance workflows discarded for ideological purity
+
+## Failure Modes
+
+**Failure Mode 1: Binary thinking**
+- **Problem:** Organization treats lakehouse and warehouse as mutually exclusive choices.
+- **Symptom:** Teams debate "should we use Snowflake or Iceberg?" when the answer is "both, for different workloads."
+- **Fix:** Adopt hybrid architecture, use catalog federation to unify metadata.
+
+**Failure Mode 2: No catalog strategy**
+- **Problem:** Warehouse and lakehouse have separate metadata stores, no coordination.
+- **Symptom:** Same table exists in both systems with different schemas, access controls drift, lineage breaks at system boundaries.
+- **Fix:** Deploy unified catalog (Unity Catalog, Polaris), federate both systems.
+
+**Failure Mode 3: Ignoring existing investment**
+- **Problem:** Organization migrates all warehouse data to lakehouse to "modernize," discarding years of working pipelines.
+- **Symptom:** Migration project drags on for 18 months, BI dashboards break, analysts revolt, project gets rolled back.
+- **Fix:** Incremental migration — new tables in lakehouse, critical BI stays in warehouse, use hybrid pattern.
+
+**Failure Mode 4: All-in on lakehouse without operational readiness**
+- **Problem:** Small team tries to operate Trino clusters, Spark jobs, Iceberg compaction, catalog HA.
+- **Symptom:** Outages, slow queries, data quality issues, team burnout.
+- **Fix:** Use managed lakehouse services (Databricks, Starburst, Snowflake Iceberg Tables) or keep BI in managed warehouse.
+
+## Bridge to Module 7: The Trust Plane
+
+The **lakehouse vs warehouse decision** is about the **data plane** — where data lives, which engines query it. But governance, quality, and lineage are enforced in the **trust plane**.
+
+Module 7 introduces:
+- **Data quality** — automated validation of incoming data, schema enforcement, constraint checking
+- **Lineage** — tracking data flow from source to warehouse/lakehouse to dashboard, enabling impact analysis
+- **Governance** — access control, PII masking, audit logs, compliance reporting
+
+The trust plane makes lakehouse/warehouse decisions **enforceable** — policies defined once, applied consistently across all systems.
+
+Example: A column-level PII masking rule defined in the catalog's trust layer applies whether the table is queried via Trino (lakehouse) or Snowflake (warehouse). Without the trust plane, each system implements masking independently, creating drift.
+
+## Summary
+
+Lakehouse vs warehouse is not binary. Most enterprises need both — warehouse for governed BI with high-concurrency interactive SQL, lakehouse for multi-engine access, ML workloads, and open data.
+
+The decision framework evaluates team skills, workload types, data openness, cost model, AI/ML needs, concurrency, and operational preference. Three patterns emerge: lakehouse-primary (Pattern A), warehouse-primary (Pattern B), and true hybrid (Pattern C).
+
+The catalog is the single source of truth for all tables, enabling multi-engine coordination, namespace management, access control, and migration from legacy Hive Metastore. Without a unified catalog, metadata drifts and governance breaks.
+
+The Module 6 learner artifact is a complete lakehouse stack: Iceberg (table format), Unity Catalog (metadata), Trino (query engine), and data product contracts — all connected through catalog-driven governance that makes policies enforceable across systems.
+
+Next, Module 7 introduces the trust plane: data quality, lineage, and governance mechanisms that turn lakehouse/warehouse architecture decisions into operational reality.

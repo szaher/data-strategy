@@ -1,0 +1,391 @@
+---
+title: "Change Data Capture with Debezium"
+---
+
+## Overview
+
+Databases change constantly — orders are placed, inventory is updated, user profiles are edited. Downstream systems need to know about these changes: search indexes must stay fresh, analytics warehouses need new data, cache layers must invalidate stale entries, and ML models need to re-embed updated documents. The traditional approach — polling the database every few minutes to look for changes — is wasteful, increases latency, and adds load to production systems.
+
+**Change Data Capture (CDC)** solves this problem by capturing changes directly from the database's transaction log (the write-ahead log in PostgreSQL, binlog in MySQL). This approach has minimal impact on the source database and delivers changes with millisecond latency. Instead of asking "what changed?" every few minutes, CDC systems listen to the database's internal stream of changes and forward them to downstream consumers.
+
+This lesson covers four integration patterns — **dual write**, **transactional outbox**, **log-based CDC**, and **event sourcing** — and shows when to use each. We'll focus on **Debezium**, the leading open-source CDC platform, and demonstrate how combining the outbox pattern with Debezium gives you the best of both worlds: transactional guarantees from the application and comprehensive change capture from the database log.
+
+By the end of this lesson, you'll understand why CDC is essential for modern data platforms, how to choose the right integration pattern for your use case, and how to deploy Debezium to keep derived systems synchronized with your source of truth.
+
+## Why Change Data Capture?
+
+Every database operation creates a change: an insert, update, or delete. These changes represent **facts** — events that have happened in your system. Downstream systems need these facts to stay consistent with the source database.
+
+The naive approach is **polling**: run a query every N minutes looking for records modified since the last check (`WHERE updated_at > ?`). This has several problems:
+
+- **Latency:** Changes are only visible after the polling interval (often minutes).
+- **Load:** Every poll hits the database, even when nothing has changed.
+- **Missed deletes:** `SELECT` can't see rows that have been deleted.
+- **Ordering:** Concurrent updates across tables can create inconsistent snapshots.
+
+**CDC captures changes from the database's transaction log.** Databases already write every change to a durable log before applying it to storage — this is how they ensure consistency and support replication. CDC tools read this log and translate it into a stream of change events.
+
+The write-ahead log (WAL) in PostgreSQL, for example, records every committed transaction. Debezium reads the WAL using a **replication slot** (a named position in the log that the database preserves), converts each log entry into a structured event (JSON), and publishes it to Kafka. Downstream consumers read from Kafka and apply the changes to their own data stores.
+
+This approach has three major advantages:
+
+1. **Low latency:** Changes appear in Kafka within milliseconds of the database commit.
+2. **No source load:** Reading the WAL doesn't impact query performance.
+3. **Complete capture:** Every change is captured, including those from migrations, admin tools, or batch jobs — not just application writes.
+
+CDC is not always the right choice. If you only care about specific business events (not every database row change), and you control the application code, the **transactional outbox pattern** may be simpler. But when you need to keep a search index, cache layer, or analytics warehouse in sync with the database, CDC is the standard solution.
+
+## Four Integration Patterns: Trade-Offs and Use Cases
+
+When your application writes to a database and needs to notify downstream systems, you have four architectural choices. Each has distinct trade-offs. Understanding these patterns is critical for designing reliable data pipelines.
+
+### Pattern 1: Dual Write
+
+The application writes to both the database and the event bus (Kafka) in the same request handler.
+
+```
+User request → App writes to DB
+            → App publishes to Kafka
+            → Response
+```
+
+**Problem: No atomicity.** The database write can succeed while the Kafka publish fails (or vice versa). You end up with inconsistent state — a record in the database but no event in Kafka, or an event in Kafka but no record in the database.
+
+Retries don't solve this. If the database write succeeds but the Kafka publish fails, retrying the entire operation creates a duplicate database row. If the Kafka publish succeeds but the database write fails on retry, you publish an event for a record that doesn't exist.
+
+**When to use it:** Almost never. Dual writes are an anti-pattern in systems that require strong consistency. The only valid use case is when inconsistency is acceptable — for example, publishing low-priority metrics or telemetry where occasional loss is tolerable.
+
+> **Warning:** Dual write creates a distributed transaction without transactional semantics. Avoid this pattern unless you can tolerate data loss or duplication.
+
+### Pattern 2: Transactional Outbox
+
+The application writes business data **and** an outbox record in a single database transaction. A separate process (the outbox publisher) reads the outbox table and publishes events to Kafka.
+
+```
+BEGIN TRANSACTION
+  INSERT INTO orders (id, amount) VALUES (123, 50.00);
+  INSERT INTO outbox (event_type, payload) VALUES ('OrderPlaced', '{"id": 123, "amount": 50.00}');
+COMMIT
+
+(Separate process reads outbox table → publishes to Kafka → deletes outbox record)
+```
+
+**Advantage: Guaranteed atomicity.** Either both the business data and the outbox record are committed, or neither is. If the transaction fails, nothing is written. If it succeeds, the event will eventually be published (the outbox publisher can retry indefinitely).
+
+**Trade-off: Application code must change.** Every operation that needs to publish an event must write to the outbox table. You must also deploy the outbox publisher process.
+
+**When to use it:** When you control the application code and you want to publish **domain events** — high-level business facts like "OrderPlaced" or "InventoryAdjusted" that carry semantic meaning. The outbox pattern is ideal for event-driven architectures where consumers care about business intent, not raw database rows.
+
+### Pattern 3: Log-Based CDC (Debezium)
+
+A CDC connector (like Debezium) reads the database's transaction log and publishes every change to Kafka.
+
+```
+App writes to DB → PostgreSQL WAL → Debezium → Kafka → Consumers
+```
+
+**Advantage: No application changes.** Debezium captures changes from the WAL, so the application code doesn't need to know about Kafka or outbox tables. This works for changes made by migrations, admin tools, or other applications that share the database.
+
+**Advantage: Complete capture.** CDC sees every change, including schema migrations and bulk updates. Polling or outbox patterns can miss these.
+
+**Trade-off: Low-level events.** Debezium emits **row-level change events**, not domain events. The payload is a before/after snapshot of database columns, not a business-level fact. Consumers must interpret these low-level events.
+
+**Trade-off: Operational complexity.** CDC connectors require configuration (replication slots, schema registry integration), monitoring (replication lag), and failure recovery (handling schema changes or connector crashes).
+
+**When to use it:** When you need to keep derived systems (search indexes, caches, analytics warehouses, vector stores) synchronized with the database. CDC is the default choice for **data synchronization** use cases.
+
+### Pattern 4: Event Sourcing
+
+Events are the **source of truth**. All state is derived by replaying events. The database is a read model (a projection of the event log), not the primary store.
+
+```
+Command → Validate → Write event to event store
+Event store → Consumers rebuild state by replaying events
+```
+
+**Advantage: Complete audit trail.** Every state change is an immutable event. You can replay history, debug production issues by reconstructing past state, and build new projections from old events.
+
+**Advantage: Time travel.** You can query the system as it existed at any point in time by replaying events up to that timestamp.
+
+**Trade-off: Paradigm shift.** Event sourcing requires rethinking data modeling. Queries run against projections (derived views), not the event log itself. This adds complexity — you must design projections, handle schema evolution in events, and manage eventual consistency.
+
+**Trade-off: Tooling and learning curve.** Event sourcing frameworks (Axon, EventStoreDB) have a steep learning curve. Team expertise is required.
+
+**When to use it:** When you need a full audit trail for compliance, when business logic is complex and benefits from the explicit modeling of state transitions, or when you need to build multiple views of the same data (e.g., one projection for queries, another for analytics, another for reporting).
+
+Event sourcing is a powerful pattern but it's not a drop-in replacement for CDC. It's a different architectural philosophy.
+
+## Combining Outbox + CDC: Best of Both Worlds
+
+The outbox pattern and CDC are **complementary**, not mutually exclusive. You can combine them to get transactional guarantees and comprehensive change capture.
+
+**How it works:**
+
+1. The application writes business data and outbox records transactionally (outbox pattern).
+2. Debezium captures changes from the outbox table (CDC).
+3. Debezium publishes the outbox events to Kafka.
+4. Consumers process events from Kafka.
+
+This gives you:
+
+- **Atomicity:** The database transaction ensures that business data and outbox records are written together.
+- **No polling:** Debezium reads the outbox table from the WAL, not by polling.
+- **Domain events:** The application writes semantic events ("OrderPlaced") to the outbox, not low-level row changes.
+- **Resilience:** If Kafka is down, events accumulate in the outbox table. Debezium will catch up when Kafka recovers.
+
+Debezium even has a built-in **outbox transformation** (a Single Message Transform, or SMT) that extracts the payload from the outbox record and forwards only the domain event to Kafka. This keeps Kafka topics clean — consumers see `OrderPlaced` events, not `outbox table row inserted` events.
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant App as Application
+    participant DB as PostgreSQL
+    participant Deb as Debezium
+    participant Kafka as Kafka
+    participant Consumer as Event Consumer
+
+    App->>DB: BEGIN TRANSACTION
+    App->>DB: INSERT INTO orders (id, amount) VALUES (123, 50.00)
+    App->>DB: INSERT INTO outbox (event_type, payload, aggregate_id) VALUES ('OrderPlaced', '{"id":123,"amount":50.00}', '123')
+    App->>DB: COMMIT
+    Note over DB: WAL contains both inserts
+
+    Deb->>DB: Read WAL via replication slot
+    DB-->>Deb: Outbox insert event
+    Deb->>Deb: Apply Outbox SMT (extract payload)
+    Deb->>Kafka: Publish OrderPlaced event
+    Kafka-->>Consumer: OrderPlaced event
+    Consumer->>Consumer: Update search index / cache / analytics
+`} />
+
+In this flow, the application never talks to Kafka. It only writes to the database. Debezium bridges the gap by reading the outbox table and publishing to Kafka. This decouples the application from Kafka's availability and operational complexity.
+
+## Debezium Architecture
+
+**Debezium** is a distributed platform for change data capture. It's built on top of **Kafka Connect**, a framework for streaming data between Kafka and external systems.
+
+Debezium provides **source connectors** for PostgreSQL, MySQL, MongoDB, SQL Server, and Oracle. Each connector knows how to read the database's transaction log and translate it into Kafka events.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Kubernetes["Kubernetes Cluster"]
+        subgraph KafkaConnect["Kafka Connect Cluster"]
+            Connector1[Debezium PostgreSQL Connector]
+            Connector2[Debezium MySQL Connector]
+        end
+        
+        subgraph KafkaCluster["Kafka Cluster"]
+            Broker1[Kafka Broker 1]
+            Broker2[Kafka Broker 2]
+            Broker3[Kafka Broker 3]
+        end
+        
+        SchemaRegistry[Schema Registry]
+    end
+    
+    subgraph Databases["Source Databases"]
+        Postgres[(PostgreSQL)]
+        MySQL[(MySQL)]
+    end
+    
+    subgraph Consumers["Downstream Systems"]
+        Elasticsearch[Elasticsearch]
+        DataWarehouse[Data Warehouse]
+        VectorDB[Vector Database]
+    end
+    
+    Postgres -->|WAL via replication slot| Connector1
+    MySQL -->|binlog| Connector2
+    
+    Connector1 -->|Avro events| Broker1
+    Connector2 -->|Avro events| Broker2
+    
+    Connector1 -.->|Register schema| SchemaRegistry
+    Connector2 -.->|Register schema| SchemaRegistry
+    
+    Broker3 -->|Consume events| Elasticsearch
+    Broker3 -->|Consume events| DataWarehouse
+    Broker3 -->|Consume events| VectorDB
+    
+    style KafkaConnect fill:#e0f0ff,stroke:#0066cc
+    style KafkaCluster fill:#daf2f2,stroke:#0066cc
+    style Databases fill:#fff4e0,stroke:#ff9900
+    style Consumers fill:#f0e0ff,stroke:#9900cc
+`} />
+
+### Key Components
+
+- **Kafka Connect cluster:** A horizontally scalable cluster of workers that run connectors. Kafka Connect handles task distribution, failure recovery, and offset management.
+- **Debezium connector:** A plugin that reads the database transaction log and converts changes into Kafka events. Deployed as a JSON configuration to the Kafka Connect cluster.
+- **Replication slot (PostgreSQL):** A named position in the WAL that prevents log truncation until Debezium has read it. The database preserves WAL segments that Debezium hasn't consumed yet.
+- **Schema Registry:** A service that stores Avro schemas. Debezium registers the schema of each database table so consumers can deserialize events.
+
+### Snapshot vs. Streaming Modes
+
+When a Debezium connector starts, it can operate in two modes:
+
+1. **Snapshot mode:** Reads the current state of the database and publishes a full snapshot to Kafka. This is useful for bootstrapping a new consumer or backfilling historical data.
+2. **Streaming mode:** Reads the transaction log and publishes only new changes. This is the steady-state mode.
+
+Most connectors default to **snapshot followed by streaming**: take a snapshot first, then switch to streaming. This ensures that consumers see the complete state of the database, not just changes since the connector started.
+
+### Single Message Transforms (SMTs)
+
+Debezium supports **SMTs** — lightweight transformation plugins that modify events before publishing them to Kafka. Common use cases:
+
+- **Filter events:** Only publish changes to specific tables or columns.
+- **Route events:** Send different tables to different Kafka topics.
+- **Extract outbox payloads:** Transform `outbox table insert` events into domain events.
+- **Flatten nested structures:** Simplify complex payloads for downstream consumers.
+
+The outbox SMT (`io.debezium.transforms.outbox.EventRouter`) is particularly powerful. It extracts the `event_type` and `payload` fields from the outbox table and publishes a clean domain event to Kafka, discarding the outbox metadata.
+
+## AI Cross-Cut: Keeping RAG Fresh with CDC
+
+Retrieval-Augmented Generation (RAG) systems use vector embeddings to enable semantic search over documents. When the underlying documents change, the embeddings must be updated to keep search results accurate.
+
+**The problem:** A product catalog has 10,000 items. Each item has a description stored in PostgreSQL. The embeddings for these descriptions are stored in a vector database (Pinecone, Weaviate, Milvus). When a product description is updated, the corresponding embedding becomes stale.
+
+**Polling approach:** Run a batch job every hour to re-embed all products whose `updated_at` timestamp changed since the last run. This works but has high latency (up to one hour) and re-embeds products unnecessarily (even if only one field changed).
+
+**CDC approach:**
+
+1. Debezium captures changes to the `products` table from the PostgreSQL WAL.
+2. A Kafka consumer listens for `products` change events.
+3. When a `description` field changes, the consumer:
+   - Calls the embedding model (OpenAI, Vertex AI) to generate a new embedding.
+   - Updates the vector database with the new embedding.
+
+This approach has **millisecond-level latency** and only re-embeds products that actually changed. It's the standard pattern for keeping vector indexes in sync with source databases.
+
+**Diagram: CDC-Driven Embedding Pipeline**
+
+```
+Product updated in PostgreSQL
+  ↓
+PostgreSQL WAL
+  ↓
+Debezium PostgreSQL Connector
+  ↓
+Kafka topic: product-changes
+  ↓
+Embedding Service (consumer)
+  - Filters for description changes
+  - Calls embedding API
+  - Writes to vector database
+  ↓
+Vector Database (Pinecone / Weaviate)
+```
+
+This pattern extends beyond RAG. Any derived index (search, graph, analytics) can be kept fresh using CDC. The key insight: **CDC turns the database into an event stream**, enabling real-time propagation of changes to downstream systems.
+
+## Failure Modes and Operational Challenges
+
+CDC systems are robust but not immune to failure. Here are the most common failure modes and how to handle them.
+
+### Replication Slot Lag
+
+A replication slot tells PostgreSQL to preserve WAL segments until Debezium has read them. If Debezium falls behind (due to slow consumers, connector crashes, or Kafka downtime), the WAL grows unbounded. Eventually, the database runs out of disk space.
+
+**Symptoms:** `pg_replication_slots` shows increasing `restart_lsn` lag. Disk usage on the database host grows.
+
+**Prevention:** Monitor replication slot lag and alert when it exceeds a threshold (e.g., 1 GB). Set `wal_keep_size` to limit WAL retention, but be aware this can break replication if Debezium falls too far behind.
+
+**Recovery:** If the WAL has been truncated, the replication slot is lost. You must delete the slot, reconfigure the connector, and re-snapshot the database.
+
+### Schema-Breaking DDL
+
+When you drop or rename a column, Debezium sees a mismatch between the schema in the Schema Registry and the new table structure. This can cause the connector to crash or emit malformed events.
+
+**Symptoms:** Connector task fails with `Schema validation error`. Events are missing fields or have unexpected types.
+
+**Prevention:** Use backward-compatible schema changes whenever possible (add columns, don't drop them). If you must drop a column, pause the connector, run the migration, update the Schema Registry schema, and resume the connector.
+
+**Advanced solution:** Use a schema evolution framework (e.g., Confluent Schema Registry with compatibility modes) and design consumers to handle multiple schema versions.
+
+### Connector Crashes and Restart Recovery
+
+Kafka Connect is designed to be fault-tolerant. If a connector task crashes, Kafka Connect restarts it on another worker. Debezium tracks its position in the WAL using Kafka Connect's offset storage (a Kafka topic), so restarts are safe — the connector resumes from where it left off.
+
+**Problem:** If the offset topic is deleted or corrupted, Debezium loses its position and must re-snapshot the database.
+
+**Prevention:** Never delete the Kafka Connect offset topic (`connect-offsets`). Back it up regularly.
+
+**Recovery:** If offsets are lost, reconfigure the connector with `snapshot.mode=initial` to take a fresh snapshot.
+
+### Ordering Violations Across Tables
+
+Debezium publishes changes to separate Kafka topics per table. If you have foreign key relationships (e.g., `orders` references `customers`), events from different topics can arrive out of order at the consumer.
+
+**Example:** A customer is created, then an order is placed. The `customer` event might reach the consumer after the `order` event if there's network latency or partition rebalancing.
+
+**Solution:** Use **transaction markers** (Debezium's `provide.transaction.metadata` option) to group related changes from the same transaction. Consumers can buffer events until the entire transaction is visible, then apply them in order.
+
+Alternatively, denormalize the data model to avoid cross-table joins in consumers.
+
+## Debezium Connector Configuration Example
+
+Here's a sample Debezium PostgreSQL connector configuration deployed via the Kafka Connect REST API.
+
+<CodeBlock code={`{
+  "name": "products-cdc-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "tasks.max": "1",
+    "database.hostname": "postgres.default.svc.cluster.local",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "secure-password",
+    "database.dbname": "ecommerce",
+    "database.server.name": "ecommerce-db",
+    "table.include.list": "public.products,public.outbox",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_products",
+    "publication.name": "debezium_publication",
+    "key.converter": "io.confluent.connect.avro.AvroConverter",
+    "key.converter.schema.registry.url": "http://schema-registry:8081",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.type": "event_type",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.table.field.event.id": "id",
+    "transforms.outbox.route.topic.replacement": "\${routedByValue}.events"
+  }
+}
+`} language="json" filename="debezium-connector.json" />
+
+**Key fields:**
+
+- `table.include.list`: Only capture changes from `products` and `outbox` tables.
+- `plugin.name`: Use `pgoutput` (PostgreSQL's logical replication protocol).
+- `slot.name`: Name of the replication slot in PostgreSQL.
+- `transforms.outbox`: Apply the outbox SMT to extract domain events from the `outbox` table.
+- `route.topic.replacement`: Route events to topics named `{event_type}.events` (e.g., `OrderPlaced.events`).
+
+Deploy this configuration by POSTing it to the Kafka Connect REST API:
+
+```bash
+curl -X POST http://kafka-connect:8083/connectors \
+  -H "Content-Type: application/json" \
+  -d @debezium-connector.json
+```
+
+## Summary
+
+**Change Data Capture** transforms databases into event streams, enabling real-time synchronization of derived systems. Instead of polling for changes, CDC reads the database transaction log and publishes every insert, update, and delete to Kafka with millisecond latency.
+
+Four integration patterns address different use cases:
+
+1. **Dual write** — application writes to DB and Kafka. No atomicity. Anti-pattern in most cases.
+2. **Transactional outbox** — application writes business data + outbox record in a single transaction. Guarantees atomicity. Best for domain events.
+3. **Log-based CDC (Debezium)** — reads the WAL directly. No application changes. Captures all changes. Best for data synchronization.
+4. **Event sourcing** — events are the source of truth. Powerful but complex. Different paradigm.
+
+**Combining outbox + CDC** gives you transactional guarantees from the application and comprehensive change capture from Debezium. The application writes outbox records transactionally, and Debezium captures them from the WAL and publishes to Kafka.
+
+**Debezium** is the leading open-source CDC platform. It runs on Kafka Connect, supports PostgreSQL/MySQL/MongoDB/SQL Server/Oracle, and provides SMTs for filtering, routing, and extracting outbox payloads.
+
+**AI use case:** CDC enables real-time embedding updates for RAG systems. When a product description changes, Debezium captures the change, a consumer re-embeds the document, and the vector index is updated — keeping search results fresh with minimal latency.
+
+**Failure modes** include replication slot lag (WAL grows, disk fills), schema-breaking DDL (connector crashes), connector restarts (offset loss), and ordering violations across tables (foreign key relationships). Monitor lag, use backward-compatible schema changes, back up offset topics, and consider transaction markers for cross-table ordering.
+
+CDC is the foundation of event-driven data platforms. It decouples source systems from derived systems, enabling real-time analytics, search, caching, and AI pipelines.

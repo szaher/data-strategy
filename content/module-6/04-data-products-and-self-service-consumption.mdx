@@ -1,0 +1,424 @@
+---
+title: "Data Products & Self-Service Consumption"
+---
+
+## Overview
+
+You have built a lakehouse. You have adopted Iceberg for transactional tables and a Hive metastore for catalog management. You run Trino for federated queries and DuckDB for local analytics. The infrastructure is in place. Yet when a product manager asks "where can I find the monthly active user count," they are directed to a Slack thread, a stale Notion page, and three conflicting SQL queries in different repos.
+
+The problem is not infrastructure—it is **ownership and discoverability**. A lakehouse full of tables is not a lakehouse full of **data products**. A table is a storage artifact. A **data product** is a managed analytical asset with an explicit contract, an owner, and a commitment to quality, freshness, and stability. Without this distinction, your data platform becomes a graveyard of undocumented tables that no one trusts and everyone rebuilds.
+
+This lesson defines what makes data truly a **product**, explains why semantic layers alone do not suffice, and introduces the mechanisms—**data contracts**, **discovery systems**, and **self-service consumption**—that turn analytical assets into trustworthy, discoverable, and reusable products.
+
+---
+
+## The Problem: Tables Without Ownership
+
+In most organizations, the data warehouse or lakehouse is filled with tables. Many are outputs of ETL pipelines. Some are materialized views. Others are one-off extracts created by analysts and abandoned. These tables exist, but no one knows:
+
+- **Who owns them** — who to contact when the schema changes or data is missing.
+- **What they mean** — are `user_events` deduplicated? Does `revenue` include refunds?
+- **How fresh they are** — is the data updated hourly, daily, or never?
+- **Whether they are production-grade** — are they experimental, deprecated, or canonical?
+- **What the interface is** — can I join on `user_id` or `customer_id`? Are columns nullable?
+- **What quality guarantees exist** — are null rates acceptable? Do primary keys have duplicates?
+
+Without answers to these questions, every consumer must treat the data as **untrusted by default**. This leads to defensive behaviors:
+
+- Re-implementing the same logic in multiple places (five different definitions of "monthly active user").
+- Building redundant validation layers in every downstream pipeline.
+- Frequent breakage when upstream schemas change without warning.
+- Data teams spending more time answering "what table should I use?" than building new features.
+
+The root cause is that **tables are treated as byproducts of pipelines, not as products with commitments**. The solution is to elevate the most important analytical assets to **data product status**.
+
+---
+
+## What Is a Data Product?
+
+A **data product** is a managed analytical asset with an explicit contract. It is not just a table—it is a table **plus**:
+
+1. **Owner** — a person or team accountable for the product. They answer questions, respond to incidents, and approve changes.
+2. **Interface/schema** — a documented, versioned schema that defines what columns exist, their types, nullability, and semantics.
+3. **Freshness SLA** — a commitment to how current the data is (e.g., "updated within 1 hour of source writes").
+4. **Quality expectations** — measurable guarantees about data quality (e.g., "null rate on `user_id` < 0.1%", "no duplicate `order_id`").
+5. **Access policy** — who can read or write the data, enforced through catalog-level permissions or row-level security.
+6. **Cost attribution** — tracking compute and storage costs so consumers understand the cost of using the product.
+7. **Support model** — where to get help (Slack channel, ticketing system, on-call rotation).
+8. **Deprecation lifecycle** — how much notice is given before breaking changes, and how long deprecated versions are supported.
+
+This contract is **machine-readable** (stored in the catalog, enforced by the platform) and **discoverable** (surfaced in data catalogs and BI tools).
+
+<MermaidDiagram chart={`graph TD
+    A["Data Product"] --> B["Owner"]
+    A --> C["Interface/Schema"]
+    A --> D["Freshness SLA"]
+    A --> E["Quality Expectations"]
+    A --> F["Access Policy"]
+    A --> G["Cost Attribution"]
+    A --> H["Support Model"]
+    A --> I["Deprecation Lifecycle"]
+    
+    C --> C1["Versioned Schema"]
+    C --> C2["Column Semantics"]
+    C --> C3["Nullability Rules"]
+    
+    E --> E1["Null Rate Guarantees"]
+    E --> E2["Uniqueness Constraints"]
+    E --> E3["Freshness Checks"]
+    
+    style A fill:#63b3ed,stroke:#2c5282,color:#fff
+    style B fill:#68d391,stroke:#22543d
+    style C fill:#68d391,stroke:#22543d
+    style D fill:#68d391,stroke:#22543d
+    style E fill:#68d391,stroke:#22543d
+    style F fill:#68d391,stroke:#22543d
+    style G fill:#68d391,stroke:#22543d
+    style H fill:#68d391,stroke:#22543d
+    style I fill:#68d391,stroke:#22543d
+`} />
+
+### Ownership Is Non-Negotiable
+
+The most critical component is **ownership**. A data product without an owner is not a product—it is an orphan. The owner is the single point of accountability. When a schema change breaks downstream dashboards, when freshness SLAs are violated, when a consumer has questions about semantics—these are the owner's responsibility.
+
+Ownership is not passive. It includes:
+
+- **Incident response** — when data is missing or incorrect, the owner investigates.
+- **Change management** — when the schema must evolve, the owner communicates with consumers and manages migrations.
+- **Documentation** — the owner ensures the contract is up-to-date and discoverable.
+- **Lifecycle management** — the owner decides when to deprecate the product and how to support migrations.
+
+In a **data mesh** model (decentralized ownership), each domain team owns the data products they produce. In a **centralized model**, a platform team owns shared data products but assigns domain experts as product managers.
+
+---
+
+## A Semantic Layer Is Not a Data Product
+
+A common misconception is that **adding a semantic layer makes tables into data products**. A semantic layer is a **business logic abstraction** that defines metrics, dimensions, and relationships in business terms. For example:
+
+- **Metric**: "Monthly Active Users" = `COUNT(DISTINCT user_id WHERE last_seen >= DATE_TRUNC('month', CURRENT_DATE))`.
+- **Dimension**: "Region" maps `country_code` to a human-readable region name.
+- **Relationship**: "Orders" belong to "Customers" via `customer_id`.
+
+Semantic layers are valuable. They eliminate the "five different definitions of MAU" problem by centralizing business logic. Tools like **dbt Semantic Layer**, **Cube.js**, **Looker LookML**, and **Malloy** provide semantic modeling frameworks.
+
+However, **a semantic layer alone does not make a data product**. It addresses one component—**interface and semantics**—but not the others. A semantic layer does not guarantee:
+
+- **Ownership** — who is accountable when the metric definition is wrong?
+- **Freshness SLA** — how quickly is the underlying table updated?
+- **Quality expectations** — are null rates acceptable? Are duplicates removed?
+- **Deprecation lifecycle** — how much notice before the metric is removed?
+- **Cost attribution** — who pays for the compute needed to calculate the metric?
+
+Without these, the semantic layer is documentation, not a contract. It tells consumers **what** the data means, but not **who to trust**, **how current it is**, or **what guarantees exist**.
+
+A **data product** uses a semantic layer as part of its interface, but also commits to ownership, SLAs, quality, and lifecycle management. The semantic layer is the **API**; the data product is the **service** behind it.
+
+---
+
+## Data Product Contracts
+
+A **data contract** is the formalization of the commitments a data product makes to its consumers. We introduced contracts in Module 4 Lesson 3 in the context of **event-driven architectures**—Kafka schemas, Avro/Protobuf contracts, and schema registries. The same principles apply to **analytical data products**, but the scope expands beyond schema to include SLAs, quality, and lifecycle.
+
+### Contract Components
+
+A complete data product contract includes:
+
+1. **Schema contract** — the structure of the data (column names, types, nullability, primary keys).
+2. **Freshness contract** — how quickly data is available after source writes (e.g., "within 1 hour of transaction commit").
+3. **Quality contract** — measurable expectations about data quality (e.g., "null rate on `user_id` < 0.1%", "no duplicate `order_id`").
+4. **Availability contract** — uptime guarantees (e.g., "99.9% query success rate during business hours").
+5. **Versioning contract** — how schema changes are managed (major/minor/patch versioning, backward compatibility rules).
+6. **Deprecation contract** — how much notice before breaking changes (e.g., "90-day deprecation window with automated migration path").
+7. **Access contract** — who can read/write the data and under what conditions (catalog permissions, row-level security, PII masking).
+8. **Cost contract** — who pays for compute and storage, and whether consumers are charged for usage.
+
+### Machine-Readable Contracts
+
+Contracts are not documentation—they are **machine-readable specifications** that the platform can **enforce**. For example:
+
+- **Schema contract** — enforced by Iceberg schema evolution policies, dbt schema tests, or Great Expectations validations.
+- **Freshness contract** — monitored by data observability tools (Monte Carlo, Datadog, dbt exposures) that alert when SLAs are violated.
+- **Quality contract** — enforced by automated tests run after every data write (dbt tests, Great Expectations checkpoints, Soda checks).
+- **Versioning contract** — enforced by catalog versioning (Iceberg time travel, Delta table versioning, dbt model versions).
+
+When a contract is violated, the platform detects it, alerts the owner, and optionally **prevents downstream consumption** (e.g., blocking BI queries until quality checks pass).
+
+### Contract Evolution
+
+Contracts must evolve as business needs change. A **versioning policy** governs how changes are introduced:
+
+- **Backward-compatible changes** (adding a nullable column, adding a new metric) — consumers are unaffected. Deployed without notice.
+- **Forward-compatible changes** (deprecating a column) — old consumers still work, but new consumers should not depend on the deprecated field. Announced with a deprecation timeline.
+- **Breaking changes** (renaming a column, changing a type) — require a **major version bump** and a **migration period** during which both old and new versions are supported.
+
+The **deprecation lifecycle** defines the timeline for breaking changes. For example:
+
+1. **Announcement (T=0)** — the owner announces the change, documents the migration path, and provides a timeline.
+2. **Deprecation window (T=0 to T=90 days)** — both old and new versions are supported. Consumers migrate at their own pace.
+3. **End-of-life (T=90 days)** — the old version is removed. Queries using the old schema fail.
+
+This process mirrors **API versioning** in software engineering. Data products are APIs for data.
+
+---
+
+## Discovery and Self-Service Consumption
+
+A data product is useless if no one can find it. **Discovery** is the problem of making data products **searchable, browsable, and contextually rich** so consumers can find what they need without tribal knowledge.
+
+### Data Catalogs
+
+A **data catalog** is a metadata repository that indexes all data assets in the organization and surfaces them through a search interface. Modern catalogs include:
+
+- **DataHub** (LinkedIn open-source) — metadata graph with lineage, search, and governance.
+- **Amundsen** (Lyft open-source) — table discovery with popularity rankings and column-level search.
+- **OpenMetadata** — open-source catalog with data quality integration and collaboration features.
+- **Alation** — commercial catalog with data governance and stewardship workflows.
+
+A catalog ingests metadata from:
+
+- **Iceberg catalogs** — table schemas, partitions, snapshots.
+- **dbt projects** — model definitions, lineage, tests.
+- **Query engines** — query logs (which tables are queried together, by whom, how often).
+- **Data quality tools** — test results, SLA violations, anomaly detections.
+- **BI tools** — dashboards, reports, and the datasets they depend on.
+
+The catalog then surfaces:
+
+- **Search** — full-text search across table names, column names, descriptions, and tags.
+- **Lineage** — visual graph showing how data flows from sources to models to dashboards.
+- **Usage metrics** — which tables are most queried, by which teams, and how often.
+- **Quality scores** — data quality test pass rates, freshness status, and SLA compliance.
+- **Documentation** — README files, column descriptions, owner contact info, Slack channels.
+
+For example, a product manager searching for "monthly active users" should see:
+
+- A canonical `metrics.monthly_active_users` table.
+- A description explaining the metric definition.
+- The owner (Data Platform team).
+- Freshness SLA (updated daily at 6 AM UTC).
+- Quality score (99.8% test pass rate over the last 30 days).
+- Lineage showing the upstream `events.user_sessions` table and downstream dashboards.
+- A link to the Slack channel `#data-platform`.
+
+This is **self-service discovery**—no need to ask in Slack or search through Notion pages.
+
+### Self-Service Analytics
+
+Discovery is the first step. The second is **consumption**. Self-service analytics means consumers can **query, visualize, and analyze data products without data engineering support**.
+
+Key enablers:
+
+1. **SQL editors** — tools like **Trino UI**, **DBeaver**, **DataGrip**, or **Hue** that let consumers write SQL queries against the lakehouse.
+2. **Notebooks** — **Jupyter**, **Databricks**, or **Hex** for exploratory analysis in Python/R.
+3. **BI tools** — **Looker**, **Tableau**, **Metabase**, or **Superset** for drag-and-drop dashboards.
+4. **Semantic layers** — **dbt Semantic Layer** or **Cube.js** for business-friendly metric definitions.
+5. **Data marketplace** — a catalog-driven interface where domain teams **publish** data products and consumers **subscribe** (with automated access provisioning).
+
+The goal is to **reduce time-to-insight** by eliminating bottlenecks. Instead of waiting for a data engineer to write a custom ETL job, a product manager can:
+
+1. Search the catalog for "user retention."
+2. Find the `metrics.user_retention_cohort` table.
+3. Verify the owner, freshness, and quality.
+4. Open a Trino query editor and write `SELECT * FROM metrics.user_retention_cohort WHERE cohort_month = '2026-05'`.
+5. Visualize the results in a Jupyter notebook or a Looker dashboard.
+
+This workflow is **self-service**—no tickets, no waiting, no tribal knowledge required.
+
+### Data Marketplace
+
+A **data marketplace** is a catalog with **productization features**. It treats data products as first-class offerings:
+
+- **Publishing** — domain teams submit a data product for inclusion, providing the contract (schema, SLA, quality, owner).
+- **Approval** — a data governance team reviews the contract, verifies quality, and approves publication.
+- **Subscription** — consumers browse the marketplace, request access, and are automatically provisioned permissions.
+- **Cost attribution** — consumers see the compute/storage cost of using each product, enabling cost-aware decisions.
+- **Feedback loop** — consumers rate data products, report issues, and request features. Owners respond and iterate.
+
+The marketplace model aligns incentives. Owners are motivated to maintain high quality (poor quality products are downranked in search). Consumers are motivated to respect access policies and minimize waste (cost attribution makes inefficient queries visible).
+
+---
+
+## Data Product Lifecycle
+
+A data product is not a static artifact. It evolves through a lifecycle:
+
+<MermaidDiagram chart={`flowchart LR
+    A["Create"] --> B["Publish"]
+    B --> C["Discover"]
+    C --> D["Consume"]
+    D --> E["Monitor"]
+    E --> F["Evolve"]
+    F --> G["Deprecate"]
+    
+    F -->|Breaking Change| B
+    F -->|Compatible Change| D
+    
+    style A fill:#68d391,stroke:#22543d
+    style B fill:#63b3ed,stroke:#2c5282
+    style C fill:#63b3ed,stroke:#2c5282
+    style D fill:#63b3ed,stroke:#2c5282
+    style E fill:#f6ad55,stroke:#7c2d12
+    style F fill:#f6ad55,stroke:#7c2d12
+    style G fill:#fc8181,stroke:#742a2a
+`} />
+
+### 1. Create
+
+A domain team identifies a high-value analytical use case and decides to productize it. They define the contract:
+
+- **Schema** — what columns, types, and relationships.
+- **Owner** — who is accountable.
+- **Freshness SLA** — how current the data will be.
+- **Quality expectations** — what guarantees are made.
+- **Access policy** — who can consume the product.
+
+The data product is implemented as a **dbt model**, an **Iceberg table**, or a **Trino view**. Automated tests validate the contract.
+
+### 2. Publish
+
+The product is registered in the data catalog. Metadata is ingested:
+
+- Schema from Iceberg.
+- Lineage from dbt.
+- Quality metrics from Great Expectations.
+- Ownership from the contract definition.
+
+The product appears in the data marketplace, searchable by all consumers.
+
+### 3. Discover
+
+Consumers search the catalog, find the product, read the documentation, and verify the contract. They request access through the marketplace.
+
+### 4. Consume
+
+Consumers query the data product using SQL, BI tools, or notebooks. Logs track usage for cost attribution and popularity ranking.
+
+### 5. Monitor
+
+The platform continuously monitors:
+
+- **Freshness** — is data arriving on time?
+- **Quality** — are tests passing?
+- **Availability** — are queries succeeding?
+- **Cost** — are compute and storage costs within budget?
+
+When SLAs are violated, the owner is alerted. Consumers see freshness and quality status in the catalog.
+
+### 6. Evolve
+
+Business needs change. The owner updates the schema, adds new columns, or refines metric definitions. Changes are categorized:
+
+- **Compatible** — deployed immediately.
+- **Breaking** — require a deprecation window and migration path.
+
+### 7. Deprecate
+
+When a product is no longer needed, the owner announces deprecation, provides a migration timeline (e.g., 90 days), and supports consumers during the transition. At the end of the deprecation window, the product is removed from the catalog.
+
+---
+
+## Decision Framework: What Deserves Product Status?
+
+Not every table should be a data product. Productization has overhead—ownership, SLAs, quality monitoring, documentation. The decision depends on:
+
+1. **Criticality** — is this data used in production systems, executive dashboards, or compliance reporting? If yes, it deserves product status.
+2. **Reuse** — is this data used by multiple teams? If five teams rebuild the same logic, productize it once.
+3. **Stability** — is the schema stable, or does it change daily? Unstable schemas are poor candidates for productization.
+4. **Ownership availability** — is there a team willing and able to own the product? Without ownership, productization fails.
+
+Examples:
+
+- **Good candidate**: `metrics.monthly_active_users` — used by Product, Marketing, and Finance. Critical for executive dashboards. Stable schema. Owned by Data Platform team.
+- **Bad candidate**: `scratch.analyst_exploration_2026_06_19` — one-off exploratory dataset. Single consumer. Unstable schema. No long-term owner.
+
+A rule of thumb: if a dataset is **reused more than three times** or **critical to business decisions**, productize it. Otherwise, leave it as a raw table.
+
+---
+
+## Failure Modes and How to Avoid Them
+
+### Failure Mode 1: Semantic Layer = Data Product
+
+**Symptom**: Teams invest in semantic layer tooling (Cube.js, Looker LookML) and assume this alone creates data products.
+
+**Consequence**: Consumers trust the metric definitions but are blindsided by stale data, poor quality, or unexpected schema changes. No one is accountable when things break.
+
+**Fix**: Use the semantic layer as the **interface** of the data product, but also commit to ownership, SLAs, quality, and lifecycle management. A metric definition is not a product without a contract.
+
+### Failure Mode 2: No Ownership
+
+**Symptom**: Data products are created but no one is assigned as owner. When issues arise, no one responds.
+
+**Consequence**: Consumers lose trust. They stop using the product and revert to building their own pipelines.
+
+**Fix**: Ownership is non-negotiable. Every data product must have a named owner—a person or team accountable for quality, freshness, and support.
+
+### Failure Mode 3: No Deprecation Lifecycle
+
+**Symptom**: Schemas change without notice. A column is renamed, and downstream dashboards break.
+
+**Consequence**: Consumers experience frequent breakage. They lose trust and stop adopting new data products.
+
+**Fix**: Implement a versioning policy with deprecation windows. Breaking changes require advance notice (e.g., 90 days) and a migration path. Support both old and new versions during the transition.
+
+### Failure Mode 4: No Discovery
+
+**Symptom**: Data products exist but are not indexed in a catalog. Consumers rely on Slack threads and tribal knowledge to find them.
+
+**Consequence**: Duplicate work. Different teams build the same logic because they do not know a data product already exists.
+
+**Fix**: Invest in a data catalog (DataHub, Amundsen, OpenMetadata). Ensure all data products are registered and searchable.
+
+### Failure Mode 5: No Quality Monitoring
+
+**Symptom**: Data products promise quality but do not enforce it. Tests are written but not run in production.
+
+**Consequence**: Consumers discover data quality issues (duplicates, nulls, stale data) only after building dashboards or reports. Trust erodes.
+
+**Fix**: Automate quality testing. Run Great Expectations, dbt tests, or Soda checks after every data write. Surface quality status in the catalog. Block consumption when tests fail.
+
+---
+
+## Bridge to Module 7: Governance Makes Data Products Trustworthy
+
+Data products are a **commitment**. But commitments without enforcement are promises without teeth. Module 7 introduces the **trust plane**—the governance layer that makes data products trustworthy by enforcing contracts, monitoring quality, and ensuring compliance.
+
+Key concepts in Module 7:
+
+- **Data quality observability** — continuous monitoring of freshness, completeness, and accuracy.
+- **Lineage and impact analysis** — tracking how changes propagate through the data platform.
+- **Access policies and compliance** — enforcing who can see what, and ensuring regulatory requirements (GDPR, CCPA) are met.
+- **Cost visibility and optimization** — attributing compute and storage costs to teams and products.
+
+Without governance, data products are fragile. Owners make promises but cannot prove compliance. Consumers trust contracts but have no recourse when SLAs are violated. Module 7 closes this gap by introducing the tools and practices that turn data products from **aspirations into guarantees**.
+
+---
+
+## Summary
+
+A **data product** is not just a table—it is a managed analytical asset with an explicit contract. The contract includes:
+
+- **Owner** — who is accountable.
+- **Interface/schema** — how to consume the data.
+- **Freshness SLA** — how current the data is.
+- **Quality expectations** — what guarantees exist.
+- **Access policy** — who can read/write.
+- **Cost attribution** — who pays.
+- **Support model** — where to get help.
+- **Deprecation lifecycle** — how changes are managed.
+
+A **semantic layer** is valuable but insufficient. It defines business logic but does not commit to ownership, SLAs, or quality. A data product uses a semantic layer as part of its interface but also enforces the contract through automation.
+
+**Data contracts** formalize commitments. They are machine-readable, enforced by the platform, and surfaced in data catalogs. Contracts evolve through versioning policies, with backward-compatible changes deployed immediately and breaking changes requiring deprecation windows.
+
+**Discovery** makes data products findable. Data catalogs (DataHub, Amundsen, OpenMetadata) index metadata, lineage, usage, and quality. Consumers search the catalog, verify contracts, and consume data through self-service tools (SQL editors, notebooks, BI dashboards).
+
+The **data marketplace** model treats data products as first-class offerings. Domain teams publish products, governance teams approve them, and consumers subscribe. Cost attribution and feedback loops align incentives and drive quality.
+
+The **data product lifecycle** includes creation, publication, discovery, consumption, monitoring, evolution, and deprecation. Each stage is supported by platform tooling—Iceberg for versioning, dbt for transformation, Great Expectations for quality, and catalogs for discovery.
+
+Not every table deserves product status. Productize datasets that are **critical, reused, and stable**. Avoid failure modes—semantic layers without ownership, no deprecation lifecycle, no discovery, no quality monitoring.
+
+Module 7 introduces the **trust plane**—the governance layer that enforces contracts, monitors quality, and ensures compliance. Without governance, data products are promises. With it, they are guarantees.

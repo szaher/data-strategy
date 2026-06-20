@@ -1,0 +1,53 @@
+{
+  "id": 9,
+  "title": "LLM & Agent Data Infrastructure",
+  "description": "RAG pipelines, vector/hybrid search, document processing, embeddings, knowledge freshness, evaluation, retrieval governance",
+  "color": "#4fd1c5",
+  "lessons": [
+    {
+      "slug": "01-why-llm-applications-need-data-infrastructure",
+      "title": "Why LLM Applications Need Data Infrastructure",
+      "description": "Knowledge freshness, hallucination grounding; LLM data infrastructure consumes governed data products through a retrieval serving path",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-document-processing-and-embedding-pipelines",
+      "title": "Document Processing & Embedding Pipelines",
+      "description": "Parsing, normalization, chunking strategies, embedding generation, versioning embeddings as data artifacts",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["flowchart", "sequence"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-vector-search-and-retrieval-architecture",
+      "title": "Vector Search & Retrieval Architecture",
+      "description": "Vector databases, hybrid search, reranking, index management; dedicated vector DB vs vector-enabled DB vs search engine",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-rag-pipeline-design-and-evaluation",
+      "title": "RAG Pipeline Design & Evaluation",
+      "description": "End-to-end RAG; two-layered evaluation: retrieval metrics and end-to-end quality (groundedness, citation, safety, cost)",
+      "estimatedMinutes": 13,
+      "diagramTypes": ["flowchart", "architecture"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "05-agent-data-patterns-and-retrieval-governance",
+      "title": "Agent Data Patterns & Retrieval Governance",
+      "description": "Agent memory types, retrieval vs action authorization, access control at retrieval time, audit records",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "sequence"],
+      "hasCode": true,
+      "hasQuiz": false
+    }
+  ]
+}

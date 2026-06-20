@@ -1,0 +1,452 @@
+---
+title: "Event Design & Schema Contracts"
+quiz:
+  - question: "A team changes the meaning of an 'amount' field from USD to EUR without modifying the schema. Which compatibility concern is violated?"
+    options:
+      - "Schema compatibility — the schema structure changed"
+      - "Semantic compatibility — the meaning changed even though the schema didn't"
+      - "Data contract compatibility — the SLA was violated"
+      - "Forward compatibility — new consumers can't read old events"
+    correctIndex: 1
+  - question: "What is the primary benefit of full compatibility in schema evolution?"
+    options:
+      - "Producers and consumers can upgrade independently in any order"
+      - "Events become smaller and transmit faster"
+      - "Schema registry is no longer needed"
+      - "Semantic meaning is automatically preserved"
+    correctIndex: 0
+  - question: "Which element is part of a data contract but NOT part of a schema definition?"
+    options:
+      - "Field data types and nullability rules"
+      - "Ownership, SLAs, and deprecation policy"
+      - "Required vs optional field markers"
+      - "Nested object structure definitions"
+    correctIndex: 1
+---
+
+## Overview
+
+In Lesson 2 we explored Kafka's distributed streaming architecture — topics, partitions, delivery semantics, and operational patterns with Strimzi. Now we turn to what flows through those topics: **events** and how to design them for long-term evolution.
+
+A production event stream is a **contract between producers and consumers** that must survive months or years of independent deployments. When that contract breaks, consumers crash, data pipelines stall, and teams scramble to coordinate emergency rollbacks. Yet many organizations treat event design as an afterthought, conflating three distinct concerns into "just use Avro and you'll be fine."
+
+This lesson separates **schema compatibility** (can the bytes be deserialized?), **semantic compatibility** (does the data still mean what consumers expect?), and **data contracts** (who owns this, what are the guarantees, and how do we change it safely?). We'll walk through evolution patterns, real-world failure modes, and decision frameworks for when breaking compatibility is the right trade-off.
+
+<MermaidDiagram chart={`graph TD
+    A[Event Evolution Concerns] --> B[Schema Compatibility]
+    A --> C[Semantic Compatibility]
+    A --> D[Data Contracts]
+    
+    B --> B1[Structural Rules]
+    B --> B2[Serialization Format]
+    B --> B3[Can Old/New Read Each Other?]
+    
+    C --> C1[Field Meaning]
+    C --> C2[Business Behavior]
+    C --> C3[Timing & Ordering]
+    
+    D --> D1[Ownership & SLAs]
+    D --> D2[Quality Guarantees]
+    D --> D3[Deprecation Policy]
+    
+    style A fill:#fef3c7,stroke:#d97706
+    style B fill:#dbeafe,stroke:#2563eb
+    style C fill:#dcfce7,stroke:#16a34a
+    style D fill:#fce7f3,stroke:#db2777
+`} />
+
+## The Problem: Schema Breaks in Production
+
+A team deploys a new version of their order service. The `OrderCreated` event now includes a `discountCode` field. Consumers immediately start crashing with deserialization errors. The on-call engineer rolls back the deployment, but some events were already written to Kafka with the new schema. Now old consumers can't process those events either. The incident lasts four hours, blocks three other teams, and the post-mortem reveals the root cause: no one checked schema compatibility before deploying.
+
+This is the canonical event evolution failure. It happens because teams confuse "we have a schema" with "we have a compatibility strategy." A schema defines structure. Compatibility defines **evolution rules** — what changes are safe, who decides, and how to validate before production.
+
+The default response is often "just make everything backward compatible," but that's insufficient. Even if the schema passes compatibility checks, semantic drift can break consumers silently. And neither schemas nor semantics address **organizational questions**: who owns this event? What quality guarantees do consumers expect? How much notice is required before a breaking change?
+
+Let's unpack these three layers.
+
+## Schema Compatibility: Structural Evolution Rules
+
+**Schema compatibility** answers one question: can a producer writing schema version N and a consumer reading schema version M successfully exchange data?
+
+The answer depends on the **serialization format** and **compatibility mode** you choose.
+
+### Serialization Formats
+
+**Avro** is the most common choice for Kafka events. It's compact, fast, and has rich schema evolution semantics. Avro schemas are JSON definitions that specify fields, types, and documentation. The schema is stored in a **schema registry** (Confluent Schema Registry or Apicurio Registry), and each event payload includes a schema ID reference rather than embedding the full schema.
+
+**Protobuf** (Protocol Buffers) is Google's serialization format, also widely used. It has similar evolution capabilities to Avro and slightly better performance in some benchmarks. Protobuf uses field numbers instead of field names for wire encoding, which makes renaming fields safe (the number stays stable).
+
+**JSON Schema** provides schema validation for JSON payloads. It's human-readable and easy to debug, but less efficient for high-volume streams. JSON Schema has weaker evolution semantics than Avro or Protobuf — there's no standard "compatibility mode" enforcement in most registries.
+
+For the rest of this lesson, we'll use **Avro** as the reference format, but the compatibility principles apply to Protobuf as well.
+
+### Compatibility Modes
+
+A schema registry enforces **compatibility rules** when a producer tries to register a new schema version. There are four standard modes:
+
+**Backward compatibility**: A new schema can **read** data written with the old schema. This is the most common default. It allows consumers to upgrade first, then producers.
+
+Safe changes:
+- Add a field with a **default value**
+- Remove a field (consumers ignore unknown fields)
+
+Breaking changes:
+- Add a required field (old data doesn't have it)
+- Change a field's type
+
+**Forward compatibility**: An old schema can **read** data written with the new schema. This allows producers to upgrade first, then consumers.
+
+Safe changes:
+- Add a field (old consumers ignore it)
+- Remove a field with a default value (old schema fills in the default)
+
+Breaking changes:
+- Remove a required field (old consumers expect it)
+- Change a field's type
+
+**Full compatibility**: Both backward and forward. New and old schemas can read each other's data in both directions. This is the gold standard for independent deployments — producers and consumers can upgrade in **any order**.
+
+Safe changes:
+- Add a field with a default value
+- Remove a field with a default value
+
+Breaking changes:
+- Almost everything else (type changes, renaming, adding/removing required fields)
+
+**None**: No compatibility enforcement. Every schema version is accepted. This is useful during early development but dangerous in production — you lose the safety net.
+
+<MermaidDiagram chart={`flowchart TD
+    Start[Producer Registers New Schema] --> Check{Compatibility Mode?}
+    
+    Check -->|Backward| B1[Can new schema read old data?]
+    Check -->|Forward| F1[Can old schema read new data?]
+    Check -->|Full| Full1[Can schemas read each other both ways?]
+    Check -->|None| Accept[Accept Immediately]
+    
+    B1 -->|Yes| Accept
+    B1 -->|No| Reject[Reject Schema]
+    
+    F1 -->|Yes| Accept
+    F1 -->|No| Reject
+    
+    Full1 -->|Yes| Accept
+    Full1 -->|No| Reject
+    
+    Accept --> Registry[Store in Schema Registry]
+    Reject --> Error[Return Error to Producer]
+    
+    style Accept fill:#dcfce7,stroke:#16a34a
+    style Reject fill:#fee2e2,stroke:#dc2626
+    style Full1 fill:#dbeafe,stroke:#2563eb
+`} />
+
+### Evolution Rules and Defaults
+
+Here's an Avro schema with evolution-friendly defaults:
+
+<CodeBlock code={`{
+  "type": "record",
+  "name": "OrderCreated",
+  "namespace": "com.company.orders.events",
+  "fields": [
+    {
+      "name": "orderId",
+      "type": "string",
+      "doc": "Unique order identifier (UUID)"
+    },
+    {
+      "name": "customerId",
+      "type": "string",
+      "doc": "Customer ID who placed the order"
+    },
+    {
+      "name": "totalAmount",
+      "type": "double",
+      "doc": "Total order amount in USD"
+    },
+    {
+      "name": "discountCode",
+      "type": ["null", "string"],
+      "default": null,
+      "doc": "Optional discount code applied (null if none)"
+    },
+    {
+      "name": "createdAt",
+      "type": "long",
+      "logicalType": "timestamp-millis",
+      "doc": "Order creation timestamp (Unix millis)"
+    },
+    {
+      "name": "schemaVersion",
+      "type": "string",
+      "default": "1.0.0",
+      "doc": "Schema version for event envelope tracking"
+    }
+  ]
+}
+`} language="json" filename="order-created-v1.avsc" />
+
+Key evolution-friendly patterns:
+
+- **Optional fields use unions with null**: `["null", "string"]` with `"default": null` allows backward-compatible addition.
+- **Logical types for timestamps**: `timestamp-millis` is clearer than raw `long`.
+- **Documentation on every field**: Consumers need to understand semantics, not just types.
+- **Schema version in the payload**: Helpful for debugging and semantic compatibility tracking (more on this below).
+
+If we want to add a new field `shippingMethod`, we define it as:
+
+```json
+{
+  "name": "shippingMethod",
+  "type": ["null", "string"],
+  "default": null,
+  "doc": "Shipping method (standard, express, overnight); null for pickup orders"
+}
+```
+
+This is backward-compatible because old consumers ignore the field, and the default ensures old events (which lack this field) can be read by new consumers.
+
+> **Warning**: Adding a field **without** a default breaks backward compatibility. Always provide defaults for optional fields.
+
+## Semantic Compatibility: Preserving Meaning
+
+**Semantic compatibility** is what trips up teams who think schemas are enough. A change can pass schema compatibility checks but still **break consumers** because the **meaning** of the data changed.
+
+### Example: Currency Drift
+
+Version 1 of `OrderCreated` has a `totalAmount` field documented as "Total order amount in USD."
+
+A team in Europe decides to start emitting amounts in EUR. They update the documentation to "Total order amount in EUR" and deploy. The schema is **structurally identical** — still a `double`. The schema registry accepts it. But every downstream consumer that assumed USD now computes incorrect revenue, displays wrong prices to customers, and triggers false fraud alerts.
+
+This is **semantic incompatibility**. The schema didn't break, but the **contract** did.
+
+### Ownership and Canonical Meaning
+
+Who decides what a field means? The **producer** owns the event schema and semantics. Consumers must adapt to the producer's definition, not the other way around. If you need a different currency, you create a **new field** (`totalAmountEUR`) or a **new event** (`OrderCreatedEUR`), and deprecate the old one with a migration timeline.
+
+Semantic compatibility is preserved when:
+
+- **Field meaning is stable**: "price" always means the same currency, tax treatment, and precision.
+- **Event timing is stable**: "OrderCreated" is emitted at the same point in the order lifecycle (before or after payment?).
+- **Ordering expectations are stable**: If consumers expect `OrderCreated` before `OrderShipped`, don't reverse that.
+
+### Versioning for Semantic Changes
+
+Even when a change is schema-compatible, consider whether it's **semantically breaking**. If it is, you have two options:
+
+1. **Bump the major version** of the event (e.g., `OrderCreated.v2`) and run both versions in parallel during migration.
+2. **Add a new field** instead of changing an existing one. For example, add `totalAmountCurrency` and `totalAmountValue`, keep the old `totalAmount` field populated for backward compatibility, and document the deprecation timeline.
+
+Some teams embed a `schemaVersion` string in the event payload (as in the Avro example above). This isn't enforced by the schema registry, but it helps consumers route to different deserialization or business logic based on semantic version.
+
+> **Tip**: If you change a field's meaning, treat it as a breaking change even if the schema is compatible. Communicate the change in your data contract (see next section) and give consumers time to migrate.
+
+## Data Contracts: Organizational Agreements
+
+Schemas define structure. Semantics define meaning. **Data contracts** define **ownership, quality, and change management**.
+
+A data contract is a formal agreement between the producer (who owns the event) and consumers (who depend on it). It answers:
+
+- **Who owns this event?** Which team is responsible for schema evolution, uptime, and breaking changes?
+- **What are the SLAs?** Freshness (how soon after the business event is it published?), completeness (what percentage of events are missing fields?), accuracy (how often are values wrong?).
+- **What quality guarantees exist?** Null rates, value ranges, uniqueness constraints, referential integrity.
+- **What is the classification?** Is this event public, internal, or restricted? Does it contain PII?
+- **Who can consume it?** Access control policies.
+- **How are breaking changes handled?** How much notice is required? What's the deprecation process?
+
+### Example Data Contract (YAML)
+
+<CodeBlock code={`contract:
+  name: OrderCreated
+  version: 1.2.0
+  owner:
+    team: orders-platform
+    slack: "#orders-platform"
+    oncall: orders-platform-oncall@company.com
+  
+  event:
+    topic: orders.created.v1
+    schema_registry: https://schema-registry.company.internal
+    schema_id: 42
+    serialization: avro
+    partitioning: by customerId (hash)
+  
+  sla:
+    freshness: < 5 seconds from order creation
+    completeness: 99.9% of orders must emit event
+    accuracy: 99.95% of events match source order state
+    availability: 99.9% uptime (Kafka cluster SLA)
+  
+  quality:
+    - field: orderId
+      constraint: unique, non-null, UUID format
+    - field: totalAmount
+      constraint: > 0, < 1000000
+    - field: customerId
+      constraint: non-null, exists in customer service
+  
+  classification:
+    pii: true
+    pii_fields: [customerId, shippingAddress]
+    retention: 7 years (regulatory requirement)
+    access: orders-platform (write), analytics, fraud, billing (read)
+  
+  deprecation:
+    policy: 90 days notice for breaking changes
+    migration_support: Dual-write to old and new versions during transition
+    current_deprecations:
+      - field: legacyOrderId
+        deprecated_since: 2026-03-01
+        removal_date: 2026-06-01
+        migration_guide: https://wiki.company.internal/orders/legacy-id-migration
+`} language="yaml" filename="order-created-contract.yaml" />
+
+This contract is **not enforced by the schema registry**. It's a human agreement, often codified in YAML or Markdown and stored in a shared repository (or a data catalog like DataHub, Atlan, or Collibra). Some teams build tooling to validate contracts in CI/CD — for example, failing a deployment if a schema change violates the deprecation policy.
+
+### Why Contracts Matter
+
+Without data contracts, you get:
+
+- **Ownership confusion**: No one knows who to ask when the schema needs to change.
+- **Surprise breaking changes**: Consumers discover incompatibility in production.
+- **Quality drift**: Null rates creep up, no one notices until dashboards break.
+- **Access chaos**: Everyone can read everything, or no one can read anything.
+
+With contracts, you get:
+
+- **Accountability**: The owning team is on the hook for SLAs and quality.
+- **Predictability**: Consumers know what to expect and when changes will happen.
+- **Governance**: Access and retention policies are explicit.
+- **Migration paths**: Deprecation timelines give consumers time to adapt.
+
+> **Best practice**: Publish your data contract alongside your schema in the schema registry or data catalog. Treat contract changes with the same rigor as schema changes — review, approve, communicate.
+
+## Event Design Patterns
+
+Now that we've covered the three compatibility layers, let's look at practical event design patterns that make evolution easier.
+
+### Event Naming Conventions
+
+Events describe **things that happened** in the past. Use **past tense** for event names:
+
+- `OrderCreated`, `OrderShipped`, `OrderCancelled` (good)
+- `CreateOrder`, `ShipOrder`, `CancelOrder` (bad — these sound like commands)
+
+Namespace events by domain:
+
+- `com.company.orders.OrderCreated`
+- `com.company.inventory.StockReserved`
+
+This prevents naming collisions and clarifies ownership.
+
+### Thin vs Fat Events
+
+**Thin events** carry a reference (e.g., `orderId`) and consumers fetch details from an API or database.
+
+Pros:
+- Small payload size
+- Always up-to-date (fetch latest state)
+
+Cons:
+- Coupling to the source system (API must stay online)
+- Performance cost (extra network call per event)
+- Temporal coupling (what if the order is deleted before the consumer fetches it?)
+
+**Fat events** carry all the data consumers need.
+
+Pros:
+- Self-contained (no external dependencies)
+- Immutable snapshot of state at event time
+- Consumers can reprocess history without source system
+
+Cons:
+- Larger payloads
+- Duplication across events if the same entity appears in multiple events
+
+**Default recommendation**: Use **fat events** for event-driven architectures. Include all the data a consumer needs to take action. This decouples consumers from the source system and preserves the event stream as a complete historical record.
+
+Exception: If the payload would be massive (e.g., a 10 MB PDF attachment), store the blob in object storage and include a signed URL in the event.
+
+### Event Envelope Pattern
+
+An **event envelope** wraps the business payload with metadata:
+
+<CodeBlock code={`{
+  "envelope": {
+    "eventId": "550e8400-e29b-41d4-a716-446655440000",
+    "eventType": "OrderCreated",
+    "eventVersion": "1.2.0",
+    "source": "orders-service-prod-useast1",
+    "timestamp": 1718841234567,
+    "correlationId": "api-request-abc123",
+    "causationId": "UserClickedCheckout-xyz789"
+  },
+  "payload": {
+    "orderId": "order-12345",
+    "customerId": "customer-67890",
+    "totalAmount": 149.99
+  }
+}
+`} language="json" filename="order-created-event.json" />
+
+Envelope fields:
+
+- **eventId**: Unique ID for this event instance (UUID). Enables deduplication.
+- **eventType**: The event name (useful for routing in multi-event topics).
+- **eventVersion**: Semantic version of the event (not the schema registry version). Helps consumers route to different handlers for v1 vs v2.
+- **source**: Which service/instance emitted this event. Useful for debugging.
+- **timestamp**: When the event was emitted (not when the business event happened — include that in the payload if needed).
+- **correlationId**: Request ID that triggered this event. Enables distributed tracing.
+- **causationId**: The upstream event that caused this one. Useful for event-sourcing systems.
+
+Some teams put the envelope fields directly in the Avro schema. Others nest the payload inside an envelope struct. Both work — just be consistent.
+
+## Decision Framework: When to Break Compatibility
+
+Sometimes breaking compatibility is the right choice. Here's when to consider it:
+
+**When the current schema is fundamentally broken** and patching it with new fields creates more confusion than a clean break. Example: the `totalAmount` field is a string instead of a double, and half your consumers are parsing it incorrectly.
+
+**When the business domain has fundamentally changed** and the event no longer represents the same concept. Example: "Order" used to mean a single purchase, but now it's a subscription with recurring billing. Create a new event: `SubscriptionCreated`.
+
+**When carrying backward compatibility is more expensive than migrating consumers.** If you have three consumers and you can coordinate a migration in one sprint, dual-writing to v1 and v2 topics for six months is overkill.
+
+When you do break compatibility:
+
+1. **Announce it early** — follow your data contract deprecation policy (e.g., 90 days notice).
+2. **Dual-write during migration** — emit both old and new events to separate topics.
+3. **Provide migration tooling** — scripts, Kafka Streams jobs, or documentation to help consumers adapt.
+4. **Monitor consumer lag** — track which consumers are still reading the old topic, block the cutover until they've migrated.
+
+> **Failure mode**: Teams break compatibility "temporarily" during a crunch, intending to fix it later. They never do. Six months later, the codebase is littered with version checks and workarounds. If you break compatibility, commit to the migration and close the old version on a deadline.
+
+## Common Failure Modes
+
+**Schema-only thinking**: "We have Avro, so we're safe." No — schema compatibility only catches structural breaks, not semantic drift or missing quality guarantees.
+
+**No ownership**: Events are created by one team, consumed by five others, and no one knows who owns the schema. When it needs to change, three teams make conflicting proposals and nothing ships.
+
+**No deprecation policy**: Fields are added and never removed. The schema grows to 200 fields, half of them unused. No one dares to clean it up because they don't know if anyone depends on it.
+
+**Surprise breaking changes**: A team deploys a new schema version on Friday afternoon without checking compatibility mode. Consumers crash over the weekend.
+
+**Missing quality validation**: The contract says `totalAmount > 0`, but 5% of events have negative amounts. Consumers build defensive checks, the event loses trust, and eventually someone creates a parallel "clean" topic.
+
+**PII in events without access control**: Events contain customer email addresses, and anyone with Kafka access can read them. Compliance audit fails, data team scrambles to retrofit encryption and access policies.
+
+## Summary
+
+Event design requires balancing three compatibility concerns:
+
+**Schema compatibility** (structural): Forward, backward, or full compatibility modes in a schema registry. Use Avro or Protobuf with defaults to enable safe evolution. Validate changes in CI/CD before deploying.
+
+**Semantic compatibility** (meaning): Field meanings must remain stable. If you change what a field represents, treat it as a breaking change. Use versioning or new fields to preserve old semantics during migration.
+
+**Data contracts** (organizational): Ownership, SLAs, quality guarantees, access policy, and deprecation rules. Publish contracts alongside schemas and enforce them through team agreements and tooling.
+
+Prefer **fat events** with full data payloads to decouple consumers from source systems. Use **event envelopes** with metadata (eventId, timestamp, correlationId) for tracing and deduplication. Name events in **past tense** (OrderCreated, not CreateOrder).
+
+Breaking compatibility is sometimes necessary, but requires early communication, dual-write during migration, and a firm cutover deadline. Without discipline, "temporary" breaks become permanent technical debt.
+
+In the next lesson, we'll explore **Change Data Capture** — how to stream database changes as events without modifying application code.

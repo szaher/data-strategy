@@ -1,0 +1,502 @@
+---
+title: "Document Processing & Embedding Pipelines"
+quiz:
+  - question: "What is the primary tradeoff of fixed-size chunking compared to semantic chunking?"
+    options:
+      - "Fixed-size chunking is faster to implement but may split related content across chunks"
+      - "Fixed-size chunking produces better retrieval accuracy"
+      - "Fixed-size chunking requires more storage space"
+      - "Fixed-size chunking works only with structured documents"
+    correctIndex: 0
+  - question: "Why is embedding versioning critical for LLM applications?"
+    options:
+      - "Different embedding models produce incompatible vector representations, causing retrieval failures"
+      - "Versioning reduces the cost of embedding generation"
+      - "Versioning ensures documents are always parsed correctly"
+      - "Versioning prevents chunking boundary issues"
+    correctIndex: 0
+  - question: "What is the main advantage of hierarchical chunking with parent-child relationships?"
+    options:
+      - "It enables retrieval of small, precise chunks while providing broader context on demand"
+      - "It reduces embedding generation costs"
+      - "It eliminates the need for document parsing"
+      - "It works only with PDF documents"
+    correctIndex: 0
+---
+
+## The Document Processing Challenge
+
+In **Module 8**, we framed **LLM Data Infrastructure** as the operational backbone for retrieval-augmented generation and AI agents. You learned that embeddings, vector stores, and inference engines require **high-quality, consistently formatted data** to function reliably. But here's the friction: most enterprise knowledge lives in messy, heterogeneous formats—PDFs with complex layouts, HTML with nested tags, Word documents with embedded tables, scanned images masquerading as text.
+
+Before you can embed content for semantic search, you must **parse, normalize, and chunk** it into retrieval-friendly units. This lesson dissects the **document processing and embedding pipeline**—the often-underestimated infrastructure that determines whether your LLM application retrieves the right context or hallucinates. We'll explore chunking strategies, embedding generation at scale (leveraging **Module 5's** distributed processing), incremental updates via **Module 4's** change data capture, and the failure modes that break retrieval when chunking boundaries split key information or embedding versions drift.
+
+By the end of this lesson, you'll understand how to build **production-grade document pipelines** that transform unstructured data into semantically-indexed knowledge bases.
+
+---
+
+## Naive Approach: Single-Pass Parsing with Fixed Chunks
+
+The simplest document pipeline looks like this:
+
+1. **Extract text** from PDFs, HTML, or Word documents using off-the-shelf libraries (PyPDF2, BeautifulSoup, python-docx).
+2. **Split text** into fixed-size chunks (e.g., 512 tokens per chunk).
+3. **Generate embeddings** for each chunk using an embedding model (e.g., `text-embedding-3-small`).
+4. **Store embeddings** in a vector database (Pinecone, Weaviate, Postgres with pgvector).
+
+**Example naive implementation:**
+
+<CodeBlock code={`import PyPDF2
+from openai import OpenAI
+
+client = OpenAI()
+
+def process_pdf_naive(pdf_path):
+    # Extract text
+    with open(pdf_path, 'rb') as file:
+        reader = PyPDF2.PdfReader(file)
+        text = "".join(page.extract_text() for page in reader.pages)
+    
+    # Fixed-size chunking (512 tokens)
+    chunks = [text[i:i+2048] for i in range(0, len(text), 2048)]  # ~512 tokens
+    
+    # Generate embeddings
+    embeddings = []
+    for chunk in chunks:
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=chunk
+        )
+        embeddings.append(response.data[0].embedding)
+    
+    return embeddings
+`} language="python" filename="naive_pipeline.py" />
+
+**Why this breaks in production:**
+
+1. **Extraction quality varies wildly.** PyPDF2 fails on scanned PDFs, multi-column layouts, and tables. HTML parsers struggle with JavaScript-rendered content or deeply nested divs.
+2. **Fixed-size chunking splits related content.** A 600-token section gets cut mid-sentence, breaking semantic coherence. Retrieval returns the second half of a concept without the first half.
+3. **No versioning.** If you switch from `text-embedding-3-small` to `text-embedding-3-large`, the old embeddings are incompatible with the new queries. You must re-index everything, but without versioning metadata, you can't tell which documents were embedded with which model.
+4. **No failure tracking.** When a PDF fails to parse, the document silently disappears from your knowledge base. No logs, no alerts, no data lineage.
+
+This approach works for a prototype with 10 clean PDFs. It fails the first time you process 10,000 real-world documents with tables, charts, multi-column layouts, and OCR errors.
+
+---
+
+## Default Best Practice: Semantic Chunking with Versioned Embeddings
+
+A production document pipeline must handle **parsing heterogeneity**, **semantic chunk boundaries**, and **embedding model evolution**. Here's the default pattern:
+
+### 1. Document Parsing with Format-Specific Handlers
+
+Instead of one library for all formats, use **specialized parsers** per document type:
+
+- **PDFs:** `pdfplumber` (table-aware), `PyMuPDF` (fast, layout-preserving), or `Azure Document Intelligence` (cloud OCR for scanned documents).
+- **HTML:** `trafilatura` (content extraction, removes boilerplate), `newspaper3k` (news articles), or `BeautifulSoup` with custom selectors.
+- **Structured docs (Word, PowerPoint):** `python-docx`, `python-pptx`, or `Pandoc` (universal converter).
+- **Scanned images:** OCR via `Tesseract`, `Google Cloud Vision`, or `AWS Textract`.
+
+**Example with pdfplumber for table-aware extraction:**
+
+<CodeBlock code={`import pdfplumber
+
+def extract_pdf_with_tables(pdf_path):
+    text_blocks = []
+    tables = []
+    
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            # Extract text
+            page_text = page.extract_text()
+            if page_text:
+                text_blocks.append(page_text)
+            
+            # Extract tables separately
+            for table in page.extract_tables():
+                tables.append(table)
+    
+    return {
+        "text": "\\n\\n".join(text_blocks),
+        "tables": tables,
+        "pages": len(text_blocks)
+    }
+`} language="python" filename="pdf_parsing.py" />
+
+**Why this matters:** A table embedded as plain text loses column relationships. Extracting tables separately lets you convert them to structured formats (JSON, CSV) or generate descriptive summaries before embedding.
+
+### 2. Normalization: Cleaning and Standardizing
+
+Raw extracted text contains OCR errors, inconsistent whitespace, encoding issues, and formatting artifacts (headers, footers, page numbers). **Normalization** standardizes text before chunking:
+
+- **Remove artifacts:** Page numbers, headers, footers, repeated boilerplate.
+- **Fix encoding:** Convert to UTF-8, replace smart quotes, em dashes.
+- **Collapse whitespace:** Replace `\n\n\n` with `\n\n`, strip trailing spaces.
+- **Fix OCR errors:** Run spell-checkers or LLM-based correction for scanned documents.
+
+<CodeBlock code={`import re
+
+def normalize_text(text):
+    # Remove page numbers (e.g., "Page 3 of 10")
+    text = re.sub(r'Page \\d+ of \\d+', '', text)
+    
+    # Collapse excessive whitespace
+    text = re.sub(r'\\n{3,}', '\\n\\n', text)
+    text = re.sub(r' {2,}', ' ', text)
+    
+    # Fix common OCR errors (example: l -> I confusion)
+    text = text.replace('Ioad', 'load').replace('flnd', 'find')
+    
+    # Normalize quotes
+    text = text.replace('"', '"').replace('"', '"')
+    
+    return text.strip()
+`} language="python" filename="normalization.py" />
+
+### 3. Chunking Strategies: Fixed-Size vs. Semantic vs. Hierarchical
+
+**Chunking** divides documents into retrieval units. The strategy determines retrieval accuracy.
+
+#### Fixed-Size Chunking
+
+**How it works:** Split text every N tokens (e.g., 512) with optional overlap (e.g., 50 tokens).
+
+**Pros:**
+- Simple, fast, deterministic.
+- Works with any content type.
+
+**Cons:**
+- Splits related content mid-sentence or mid-paragraph.
+- Overlap introduces redundancy (increases storage and embedding costs).
+
+**When to use:** Highly structured documents with uniform formatting (e.g., technical manuals, API docs).
+
+<CodeBlock code={`def fixed_size_chunking(text, chunk_size=512, overlap=50):
+    # Tokenize (simplified: split by spaces)
+    tokens = text.split()
+    chunks = []
+    
+    for i in range(0, len(tokens), chunk_size - overlap):
+        chunk = " ".join(tokens[i:i+chunk_size])
+        chunks.append(chunk)
+    
+    return chunks
+`} language="python" filename="fixed_chunking.py" />
+
+#### Semantic Chunking
+
+**How it works:** Split at **natural boundaries**—paragraphs, sections, or sentence breaks. Respect document structure (headings, bullet points).
+
+**Pros:**
+- Preserves semantic coherence. Each chunk is a complete thought.
+- Reduces boundary-split failures.
+
+**Cons:**
+- Variable chunk sizes (some chunks may be too small or too large for embedding models).
+- Requires document structure detection (Markdown sections, HTML headings, PDF layout analysis).
+
+**When to use:** Narrative content (reports, articles, knowledge bases, books).
+
+<CodeBlock code={`import re
+
+def semantic_chunking(text, max_chunk_size=512):
+    # Split by double newlines (paragraphs)
+    paragraphs = re.split(r'\\n\\n+', text)
+    
+    chunks = []
+    current_chunk = []
+    current_size = 0
+    
+    for para in paragraphs:
+        para_tokens = len(para.split())
+        
+        if current_size + para_tokens > max_chunk_size and current_chunk:
+            # Finalize current chunk
+            chunks.append("\\n\\n".join(current_chunk))
+            current_chunk = []
+            current_size = 0
+        
+        current_chunk.append(para)
+        current_size += para_tokens
+    
+    # Append remaining
+    if current_chunk:
+        chunks.append("\\n\\n".join(current_chunk))
+    
+    return chunks
+`} language="python" filename="semantic_chunking.py" />
+
+#### Hierarchical Chunking (Parent-Child)
+
+**How it works:** Create **small chunks** for precise retrieval (e.g., 256 tokens), but also store **parent chunks** (larger context, e.g., 1024 tokens). At retrieval time, return the small chunk but provide the parent for context.
+
+**Pros:**
+- Best of both worlds: precise matching + broad context.
+- Useful for long documents where a single paragraph needs the surrounding section for understanding.
+
+**Cons:**
+- Doubles storage (child + parent chunks).
+- Requires mapping child-to-parent relationships in the vector database.
+
+**When to use:** Long-form technical documents, legal contracts, academic papers.
+
+<CodeBlock code={`def hierarchical_chunking(text, child_size=256, parent_size=1024):
+    # Split into parent chunks
+    parent_chunks = semantic_chunking(text, max_chunk_size=parent_size)
+    
+    chunks = []
+    for parent_id, parent in enumerate(parent_chunks):
+        # Split each parent into child chunks
+        children = semantic_chunking(parent, max_chunk_size=child_size)
+        
+        for child_id, child in enumerate(children):
+            chunks.append({
+                "id": f"{parent_id}-{child_id}",
+                "text": child,
+                "parent_text": parent,
+                "parent_id": parent_id
+            })
+    
+    return chunks
+`} language="python" filename="hierarchical_chunking.py" />
+
+**Tradeoff summary:**
+
+| Strategy         | Pros                              | Cons                                  | Use Case                          |
+|------------------|-----------------------------------|---------------------------------------|-----------------------------------|
+| Fixed-size       | Simple, fast, uniform size        | Splits related content                | Structured, uniform docs          |
+| Semantic         | Preserves coherence               | Variable chunk sizes                  | Narrative content                 |
+| Hierarchical     | Precise + context                 | 2x storage, mapping overhead          | Long-form technical/legal docs    |
+
+### 4. Embedding Generation at Scale
+
+For large document corpora (10K+ documents), generating embeddings sequentially is too slow. Use **distributed processing** (from **Module 5**) or **batch APIs**:
+
+- **Batch processing with Spark/Ray:** Parallelize embedding generation across workers.
+- **Embedding API batching:** OpenAI's batch API processes 1,000s of embeddings per request, reducing latency.
+- **GPU-accelerated models:** Host open-source embedding models (e.g., `sentence-transformers`) on GPUs for faster throughput.
+
+**Example with PySpark for distributed embedding generation:**
+
+<CodeBlock code={`from pyspark.sql import SparkSession
+from pyspark.sql.functions import udf
+from pyspark.sql.types import ArrayType, FloatType
+from openai import OpenAI
+
+spark = SparkSession.builder.appName("EmbeddingPipeline").getOrCreate()
+client = OpenAI()
+
+def generate_embedding(text):
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return response.data[0].embedding
+
+embedding_udf = udf(generate_embedding, ArrayType(FloatType()))
+
+# Load chunked documents
+df = spark.read.parquet("s3://my-bucket/chunked_documents/")
+
+# Generate embeddings in parallel
+df_with_embeddings = df.withColumn("embedding", embedding_udf(df.chunk_text))
+
+df_with_embeddings.write.parquet("s3://my-bucket/embeddings_v1/")
+`} language="python" filename="spark_embeddings.py" />
+
+**Key design choices:**
+- **Model selection:** Smaller models (`text-embedding-3-small`) are faster and cheaper but less accurate. Larger models (`text-embedding-3-large`) improve retrieval precision at higher cost.
+- **Incremental updates:** Use **Change Data Capture** (from **Module 4**) to detect new or modified documents. Only re-embed changed chunks instead of re-indexing the entire corpus.
+
+### 5. Versioning Embeddings as Data Artifacts
+
+**Problem:** Embedding models evolve. When you upgrade from `text-embedding-3-small` (1536 dimensions) to `text-embedding-3-large` (3072 dimensions), old embeddings are incompatible with new queries. You must re-index all documents.
+
+**Solution:** Version embeddings like data artifacts:
+
+- **Store embedding model metadata** alongside vectors (model name, version, dimensions).
+- **Use separate indexes per model version.** When you upgrade the embedding model, create a new index (e.g., `embeddings_v2`) and backfill documents incrementally.
+- **Graceful migration:** Run dual indexes during migration. Query both `v1` and `v2`, merging results until all documents are re-embedded.
+
+**Example embedding versioning schema:**
+
+<CodeBlock code={`{
+  "chunk_id": "doc123-chunk5",
+  "text": "The embedding pipeline processes documents...",
+  "embedding": [0.023, -0.145, 0.332, ...],
+  "metadata": {
+    "model": "text-embedding-3-small",
+    "model_version": "v1",
+    "dimensions": 1536,
+    "created_at": "2026-06-15T10:30:00Z",
+    "source_doc": "pipeline-guide.pdf",
+    "chunk_strategy": "semantic"
+  }
+}
+`} language="json" filename="embedding_schema.json" />
+
+**Migration flow:**
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant Docs as Document Corpus
+    participant Pipeline as Embedding Pipeline
+    participant V1 as Index v1<br/>(text-embedding-3-small)
+    participant V2 as Index v2<br/>(text-embedding-3-large)
+    participant Query as Query Engine
+
+    Note over Docs,Query: Phase 1: Dual-index migration
+    Docs->>Pipeline: New documents
+    Pipeline->>V1: Generate v1 embeddings
+    Pipeline->>V2: Generate v2 embeddings
+    Query->>V1: Query v1 index
+    Query->>V2: Query v2 index
+    Query->>Query: Merge results
+
+    Note over Docs,Query: Phase 2: Backfill old documents
+    Docs->>Pipeline: Read old documents (from CDC log)
+    Pipeline->>V2: Re-embed with v2 model
+    Pipeline->>V2: Mark as migrated
+
+    Note over Docs,Query: Phase 3: Cutover to v2
+    Query->>V2: Query only v2 index
+    V1->>V1: Archive v1 index
+`} />
+
+---
+
+## Decision Framework: Choosing Your Chunking Strategy
+
+| Factor                          | Fixed-Size         | Semantic           | Hierarchical       |
+|---------------------------------|--------------------|--------------------|--------------------|
+| **Document type**               | Structured (API docs, manuals) | Narrative (reports, articles) | Long-form (legal, academic) |
+| **Chunk size variance**         | Uniform            | Variable           | Variable (child + parent) |
+| **Retrieval precision**         | Low (boundary splits) | High (coherent units) | Highest (precise + context) |
+| **Storage overhead**            | 1x                 | 1x                 | 2x (parent + child) |
+| **Implementation complexity**   | Low                | Medium             | High (mapping required) |
+| **Embedding cost**              | Baseline           | Baseline           | 2x (parent + child) |
+
+**Decision heuristics:**
+
+- **Start with semantic chunking** for most use cases. It's the sweet spot between accuracy and complexity.
+- **Use fixed-size** only if your documents are highly uniform (e.g., API reference docs, log files).
+- **Use hierarchical** if retrieval quality is critical and you can afford 2x storage (e.g., legal contract search, medical research).
+
+---
+
+## Failure Modes: What Breaks Document Pipelines
+
+### 1. Chunk Boundary Splits Key Information
+
+**Scenario:** A chunking algorithm splits a sentence mid-concept. The first chunk ends with "The key insight is that distributed systems", and the second chunk starts with "require careful handling of network partitions."
+
+**Impact:** Neither chunk contains the full concept. Retrieval returns partial information, causing LLM hallucinations or incomplete answers.
+
+**Mitigation:**
+- Use **semantic chunking** to respect sentence/paragraph boundaries.
+- For fixed-size chunking, add **overlap** (e.g., 50 tokens) so critical sentences appear in adjacent chunks.
+- Use **hierarchical chunking** to retrieve small chunks but provide parent context.
+
+### 2. Embedding Version Mismatch
+
+**Scenario:** You query a vector database with embeddings generated by `text-embedding-3-large` (3072 dimensions), but the index was built with `text-embedding-3-small` (1536 dimensions).
+
+**Impact:** Dimension mismatch crashes the query, or the database silently pads/truncates vectors, returning nonsensical results.
+
+**Mitigation:**
+- **Version embeddings** with model metadata. Reject queries with mismatched versions.
+- **Use separate indexes** per embedding model version.
+- **Implement graceful migration** with dual-index querying during model upgrades.
+
+### 3. Parsing Failures on Edge-Case Formats
+
+**Scenario:** A scanned PDF with handwritten annotations fails OCR. A Word document with embedded Excel spreadsheets loses table data. An HTML page with JavaScript-rendered content returns empty text.
+
+**Impact:** Documents silently disappear from the knowledge base. Users ask "Why doesn't the AI know about X?" but you have no visibility into parsing failures.
+
+**Mitigation:**
+- **Log all parsing attempts** with success/failure status. Track failed documents in a dead-letter queue.
+- **Use multiple parsers** as fallbacks. If `pdfplumber` fails, try `PyMuPDF` or cloud OCR (Azure Document Intelligence).
+- **Emit data quality metrics** (from **Module 3**): document parse success rate, average chunk count per document, empty chunk count.
+
+**Example failure tracking:**
+
+<CodeBlock code={`import logging
+
+def parse_document_with_logging(doc_path, parser):
+    try:
+        result = parser.parse(doc_path)
+        logging.info(f"SUCCESS: {doc_path} parsed with {len(result['chunks'])} chunks")
+        return result
+    except Exception as e:
+        logging.error(f"FAILURE: {doc_path} failed with {type(e).__name__}: {e}")
+        # Write to dead-letter queue
+        with open("failed_docs.txt", "a") as f:
+            f.write(f"{doc_path}\\n")
+        return None
+`} language="python" filename="parsing_logging.py" />
+
+### 4. Incremental Update Race Conditions
+
+**Scenario:** A document is updated while the embedding pipeline is processing it. The pipeline reads the old version, but the metadata reflects the new version.
+
+**Impact:** Embeddings are out of sync with document content. Retrieval returns stale information.
+
+**Mitigation:**
+- **Use CDC with event timestamps** (from **Module 4**). Process only events older than a safety margin (e.g., 5 minutes).
+- **Lock documents during processing** or use optimistic concurrency (read version, embed, write only if version unchanged).
+
+---
+
+## Pipeline Architecture: Putting It All Together
+
+A production document processing pipeline combines parsing, normalization, chunking, embedding generation, and versioning into a **multi-stage data pipeline**:
+
+<MermaidDiagram chart={`graph TD
+    A[Raw Documents<br/>PDF, HTML, Word] --> B[Format Detection<br/>& Parser Selection]
+    B --> C[Specialized Parsers<br/>pdfplumber, trafilatura]
+    C --> D[Normalization<br/>Whitespace, OCR fixes]
+    D --> E{Chunking Strategy<br/>Selection}
+    E -->|Structured| F[Fixed-Size Chunking]
+    E -->|Narrative| G[Semantic Chunking]
+    E -->|Long-form| H[Hierarchical Chunking]
+    F --> I[Chunked Documents]
+    G --> I
+    H --> I
+    I --> J[Embedding Generation<br/>Spark/Ray/Batch API]
+    J --> K[Versioned Embeddings<br/>model, dimensions, timestamp]
+    K --> L[Vector Database<br/>Pinecone, Weaviate, pgvector]
+    
+    M[Document Updates<br/>CDC Stream] --> N[Incremental Re-embedding]
+    N --> J
+    
+    O[Parsing Failures] --> P[Dead-Letter Queue]
+    P --> Q[Manual Review<br/>or Retry]
+    
+    style A fill:#ebf8ff,stroke:#3182ce
+    style L fill:#c6f6d5,stroke:#38a169
+    style P fill:#fed7d7,stroke:#e53e3e
+`} />
+
+**Key design principles:**
+
+1. **Separation of concerns:** Parsing, normalization, chunking, and embedding are independent stages. You can swap parsers or chunking strategies without rewriting the entire pipeline.
+2. **Versioned artifacts:** Every embedding stores its model version. You can run multiple embedding model versions in parallel during migrations.
+3. **Observability:** Log parsing success rates, chunk size distributions, embedding generation latency. Alert on anomalies (e.g., sudden spike in parsing failures).
+4. **Incremental processing:** Use CDC (from **Module 4**) to detect document changes. Re-embed only modified chunks instead of full re-indexing.
+
+---
+
+## Summary: From Messy Documents to Semantic Search
+
+Document processing is the **hidden complexity** behind every LLM retrieval system. A naive pipeline—simple extraction, fixed-size chunks, unversioned embeddings—works for demos but breaks the first time you process real-world PDFs with tables, scanned images, or multi-column layouts.
+
+The **default best practice** is:
+
+1. **Use specialized parsers** per document format (pdfplumber for PDFs, trafilatura for HTML, cloud OCR for scanned images).
+2. **Normalize text** to fix encoding errors, collapse whitespace, and remove artifacts.
+3. **Choose semantic chunking** as the default (respect paragraph boundaries), escalating to hierarchical chunking for long-form documents.
+4. **Generate embeddings at scale** using distributed processing (Spark/Ray) or batch APIs.
+5. **Version embeddings** with model metadata. Use separate indexes per model version and migrate incrementally.
+6. **Track parsing failures** in a dead-letter queue. Emit data quality metrics for observability.
+
+When you version embeddings, you decouple model upgrades from application downtime. When you use semantic chunking, you preserve the coherence that makes retrieval accurate. When you log parsing failures, you close the observability gap that causes "missing document" bugs.
+
+**Next:** In **Lesson 3**, we'll explore **vector databases and similarity search**—the retrieval layer that queries your versioned embeddings at scale, balancing accuracy, latency, and cost.

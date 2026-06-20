@@ -1,0 +1,53 @@
+{
+  "id": 5,
+  "title": "Processing & Data Transformation",
+  "description": "SQL, Spark, Flink, dbt, orchestration, batch vs stream, distributed-compute tradeoffs",
+  "color": "#ed8936",
+  "lessons": [
+    {
+      "slug": "01-why-processing-architecture-matters",
+      "title": "Why Processing Architecture Matters",
+      "description": "Unified vs specialized processing paths; materialized views, event-driven projections, operational data products",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-batch-processing-with-apache-spark",
+      "title": "Batch Processing with Apache Spark",
+      "description": "Spark Operator on K8s, DataFrame API, Spark SQL; failure modes: data skew, small files, shuffle amplification",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-stream-processing-with-apache-flink",
+      "title": "Stream Processing with Apache Flink",
+      "description": "Stateful streaming, windows, exactly-once, event time, watermarks, late-arriving data, checkpoint recovery",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["sequence", "state"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-sql-transformation-and-pipeline-orchestration",
+      "title": "SQL Transformation & Pipeline Orchestration",
+      "description": "dbt as transformation framework, Airflow as orchestrator; pipeline SLAs, retry behavior, freshness guarantees",
+      "estimatedMinutes": 13,
+      "diagramTypes": ["flowchart", "architecture"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-processing-decision-framework",
+      "title": "Processing Decision Framework",
+      "description": "Comparing engines by workload fit: Spark, Flink, dbt, Ray; language/runtime dimension; cost tradeoffs",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

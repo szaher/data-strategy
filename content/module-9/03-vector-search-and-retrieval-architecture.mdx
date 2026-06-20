@@ -1,0 +1,562 @@
+---
+title: "Vector Search & Retrieval Architecture"
+quiz:
+  - question: "Why does hybrid search outperform pure vector search in many production scenarios?"
+    options:
+      - "It combines dense vector similarity with sparse keyword signals and metadata filtering"
+      - "It uses multiple embedding models simultaneously"
+      - "It searches across both vector and relational databases"
+      - "It performs semantic and syntactic analysis in parallel"
+    correctIndex: 0
+  - question: "What is the primary purpose of two-stage retrieval with reranking?"
+    options:
+      - "To reduce embedding storage costs"
+      - "To improve precision by applying an expensive cross-encoder only to top candidates"
+      - "To convert dense vectors to sparse vectors"
+      - "To rebuild the vector index incrementally"
+    correctIndex: 1
+  - question: "When should you choose pgvector over a dedicated vector database like Milvus or Qdrant?"
+    options:
+      - "When you have billions of vectors and need horizontal scaling"
+      - "When vector search is a secondary feature and your data lives in PostgreSQL"
+      - "When you need the fastest possible similarity search performance"
+      - "When building a pure vector search engine without relational data"
+    correctIndex: 1
+---
+
+## The Challenge: From Embeddings to Retrieval
+
+You've built a document processing pipeline. You've generated embeddings. Now comes the critical question: how do you find the right documents when a user asks a question?
+
+The naive approach is simple: compute the query embedding, calculate cosine similarity against every document embedding, and return the top K results. This works for demos. It fails in production.
+
+**Production retrieval systems face three hard problems:** (1) Scale — searching millions or billions of vectors in milliseconds. (2) Precision — returning documents that actually answer the question, not just documents with similar words. (3) Freshness — keeping the search index in sync with a continuously updating knowledge base.
+
+This lesson covers the architecture decisions that separate toy retrieval systems from production RAG pipelines. We'll walk through vector database choices, hybrid search strategies, reranking techniques, and index management patterns that make retrieval both fast and accurate.
+
+## Vector Storage: The Architecture Decision
+
+Before you can search, you need to store embeddings somewhere. The storage layer shapes everything downstream: query latency, scale limits, operational complexity, and cost.
+
+### Option 1: Vector-Enabled Relational Databases
+
+**pgvector** is a PostgreSQL extension that adds vector similarity search to an existing relational database. You store embeddings in a column, create an index (IVFFlat or HNSW), and run similarity queries with SQL.
+
+**When to use pgvector:**
+- Your data already lives in PostgreSQL
+- Vector search is a secondary feature, not the core product
+- You need to join vector search results with relational data
+- Your team knows SQL better than specialized vector query languages
+- Your scale is under ~10M vectors
+
+**Trade-offs:**
+- **Pro:** No new database to operate — embeddings live next to your structured data
+- **Pro:** ACID guarantees and transactional consistency between metadata and vectors
+- **Pro:** Rich filtering with WHERE clauses before vector search
+- **Con:** Slower than dedicated vector databases at high scale (10M+ vectors)
+- **Con:** Index tuning is less mature than specialized systems
+- **Con:** Horizontal scaling requires PostgreSQL sharding
+
+<CodeBlock code={`-- Create table with vector column
+CREATE TABLE documents (
+  id SERIAL PRIMARY KEY,
+  content TEXT,
+  metadata JSONB,
+  embedding vector(1536)  -- 1536-dim for OpenAI embeddings
+);
+
+-- Create HNSW index for fast similarity search
+CREATE INDEX ON documents 
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+
+-- Hybrid search: vector similarity + keyword filter
+SELECT id, content, 
+       1 - (embedding <=> $1) AS similarity
+FROM documents
+WHERE metadata->>'category' = 'technical'
+  AND content ILIKE '%kubernetes%'
+ORDER BY embedding <=> $1
+LIMIT 10;
+`} language="sql" filename="pgvector_retrieval.sql" />
+
+The power of pgvector is that you can combine vector search with relational filters in a single query. You're not shipping embeddings across network boundaries or joining results from two different databases.
+
+### Option 2: Dedicated Vector Databases
+
+**Milvus**, **Weaviate**, **Qdrant**, and **Pinecone** are purpose-built for vector search. They optimize the entire stack — storage, indexing, query execution — for similarity search at scale.
+
+**When to use a dedicated vector database:**
+- Vector search is your core product (semantic search, recommendation, anomaly detection)
+- You're operating at 10M+ vectors and need horizontal scaling
+- You need advanced indexing (quantization, sharding, distributed search)
+- Query latency matters more than transactional consistency
+
+**Trade-offs:**
+- **Pro:** Faster similarity search (optimized indexing, SIMD instructions, GPU acceleration)
+- **Pro:** Built-in distributed architecture for billions of vectors
+- **Pro:** Advanced features (disk-based indexes, quantization, dynamic sharding)
+- **Con:** Another database to operate, monitor, and tune
+- **Con:** Weak relational query support — metadata filters are limited
+- **Con:** Eventual consistency models complicate multi-step writes
+
+<MermaidDiagram chart={`graph TD
+    Query[User Query] --> Embed[Embedding Model]
+    Embed --> VectorDB[(Vector Database)]
+    
+    subgraph Storage["Storage Architecture"]
+        VectorDB --> Index[Vector Index<br/>HNSW / IVF / DiskANN]
+        Index --> Shard1[Shard 1<br/>10M vectors]
+        Index --> Shard2[Shard 2<br/>10M vectors]
+        Index --> Shard3[Shard 3<br/>10M vectors]
+    end
+    
+    VectorDB --> Results[Top-K Results]
+    Results --> Metadata[(Metadata Store)]
+    Metadata --> Hydrate[Hydrate Documents]
+    
+    style Storage fill:#f0f9ff,stroke:#0369a1
+    style VectorDB fill:#dbeafe,stroke:#0369a1
+`} />
+
+**Comparison:**
+
+| Database   | Storage      | Indexing          | Scale        | Metadata Filtering |
+|------------|--------------|-------------------|--------------|--------------------|
+| **pgvector**  | PostgreSQL   | HNSW, IVFFlat     | ~10M vectors | Rich SQL WHERE     |
+| **Milvus**    | Distributed  | HNSW, IVF, DiskANN| Billions     | Scalar filters     |
+| **Weaviate**  | Distributed  | HNSW              | Billions     | Schema-aware       |
+| **Qdrant**    | Distributed  | HNSW, Quantized   | Billions     | Payload filters    |
+| **Pinecone**  | Managed SaaS | Proprietary       | Billions     | Metadata filters   |
+
+The right choice depends on your scale, your team's operational capacity, and whether vector search is a feature or the product.
+
+### Option 3: Search Engines with Vector Support
+
+**Elasticsearch** and **OpenSearch** have added vector similarity search as a feature. They combine traditional keyword search, aggregations, and filtering with approximate nearest neighbor (ANN) search.
+
+**When to use a search engine:**
+- You already run Elasticsearch for log aggregation or application search
+- You need a mix of keyword search, faceted navigation, and vector similarity
+- Your queries span structured filters, free-text search, and semantic retrieval
+- You're building a hybrid search product where vectors are one signal among many
+
+**Trade-offs:**
+- **Pro:** Unified platform for keyword search, vector search, and analytics
+- **Pro:** Mature operational tooling (monitoring, backups, cluster management)
+- **Pro:** Strong metadata filtering and aggregation support
+- **Con:** Vector search is slower than specialized databases
+- **Con:** Index memory usage is higher than optimized vector stores
+- **Con:** You're paying for search engine features you might not use
+
+The key insight: **don't add a new database just for vectors if you can extend an existing system**. Use pgvector if your data lives in PostgreSQL. Use Elasticsearch if you already run it. Only reach for a dedicated vector database when vector search performance is the bottleneck.
+
+## Hybrid Search: Combining Dense and Sparse Retrieval
+
+Pure vector search has a weakness: it misses exact matches. If a user searches for "AWS Lambda cold start latency," a document that uses different words ("serverless function initialization delay") might rank higher than a document that literally contains "AWS Lambda cold start latency" but has lower semantic similarity.
+
+**Hybrid search** combines multiple retrieval signals:
+1. **Dense vector search** — semantic similarity via embeddings
+2. **Sparse vector search** — lexical matching via BM25 or TF-IDF
+3. **Metadata filtering** — structured filters on category, date, author, etc.
+
+The result is a retrieval system that captures both semantic meaning and exact keyword matches.
+
+### How Hybrid Search Works
+
+**Step 1: Separate retrieval paths**
+
+Run two searches in parallel:
+- Dense retrieval: top 100 results by cosine similarity
+- Sparse retrieval: top 100 results by BM25 score
+
+**Step 2: Score fusion**
+
+Combine the two result sets using **Reciprocal Rank Fusion (RRF)** or a learned scoring model. RRF is simple and works well:
+
+```
+score(doc) = 1 / (k + rank_dense(doc)) + 1 / (k + rank_sparse(doc))
+```
+
+Where `k` is a constant (typically 60). Documents that appear high in both rankings get the highest combined score.
+
+**Step 3: Apply metadata filters**
+
+Filter the fused results by structured metadata (category, date range, access control).
+
+<MermaidDiagram chart={`graph TD
+    Query[User Query] --> Dense[Dense Retrieval<br/>Embedding + Vector Search]
+    Query --> Sparse[Sparse Retrieval<br/>BM25 / TF-IDF]
+    Query --> Filters[Metadata Filters<br/>Category, Date, ACL]
+    
+    Dense --> Results1[Top 100 by<br/>Cosine Similarity]
+    Sparse --> Results2[Top 100 by<br/>BM25 Score]
+    
+    Results1 --> Fusion[Score Fusion<br/>Reciprocal Rank Fusion]
+    Results2 --> Fusion
+    
+    Fusion --> Filtered[Apply Metadata Filters]
+    Filters --> Filtered
+    
+    Filtered --> TopK[Top K Results]
+    
+    style Fusion fill:#fef3c7,stroke:#d97706
+    style Filtered fill:#dbeafe,stroke:#0369a1
+`} />
+
+**Why hybrid search beats pure vector search:**
+
+| Scenario                     | Pure Vector Search | Hybrid Search         |
+|------------------------------|--------------------|-----------------------|
+| Exact keyword match          | May miss           | Captures via BM25     |
+| Semantic paraphrase          | Captures           | Captures via embeddings|
+| Rare technical terms         | May miss           | Captures via BM25     |
+| Conceptual similarity        | Captures           | Captures via embeddings|
+| Document with exact phrase   | Lower rank         | Higher rank (BM25 boost)|
+
+Production RAG systems use hybrid search by default. Pure vector search is a starting point, not the end state.
+
+<CodeBlock code={`from typing import List, Dict
+import numpy as np
+
+def reciprocal_rank_fusion(
+    dense_results: List[Dict],
+    sparse_results: List[Dict],
+    k: int = 60
+) -> List[Dict]:
+    """
+    Combine dense and sparse retrieval results using RRF.
+    
+    Args:
+        dense_results: List of {doc_id, score} from vector search
+        sparse_results: List of {doc_id, score} from BM25 search
+        k: RRF constant (default 60)
+    
+    Returns:
+        Fused results sorted by combined score
+    """
+    scores = {}
+    
+    # Add dense retrieval scores
+    for rank, result in enumerate(dense_results, start=1):
+        doc_id = result['doc_id']
+        scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + rank)
+    
+    # Add sparse retrieval scores
+    for rank, result in enumerate(sparse_results, start=1):
+        doc_id = result['doc_id']
+        scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + rank)
+    
+    # Sort by combined score
+    fused = [{'doc_id': doc_id, 'score': score} 
+             for doc_id, score in scores.items()]
+    fused.sort(key=lambda x: x['score'], reverse=True)
+    
+    return fused
+
+# Example usage
+dense_results = [
+    {'doc_id': 'doc1', 'score': 0.92},
+    {'doc_id': 'doc2', 'score': 0.88},
+    {'doc_id': 'doc3', 'score': 0.85}
+]
+
+sparse_results = [
+    {'doc_id': 'doc2', 'score': 12.5},  # High BM25 score
+    {'doc_id': 'doc4', 'score': 10.2},
+    {'doc_id': 'doc1', 'score': 8.7}
+]
+
+fused = reciprocal_rank_fusion(dense_results, sparse_results)
+# doc1 and doc2 appear in both lists -> higher combined score
+`} language="python" filename="hybrid_search.py" />
+
+The beauty of RRF is that it's **model-agnostic** — you don't need to calibrate weights or train a fusion model. It works with any pair of ranked result lists.
+
+## Reranking: Two-Stage Retrieval for Precision
+
+Hybrid search improves recall (finding relevant documents). But retrieval is a two-stage problem: first **recall** (cast a wide net), then **precision** (pick the best results).
+
+**Reranking** applies a more expensive, more accurate model to the top candidates from the initial retrieval stage.
+
+### Why Reranking Matters
+
+Embedding models optimize for **speed** — they encode documents in a single forward pass, independent of the query. The trade-off is that they can't model query-document interactions deeply.
+
+**Cross-encoders** are slower but more accurate. They encode the query and document together, allowing the model to learn fine-grained relevance signals. They're too slow to run on millions of documents, but fast enough to rerank the top 100.
+
+**Two-stage retrieval pipeline:**
+
+1. **Stage 1: Fast recall** — Retrieve top 100-200 candidates using hybrid search (dense + sparse)
+2. **Stage 2: Precise reranking** — Score each candidate with a cross-encoder, return top 10
+
+<MermaidDiagram chart={`graph LR
+    Query[User Query] --> Stage1[Stage 1: Fast Recall<br/>Hybrid Search]
+    Stage1 --> Top100[Top 100 Candidates]
+    
+    Top100 --> Stage2[Stage 2: Reranking<br/>Cross-Encoder]
+    Stage2 --> Top10[Top 10 Results]
+    
+    subgraph Stage1Details["Fast Recall (ms latency)"]
+        Stage1 --> DenseVec[Dense Vector Search]
+        Stage1 --> SparseVec[Sparse BM25 Search]
+        DenseVec --> Fusion[RRF Fusion]
+        SparseVec --> Fusion
+    end
+    
+    subgraph Stage2Details["Precise Reranking (100ms latency)"]
+        Stage2 --> CrossEnc[Cross-Encoder Model<br/>Query + Document → Score]
+        CrossEnc --> Rescore[Rescore Top 100]
+    end
+    
+    style Stage1Details fill:#f0fdf4,stroke:#16a34a
+    style Stage2Details fill:#fef3c7,stroke:#d97706
+`} />
+
+**Why this works:**
+
+| Metric               | Embedding Search | Cross-Encoder Reranking |
+|----------------------|------------------|-------------------------|
+| Latency (1M docs)    | ~20ms            | ~100ms (top 100 only)   |
+| Recall @ 100         | ~85%             | N/A (stage 2)           |
+| Precision @ 10       | ~60%             | ~85%                    |
+| Query-doc interaction| Independent      | Joint encoding          |
+
+The cost of reranking 100 documents is negligible compared to the cost of searching 1M documents with a cross-encoder.
+
+**When to skip reranking:**
+- Your initial retrieval precision is already >90% (rare)
+- Latency budget is <50ms and you can't afford the reranker
+- You're building a broad exploration interface, not a single-answer system
+
+For production RAG (chatbots, Q&A systems, knowledge retrieval), reranking is standard.
+
+## Index Management: Keeping Search Fresh
+
+Vector indexes are not static. Documents are added, updated, and deleted. Embeddings change when you switch models. Indexes drift out of sync with reality.
+
+**Index management** is the operational discipline of keeping search indexes fresh, consistent, and performant.
+
+### Rebuild vs. Incremental Update
+
+**Full rebuild:**
+- Re-embed all documents
+- Drop the old index, create a new one
+- Swap the new index into production
+
+**Incremental update:**
+- Embed new/changed documents
+- Insert into the existing index
+- Mark deleted documents as inactive
+
+**When to rebuild:**
+- You've changed the embedding model (dimensionality or model weights changed)
+- The index has degraded performance due to fragmentation
+- You're fixing a systemic data quality issue (e.g., corrupt embeddings)
+
+**When to update incrementally:**
+- Documents are added/updated continuously (e.g., a live knowledge base)
+- Rebuild latency is too high (hours to re-embed millions of documents)
+- You need zero-downtime index updates
+
+### Monitoring Index Staleness
+
+**Index staleness** is the delta between the source data and the search index. In a continuously updated system, the index is always slightly stale. The question is: how stale is acceptable?
+
+**Metrics to track:**
+
+| Metric                     | What It Measures                        | Alert Threshold   |
+|----------------------------|-----------------------------------------|-------------------|
+| **Index lag**              | Time since last index update            | > 1 hour          |
+| **Unindexed documents**    | Count of documents not yet in the index | > 1000            |
+| **Embedding model version**| Which model version generated embeddings| Mismatch detected |
+| **Query-index model mismatch** | Query embeddings use a different model | True              |
+
+The worst failure mode is a **query-index model mismatch**: the query uses `text-embedding-3-large`, but the index was built with `text-embedding-ada-002`. Similarity scores are meaningless across model boundaries.
+
+**Mitigation:**
+- Tag each document with the embedding model version
+- When the model changes, schedule a full rebuild
+- Prevent queries from running against mismatched indexes (fail fast)
+
+<CodeBlock code={`# Index metadata tracking (Python example)
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional
+
+@dataclass
+class IndexMetadata:
+    """Tracks the state of a vector index."""
+    index_id: str
+    embedding_model: str              # e.g., "text-embedding-3-large"
+    embedding_dimension: int          # e.g., 1536
+    total_documents: int
+    last_updated: datetime
+    index_version: int                # Incremented on rebuild
+    
+    def is_compatible_with(self, query_model: str) -> bool:
+        """Check if this index can serve queries from a given model."""
+        return self.embedding_model == query_model
+
+# Example: Prevent query-index mismatch
+def search_with_validation(
+    query: str,
+    query_model: str,
+    index: IndexMetadata,
+    vector_db
+):
+    if not index.is_compatible_with(query_model):
+        raise ValueError(
+            f"Query model '{query_model}' does not match "
+            f"index model '{index.embedding_model}'. "
+            f"Rebuild the index or switch the query model."
+        )
+    
+    # Proceed with search
+    results = vector_db.search(query)
+    return results
+`} language="python" filename="index_metadata.py" />
+
+### Incremental Update Strategies
+
+For live systems, you need a way to add documents to the index without downtime.
+
+**Strategy 1: Background indexing with atomic swap**
+
+1. Create a new index (index_v2)
+2. Copy existing embeddings from index_v1
+3. Add new/updated embeddings to index_v2
+4. When index_v2 is ready, atomically swap the query target from v1 to v2
+5. Delete index_v1
+
+**Strategy 2: Streaming updates**
+
+1. When a document is created/updated, emit an event to a queue (Kafka, SQS)
+2. A background worker consumes events, generates embeddings, and inserts into the index
+3. Monitor the queue lag to detect indexing delays
+
+**Strategy 3: Periodic batch updates**
+
+1. Every N minutes, scan for documents created/updated since the last run
+2. Batch-embed them (e.g., 1000 documents per batch)
+3. Insert into the index
+
+The right strategy depends on your update volume and latency tolerance. If documents arrive at 10/second and queries must see them within 1 minute, you need streaming updates. If documents arrive at 10/day and 1-hour staleness is acceptable, periodic batch updates are simpler.
+
+## Decision Framework: Choosing Your Vector Stack
+
+You've seen the options. Here's how to choose.
+
+### Decision Tree
+
+```
+Do you already run PostgreSQL and need to join vectors with relational data?
+  YES → Start with pgvector
+  NO  → Continue
+
+Is vector search your core product, with 10M+ vectors and strict latency requirements?
+  YES → Use a dedicated vector database (Milvus, Qdrant, Weaviate)
+  NO  → Continue
+
+Do you already run Elasticsearch and need hybrid search (keyword + vector)?
+  YES → Use Elasticsearch with vector support
+  NO  → Start with pgvector (simplest operational model)
+```
+
+### Scale Considerations
+
+| Scale              | Recommended Architecture                   |
+|--------------------|--------------------------------------------|
+| < 100K vectors     | pgvector (single PostgreSQL instance)      |
+| 100K - 10M vectors | pgvector with HNSW index or Elasticsearch  |
+| 10M - 100M vectors | Dedicated vector DB (Milvus, Qdrant)       |
+| 100M+ vectors      | Distributed vector DB with sharding/replicas|
+
+### Operational Complexity
+
+| Database       | Operational Overhead   | Team Expertise Required        |
+|----------------|------------------------|--------------------------------|
+| **pgvector**   | Low (PostgreSQL DBA)   | SQL, PostgreSQL tuning         |
+| **Elasticsearch** | Medium (cluster ops) | Elasticsearch admin, indexing  |
+| **Milvus**     | High (distributed DB)  | Distributed systems, k8s       |
+| **Qdrant**     | Medium (single/cluster)| Vector DB concepts, Rust/Docker|
+| **Pinecone**   | Low (managed SaaS)     | API integration                |
+
+If you're a small team, **start with pgvector**. If you're at scale and vector search is business-critical, invest in a dedicated vector database.
+
+## Failure Modes: What Goes Wrong in Production
+
+Production retrieval systems fail in predictable ways. Here are the top failure modes and how to prevent them.
+
+### Failure Mode 1: Index Staleness
+
+**Symptom:** Users report that new documents don't appear in search results.
+
+**Root cause:** The index update pipeline is broken or lagging. Documents are written to the source database, but embeddings are never generated or inserted into the vector index.
+
+**Prevention:**
+- Monitor index lag (time since last successful update)
+- Alert when unindexed document count exceeds a threshold
+- Implement a health check that verifies a recently created document appears in search
+
+### Failure Mode 2: Embedding Drift
+
+**Symptom:** Search quality degrades over time, even though the index is updating.
+
+**Root cause:** The distribution of new documents differs from the training data for your embedding model. The model was fine-tuned on technical docs, but your users are now adding marketing content.
+
+**Prevention:**
+- Track embedding quality metrics (e.g., average similarity between queries and top results)
+- Periodically retrain or fine-tune your embedding model on production data
+- A/B test new embedding models before swapping them into production
+
+### Failure Mode 3: Query-Index Model Mismatch
+
+**Symptom:** All search results have low similarity scores, or results are nonsensical.
+
+**Root cause:** The query uses a different embedding model than the index. You upgraded the query embedding model but forgot to rebuild the index.
+
+**Prevention:**
+- Tag each index with the embedding model version
+- Validate that the query model matches the index model before running a search
+- Fail fast with a clear error message when there's a mismatch
+
+### Failure Mode 4: Metadata Filter Invalidation
+
+**Symptom:** Search returns no results, even though relevant documents exist.
+
+**Root cause:** A metadata filter is too restrictive. For example, filtering by `category = "engineering"` when all documents are now tagged as `category = "technical"`.
+
+**Prevention:**
+- Log the filter predicates applied to each query
+- Monitor the percentage of queries that return zero results
+- Alert when zero-result queries exceed a threshold (e.g., >10% of queries)
+
+### Failure Mode 5: Over-Reliance on Vector Search
+
+**Symptom:** Users complain that exact keyword searches don't work.
+
+**Root cause:** You're using pure vector search without a hybrid strategy. A document that contains the exact phrase "AWS Lambda cold start latency" ranks lower than a document that paraphrases it.
+
+**Prevention:**
+- Always use hybrid search (vector + BM25) in production
+- Test retrieval quality with both semantic and keyword-heavy queries
+- Measure precision and recall across diverse query types
+
+## Summary
+
+Vector search is not just "compute embeddings and sort by cosine similarity." Production retrieval architecture requires decisions at every layer: storage, indexing, search strategy, and freshness.
+
+**Key takeaways:**
+
+1. **Storage:** Use pgvector for small-to-medium scale or when data lives in PostgreSQL. Use dedicated vector databases (Milvus, Qdrant) for large-scale, performance-critical systems. Use Elasticsearch when you need hybrid search across keyword, vector, and structured queries.
+
+2. **Hybrid search:** Combine dense vector search (semantic similarity) with sparse search (BM25 keyword matching) for better recall and precision. Use Reciprocal Rank Fusion to merge results.
+
+3. **Reranking:** Apply a cross-encoder to the top 100 candidates from initial retrieval for higher precision. Two-stage retrieval (fast recall + precise reranking) is the standard pattern in production RAG.
+
+4. **Index management:** Track index staleness, embedding model version, and unindexed document count. Prevent query-index model mismatches by validating compatibility before search. Use incremental updates for live systems, full rebuilds when changing models.
+
+5. **Failure modes:** Watch for index staleness, embedding drift, model mismatches, overly restrictive filters, and missing hybrid search. Each has a clear mitigation: monitoring, validation, and hybrid retrieval.
+
+The right retrieval architecture depends on scale, operational capacity, and whether vector search is a feature or the core product. Start simple (pgvector + hybrid search), measure retrieval quality, and scale when you hit the limits of your current system.

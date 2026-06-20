@@ -1,0 +1,361 @@
+---
+title: "SQL Transformation & Pipeline Orchestration"
+---
+
+## Overview
+
+Modern data platforms run dozens to hundreds of interdependent data pipelines — batch jobs that extract data from APIs, transform raw records into clean tables, aggregate metrics, and publish results to dashboards and machine learning models. Each pipeline depends on upstream data being ready, and failures in one pipeline cascade to everything downstream. Without orchestration, you manually trigger jobs in the right sequence. Without transformation discipline, your SQL logic scatters across scripts, notebooks, and scheduled queries with no testing, no version control, and no lineage visibility.
+
+**dbt** (data build tool) is a transformation framework that brings software engineering practices to SQL — models are SQL files with explicit dependencies, built-in testing, auto-generated documentation, and lineage graphs. **Airflow** is an orchestration platform that schedules and monitors pipelines as directed acyclic graphs (DAGs), handling cross-system dependencies, retries, and SLA enforcement. They solve different problems: dbt transforms data within your warehouse using SQL, Airflow orchestrates the entire pipeline lifecycle across systems (triggering dbt runs, Spark jobs, API calls, and validation tasks).
+
+This lesson clarifies the complementary roles of dbt and Airflow, introduces alternative orchestration models (Dagster, Argo Workflows), and covers pipeline SLAs, retry strategies, freshness guarantees, and idempotency patterns.
+
+## dbt as Transformation Framework
+
+**dbt** treats SQL transformations as software artifacts. Instead of writing ad-hoc queries in notebooks or scheduled scripts, you write **models** — SQL SELECT statements saved as `.sql` files in a version-controlled repository. dbt compiles these models into CREATE TABLE or CREATE VIEW statements, executes them in dependency order, runs tests, and generates documentation.
+
+### Models, Sources, and Refs
+
+A **model** is a SQL file in the `models/` directory. Each model represents one table or view in your warehouse. Models reference upstream tables using the `ref()` function, which creates an explicit dependency.
+
+<CodeBlock code={`-- models/staging/stg_orders.sql
+select
+    order_id,
+    user_id,
+    order_date,
+    status,
+    cast(total_amount as numeric) as total_amount
+from {{ source('raw', 'orders') }}
+where status != 'cancelled'
+`} language="sql" filename="models/staging/stg_orders.sql" />
+
+The `source()` function points to raw data loaded by your ELT tool. The **staging layer** cleans column names, casts types, and filters invalid records. Downstream models consume staging tables using `ref()`:
+
+<CodeBlock code={`-- models/marts/fct_order_metrics.sql
+select
+    date_trunc('day', order_date) as order_day,
+    count(distinct order_id) as order_count,
+    sum(total_amount) as total_revenue
+from {{ ref('stg_orders') }}
+group by 1
+`} language="sql" filename="models/marts/fct_order_metrics.sql" />
+
+When you run `dbt run`, dbt parses the `ref()` calls to build a dependency graph and executes models in topological order. If `stg_orders` fails, `fct_order_metrics` is skipped. If you update `stg_orders`, dbt knows to rebuild everything downstream.
+
+### Built-in Testing
+
+dbt ships with four generic tests: `not_null`, `unique`, `accepted_values`, and `relationships`. You declare tests in a `schema.yml` file alongside your models:
+
+<CodeBlock code={`version: 2
+
+models:
+  - name: stg_orders
+    description: "Cleaned order records from the raw orders table"
+    columns:
+      - name: order_id
+        description: "Primary key"
+        tests:
+          - unique
+          - not_null
+      - name: user_id
+        description: "Foreign key to users table"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_users')
+              field: user_id
+      - name: status
+        description: "Order status"
+        tests:
+          - accepted_values:
+              values: ['pending', 'shipped', 'delivered']
+`} language="yaml" filename="models/staging/schema.yml" />
+
+Run `dbt test` to execute all tests. Each test compiles to a SQL query that returns failing records. If any test returns rows, the test fails. You can also write custom tests as SQL queries in the `tests/` directory.
+
+### Documentation and Lineage
+
+dbt auto-generates documentation from your `schema.yml` files and model queries. Run `dbt docs generate` and `dbt docs serve` to launch a local web server with interactive lineage graphs. Click any model to see its SQL, dependencies, and test results. The lineage graph visualizes the entire data flow from raw sources to final metrics tables, making it trivial to trace where a value came from or which downstream reports depend on a table.
+
+### dbt Core vs dbt Cloud
+
+**dbt Core** is the open-source CLI tool. You install it locally (`pip install dbt-core dbt-bigquery`), write models, and run `dbt run` and `dbt test` from the command line or in CI/CD scripts. **dbt Cloud** is a managed SaaS platform that adds a web IDE, scheduling, observability dashboards, and integration with version control. For small teams or proof-of-concept work, dbt Core is sufficient. For production at scale, dbt Cloud simplifies scheduling and monitoring, but you can achieve the same with dbt Core orchestrated by Airflow or another scheduler.
+
+<MermaidDiagram chart={`graph TD
+    Raw[Raw Data<br/>source('raw', 'orders')] --> Staging[Staging Layer<br/>stg_orders]
+    Staging --> Marts[Marts Layer<br/>fct_order_metrics]
+    Staging --> Dim[Dimension Tables<br/>dim_products]
+    Marts --> Reporting[Reporting<br/>rpt_daily_revenue]
+    Dim --> Reporting
+    
+    style Raw fill:#fef0f0,stroke:#cc0000
+    style Staging fill:#fff8e0,stroke:#cc8800
+    style Marts fill:#e0f8e0,stroke:#00aa00
+    style Dim fill:#e0f8e0,stroke:#00aa00
+    style Reporting fill:#e0f0ff,stroke:#0066cc
+`} />
+
+## Airflow as Orchestrator
+
+**Apache Airflow** is a platform for authoring, scheduling, and monitoring workflows as directed acyclic graphs (DAGs). A DAG is a collection of tasks with dependencies — Airflow ensures tasks run in the correct order, retries failed tasks, and tracks execution history. Airflow does not transform data itself; it orchestrates external systems (triggers Spark jobs, calls APIs, runs dbt, validates outputs, publishes metrics).
+
+### DAGs, Operators, and Sensors
+
+A DAG is defined in Python. Each task is an **operator** instance. Common operators include:
+
+- `BashOperator`: runs a shell command
+- `PythonOperator`: executes a Python function
+- `KubernetesPodOperator`: launches a Kubernetes pod
+- `HttpSensor`: polls an API endpoint until a condition is met
+- `DbtRunOperator` (via `airflow-dbt` library): triggers a dbt run
+
+<CodeBlock code={`from airflow import DAG
+from airflow.operators.bash import BashOperator
+from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperator
+from airflow.utils.dates import days_ago
+
+default_args = {
+    'owner': 'data-team',
+    'retries': 3,
+    'retry_delay': timedelta(minutes=5),
+}
+
+with DAG(
+    dag_id='daily_metrics_pipeline',
+    default_args=default_args,
+    schedule_interval='0 2 * * *',  # 2am daily
+    start_date=days_ago(1),
+    catchup=False,
+) as dag:
+    
+    extract_orders = KubernetesPodOperator(
+        task_id='extract_orders',
+        name='extract-orders-pod',
+        image='gcr.io/my-project/extract-orders:latest',
+        namespace='data-pipelines',
+    )
+    
+    run_dbt = BashOperator(
+        task_id='run_dbt_models',
+        bash_command='dbt run --profiles-dir /opt/dbt --project-dir /opt/dbt',
+    )
+    
+    validate_metrics = BashOperator(
+        task_id='validate_metrics',
+        bash_command='python /scripts/validate_metrics.py',
+    )
+    
+    extract_orders >> run_dbt >> validate_metrics
+`} language="python" filename="dags/daily_metrics_pipeline.py" />
+
+This DAG runs daily at 2am. The `extract_orders` task runs in a Kubernetes pod (using the K8s Executor), the `run_dbt` task executes dbt models, and the `validate_metrics` task checks output quality. The `>>` operator defines dependencies: `run_dbt` waits for `extract_orders` to succeed, and `validate_metrics` waits for `run_dbt`.
+
+### Kubernetes Executor
+
+Airflow supports multiple executors (LocalExecutor, CeleryExecutor, KubernetesExecutor). The **KubernetesExecutor** launches each task in its own ephemeral Kubernetes pod, providing isolation, resource limits, and scalability. Each pod gets dedicated CPU and memory, runs in a clean environment, and is destroyed after task completion. This prevents resource contention and allows different tasks to use different Docker images (one task runs Spark, another runs dbt, another calls a Python API).
+
+### Scheduling, Retries, and Backfill
+
+Airflow DAGs run on a **schedule_interval** (cron expression). If a task fails, Airflow retries it according to the `retries` and `retry_delay` settings in `default_args`. If a DAG is paused and you later unpause it, Airflow can **backfill** missed runs to catch up on historical data. This is critical for recovering from outages or reprocessing historical data after a pipeline bug fix.
+
+### What Airflow Is NOT
+
+Airflow is not a transformation engine. It does not execute SQL queries directly (beyond simple metadata checks). It orchestrates systems that do the transformation — it triggers dbt runs, submits Spark jobs to a cluster, calls BigQuery APIs. Embedding complex SQL logic inside `PythonOperator` tasks defeats the purpose of dbt (no testing, no lineage, no version control for the SQL). Use Airflow to schedule and monitor, not to transform.
+
+<MermaidDiagram chart={`graph LR
+    Scheduler[Airflow Scheduler] --> DAG1[DAG: daily_metrics]
+    DAG1 --> T1[Task: extract_orders<br/>KubernetesPodOperator]
+    DAG1 --> T2[Task: run_dbt<br/>BashOperator]
+    DAG1 --> T3[Task: validate<br/>PythonOperator]
+    
+    T1 --> Pod1[K8s Pod<br/>extract-orders]
+    T2 --> DBT[dbt run]
+    T3 --> Validation[Python script]
+    
+    DBT --> Warehouse[(Data Warehouse)]
+    Pod1 --> Warehouse
+    Validation --> Warehouse
+    
+    style Scheduler fill:#e0f0ff,stroke:#0066cc
+    style DAG1 fill:#fff8e0,stroke:#cc8800
+    style T1 fill:#e0f8e0,stroke:#00aa00
+    style T2 fill:#e0f8e0,stroke:#00aa00
+    style T3 fill:#e0f8e0,stroke:#00aa00
+    style Warehouse fill:#fef0f0,stroke:#cc0000
+`} />
+
+## dbt + Airflow Together
+
+dbt and Airflow are complementary. **dbt handles intra-warehouse dependencies** — the order in which SQL models run within a single dbt project. **Airflow handles cross-system dependencies** — extracting data from APIs, loading it to staging tables, triggering the dbt run, validating outputs, and publishing results to a dashboard API.
+
+A typical pipeline:
+
+1. Airflow triggers an API extraction job (KubernetesPodOperator running a Python script)
+2. Airflow waits for the extraction to complete
+3. Airflow triggers `dbt run` (BashOperator or DbtRunOperator)
+4. dbt executes models in dependency order (staging → marts → reporting)
+5. Airflow triggers a validation task (PythonOperator that checks row counts, freshness, schema)
+6. If validation passes, Airflow triggers a publish task (pushes metrics to a BI tool API)
+
+If the API extraction fails, the entire pipeline stops. If dbt fails on a specific model, Airflow logs the failure and retries. If validation fails (e.g., row count dropped 50%), Airflow sends an alert and halts the publish step.
+
+**Why not just use dbt's scheduler?** dbt Cloud can schedule dbt runs, but it cannot orchestrate tasks outside dbt (API calls, Spark jobs, validation scripts). You need an orchestrator to coordinate the full pipeline. **Why not just use Airflow?** You could write all your SQL logic in Airflow tasks, but you lose dbt's testing, documentation, lineage, and `ref()` dependency tracking. Airflow is a blunt instrument for SQL transformation — it runs whatever you put in a BashOperator, with no built-in lineage or testing.
+
+## Alternative Orchestration Models
+
+Airflow is the most widely adopted orchestrator, but it is not the only option. Depending on your team's infrastructure and preferences, you may choose an alternative.
+
+### Dagster
+
+**Dagster** is a data orchestrator that treats datasets as first-class citizens. Instead of defining tasks and dependencies, you define **software-defined assets** — declarative functions that produce datasets. Dagster auto-generates a lineage graph from asset dependencies, similar to dbt's `ref()` model. Dagster integrates natively with dbt (you can import dbt models as Dagster assets), supports asset materialization tracking, and provides a modern UI with partition-level lineage.
+
+Dagster is more opinionated than Airflow. It encourages a functional, asset-centric approach: "this function produces the `daily_orders` table, which depends on the `raw_orders` table." Airflow is more imperative: "run this task, then run that task." If your team values declarative asset definitions and tight dbt integration, Dagster is a strong alternative. If you need maximum flexibility to run arbitrary bash scripts, call legacy APIs, or integrate with non-data tools, Airflow's operator library is more extensive.
+
+### Argo Workflows
+
+**Argo Workflows** is a Kubernetes-native workflow engine. Workflows are defined as YAML manifests (CRDs) and run as pods in a Kubernetes cluster. Argo is lightweight, scales horizontally, and integrates seamlessly with other K8s tools (e.g., triggering workflows from events via Argo Events). Unlike Airflow, Argo has no built-in scheduler — you pair it with a cron controller or event trigger. Argo is a good fit for teams already standardized on Kubernetes and GitOps, but it lacks Airflow's rich operator library and UI.
+
+### Managed Orchestration Options
+
+- **Google Cloud Composer**: Fully managed Airflow on Google Cloud, pre-integrated with BigQuery, GCS, and Vertex AI.
+- **AWS Managed Workflows for Apache Airflow (MWAA)**: Managed Airflow on AWS, integrated with S3, Redshift, and Glue.
+- **Azure Data Factory**: Microsoft's orchestration service, less flexible than Airflow but tightly integrated with Azure ecosystem.
+
+Managed options remove operational overhead (no Airflow server to maintain), but they introduce vendor lock-in and can be more expensive than self-hosted Airflow at scale.
+
+## Pipeline SLAs, Retries, and Freshness Guarantees
+
+Production data pipelines must meet **service-level agreements (SLAs)** — guarantees about data freshness and pipeline completion time. A typical SLA: "Daily metrics must be available by 8am." If the pipeline runs from 2am to 7am, you have a one-hour buffer. If it takes longer, stakeholders see stale data.
+
+### Defining SLAs in Airflow
+
+Airflow supports task-level and DAG-level SLAs. Set `sla` in `default_args` or per-task:
+
+<CodeBlock code={`default_args = {
+    'owner': 'data-team',
+    'sla': timedelta(hours=5),  # Task must complete within 5 hours
+    'retries': 3,
+    'retry_delay': timedelta(minutes=10),
+}
+`} language="python" filename="dag_default_args.py" />
+
+If a task exceeds its SLA, Airflow sends an alert (email, Slack, PagerDuty). You can configure SLA miss callbacks to trigger automated remediation (e.g., killing a stuck task and restarting it, or failing over to a backup pipeline).
+
+### Retry Strategies
+
+Transient failures are common in distributed systems — network timeouts, API rate limits, temporary resource exhaustion. Airflow retries failed tasks up to the `retries` limit. For tasks that fail repeatedly (e.g., a data quality check that finds bad data), use a **dead-letter queue** or **manual intervention workflow** instead of infinite retries. Set `retries: 0` for validation tasks that should fail fast if data quality is poor.
+
+**Exponential backoff**: Airflow's `retry_exponential_backoff` parameter increases the retry delay exponentially (10s, 20s, 40s, ...). This avoids hammering a downstream system that is temporarily overloaded.
+
+### Freshness Monitoring and Alerting
+
+Data freshness is the time lag between when data is generated and when it is available in your warehouse. A **freshness check** queries the max timestamp in a table and alerts if data is older than expected. dbt supports freshness checks via `freshness` in `sources.yml`:
+
+<CodeBlock code={`version: 2
+
+sources:
+  - name: raw
+    database: analytics
+    schema: raw_data
+    tables:
+      - name: orders
+        freshness:
+          warn_after: {count: 6, period: hour}
+          error_after: {count: 12, period: hour}
+        loaded_at_field: _loaded_at
+`} language="yaml" filename="models/sources.yml" />
+
+Run `dbt source freshness` to check if the `orders` table has data loaded in the last 6 hours (warn) or 12 hours (error). Integrate this into your Airflow DAG as a validation step before running transformations.
+
+### Idempotent Pipelines
+
+An **idempotent pipeline** produces the same result when run multiple times on the same input. This is critical for backfilling and recovery: if a pipeline fails halfway through, you should be able to rerun it from the start without duplicating data or corrupting state.
+
+**Strategies for idempotency:**
+- Use `CREATE OR REPLACE TABLE` or `INSERT OVERWRITE` instead of `INSERT INTO` (BigQuery, Snowflake).
+- Partition tables by date and overwrite only the target partition (`INSERT OVERWRITE PARTITION (dt='2026-06-19')`).
+- dbt models are idempotent by default (each model is a full refresh unless configured as incremental).
+- Use deduplication logic (e.g., `ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_at DESC)`) to handle duplicate records from retries.
+
+## The Default: dbt Transforms, Airflow Orchestrates
+
+For most teams building modern data platforms, the default architecture is:
+
+- **dbt** for all SQL transformations (staging, marts, reporting)
+- **Airflow** for orchestrating the end-to-end pipeline (extract → load → dbt → validate → publish)
+- **Kubernetes Executor** for resource isolation and scalability
+- **Freshness checks** in dbt and validation tasks in Airflow
+- **SLAs and retries** configured per-task in Airflow
+- **Idempotent pipelines** using `CREATE OR REPLACE` or partition overwrite
+
+This architecture gives you software engineering rigor (testing, version control, lineage) for SQL transformations, robust scheduling and monitoring for the full pipeline, and operational flexibility to integrate with any data system.
+
+## Decision Framework: When to Choose Alternatives
+
+**Choose Dagster over Airflow if:**
+- Your team values declarative, asset-centric definitions over imperative task graphs
+- You want first-class dbt integration (import dbt models as Dagster assets)
+- You need partition-level lineage and materialization tracking
+- You are building a greenfield platform and can adopt Dagster's opinionated model
+
+**Choose Argo Workflows over Airflow if:**
+- Your infrastructure is Kubernetes-native and you want CRD-based workflow definitions
+- You prefer GitOps-driven workflow management (workflows as YAML in git)
+- You already use Argo Events or Argo CD and want tight integration
+- You do not need a built-in scheduler (you will trigger workflows via events or external cron)
+
+**Stick with Airflow if:**
+- You need maximum flexibility (bash scripts, legacy integrations, arbitrary operators)
+- Your team already knows Airflow
+- You need a mature ecosystem (plugins, operators, monitoring tools)
+- You want managed options (Cloud Composer, MWAA)
+
+## Failure Modes and Anti-Patterns
+
+### Using dbt as an Orchestrator
+
+Some teams try to schedule dbt runs directly (cron job running `dbt run`) without an orchestrator. This works for simple single-system pipelines, but breaks down when you need to:
+
+- Trigger an API extraction before running dbt
+- Validate dbt outputs before publishing downstream
+- Retry failed dbt runs with exponential backoff
+- Coordinate dbt with Spark jobs or external systems
+- Track SLAs and send alerts on pipeline delays
+
+**Fix:** Use Airflow (or Dagster, Argo) to orchestrate dbt. Let dbt handle SQL dependencies, let the orchestrator handle cross-system dependencies.
+
+### Using Airflow as a Transformation Engine
+
+Some teams embed all SQL logic in Airflow tasks (PythonOperators that execute raw SQL strings). This creates untestable, undocumented SQL with no lineage tracking. When the SQL breaks, you have no automated tests. When you want to trace where a metric comes from, you read Python code instead of a lineage graph.
+
+**Fix:** Move SQL transformations to dbt models. Use Airflow only to trigger the dbt run and handle non-SQL tasks (API calls, validation, publishing).
+
+### No SLAs or Freshness Monitoring
+
+Without SLAs, you discover pipeline failures when stakeholders report stale dashboards. Without freshness checks, you run transformations on old data and publish misleading metrics.
+
+**Fix:** Define SLAs in Airflow (task-level and DAG-level). Implement dbt source freshness checks and Airflow validation tasks. Set up alerting (email, Slack, PagerDuty) for SLA misses and freshness violations.
+
+### Non-Idempotent Pipelines
+
+If rerunning a pipeline duplicates data or corrupts state, you cannot safely backfill or recover from failures. Teams resort to manual cleanup (running ad-hoc DELETE queries) instead of automated retries.
+
+**Fix:** Design pipelines to be idempotent from day one. Use `CREATE OR REPLACE`, partition overwrite, or deduplication logic. Test idempotency by running the pipeline twice on the same date and verifying identical results.
+
+### No Retry Logic for Transient Failures
+
+External APIs and data sources fail intermittently (rate limits, network timeouts, temporary outages). Without retries, pipelines fail permanently on transient issues, requiring manual intervention.
+
+**Fix:** Configure `retries` and `retry_delay` in Airflow default_args. Use exponential backoff for API calls. Distinguish between transient failures (retry) and permanent failures (alert and halt).
+
+## Summary
+
+**dbt** brings software engineering practices to SQL transformation — models are version-controlled files with explicit dependencies (`ref()`), built-in testing (not_null, unique, relationships), auto-generated documentation, and lineage graphs. **Airflow** orchestrates pipelines as directed acyclic graphs (DAGs), handling scheduling, retries, SLA enforcement, and cross-system dependencies (API extraction, dbt runs, Spark jobs, validation).
+
+dbt transforms data within your warehouse. Airflow orchestrates the end-to-end pipeline lifecycle across systems. They are complementary, not competing. The default architecture for modern data platforms is dbt for SQL transformations and Airflow for orchestration, with Kubernetes Executor for resource isolation, freshness checks in dbt, validation tasks in Airflow, SLAs and retries configured per-task, and idempotent pipelines using CREATE OR REPLACE or partition overwrite.
+
+Alternative orchestrators (Dagster, Argo Workflows) offer different trade-offs: Dagster emphasizes declarative asset definitions and first-class dbt integration, Argo Workflows is Kubernetes-native and lightweight. Choose based on your team's infrastructure and philosophy.
+
+Pipeline SLAs define freshness guarantees. Retry strategies handle transient failures. Freshness monitoring detects stale data. Idempotent pipelines enable safe backfilling and recovery. Without these practices, you discover failures reactively, suffer from duplicate data, and cannot recover from outages without manual intervention.
+
+Avoid using dbt as an orchestrator (it cannot handle cross-system dependencies) or Airflow as a transformation engine (you lose testing, lineage, and documentation). Separate concerns: dbt transforms, Airflow orchestrates.

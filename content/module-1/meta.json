@@ -1,0 +1,53 @@
+{
+  "id": 1,
+  "title": "Data Strategy, Operating Model & Reference Architecture",
+  "description": "Business outcomes, maturity model, domains, data products, ownership, platform principles",
+  "color": "#68d391",
+  "lessons": [
+    {
+      "slug": "01-why-data-strategy-matters",
+      "title": "Why Data Strategy Matters",
+      "description": "Business outcomes of intentional data architecture vs accidental complexity; the cost of no strategy",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-data-domains-ownership-and-data-products",
+      "title": "Data Domains, Ownership & Data Products",
+      "description": "Domain-driven data design; centralized, federated, and hybrid ownership models; AI data ownership",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-maturity-model-and-assessment",
+      "title": "Maturity Model & Assessment",
+      "description": "Assessing current state across data management, platform capabilities, governance, and AI readiness",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-reference-architecture-patterns",
+      "title": "Reference Architecture Patterns",
+      "description": "Three reference-architecture archetypes: managed-cloud-first, Kubernetes-centric, and hybrid/regulated enterprise",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "05-building-your-data-strategy-roadmap",
+      "title": "Building Your Data Strategy Roadmap",
+      "description": "Hands-on: translating assessment to a prioritized roadmap with capability gaps, owners, and success metrics",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["flowchart"],
+      "hasCode": false,
+      "hasQuiz": false
+    }
+  ]
+}

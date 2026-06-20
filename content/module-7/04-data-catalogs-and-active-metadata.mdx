@@ -1,0 +1,405 @@
+---
+title: "Data Catalogs & Active Metadata"
+---
+
+## The Metadata Silo Problem
+
+By Module 7 Lesson 4, you've built quality monitors (Lesson 2), lineage graphs (Lesson 3), and you're writing data contracts (Lesson 5 next). Each tool produces metadata — quality metrics live in Great Expectations, lineage edges live in Marquez, contracts live in YAML files, access policies live in IAM and query engine ACLs.
+
+An analyst who wants to use the `customer_cohorts` table must now hunt across five systems to answer basic questions: Is this table fresh? Who owns it? What upstream dependencies does it have? Is it certified for use in reports? What PII columns require masking?
+
+This is the **metadata silo problem** — trust artifacts are scattered across tools that don't talk to each other. The solution is a **data catalog** — a unified index that collects metadata from all these systems and exposes it in a single interface for discovery, classification, and governance.
+
+The catalog is not the enforcement point — it doesn't block queries or apply masks. It's the **trust index** — it connects quality results, lineage graphs, contracts, and access policies so users can discover what's safe to use and understand the context before they query it.
+
+This lesson covers DataHub as the reference catalog architecture, compares it to OpenMetadata and managed alternatives, explains catalog capabilities (discovery, tagging, ownership, usage analytics), and introduces **active metadata** — metadata that triggers actions like alerting on freshness breaches or auto-classifying PII columns.
+
+<MermaidDiagram chart={`graph TD
+    A[Quality Monitors] --> S[Metadata Silos]
+    B[Lineage Graphs] --> S
+    C[Data Contracts] --> S
+    D[Access Policies] --> S
+    S --> P{Problem}
+    P --> Q["Analyst: Is customer_cohorts fresh?"]
+    P --> R["Analyst: Who owns this table?"]
+    P --> T["Analyst: What upstream dependencies?"]
+    Q -.-> |Must hunt across| A
+    R -.-> |Must hunt across| C
+    T -.-> |Must hunt across| B
+    
+    S2[Data Catalog Solution] --> U[Unified Trust Index]
+    A --> U
+    B --> U
+    C --> U
+    D --> U
+    U --> V[Single Interface]
+    V --> Q2["See freshness metrics"]
+    V --> R2["See owner contact"]
+    V --> T2["See lineage graph"]
+    
+    style S fill:#fee,stroke:#c33
+    style P fill:#fee,stroke:#c33
+    style S2 fill:#efe,stroke:#3c3
+    style U fill:#efe,stroke:#3c3
+    style V fill:#efe,stroke:#3c3
+`} />
+
+## DataHub as Reference Architecture
+
+**DataHub** (LinkedIn open-source, now at datahubproject.io) is the most widely deployed open-source catalog. It's built on a **metadata graph** — entities (datasets, pipelines, dashboards, users) connected by typed edges (ownership, lineage, consumption, tags).
+
+Key architectural components:
+
+- **Metadata Service (GMS)** — GraphQL + REST API for querying and writing metadata, backed by MySQL, PostgreSQL, or Cassandra for storage and Elasticsearch or OpenSearch for search indexing
+- **Ingestion framework** — 100+ source connectors that extract metadata from warehouses, orchestrators, BI tools, and push it to GMS via the API
+- **Frontend UI** — React app for discovery, lineage visualization, tagging, glossary management, and usage analytics
+- **Actions framework** — event-driven triggers that respond to metadata changes (e.g., send Slack alert when a dataset is marked deprecated)
+
+DataHub's **metadata model** is structured around:
+
+- **Aspects** — versioned JSON payloads that describe one facet of an entity (e.g., `DatasetProperties` aspect contains `description`, `uri`, `created`, `lastModified`)
+- **Entities** — datasets, data jobs, dashboards, charts, ML models, users, groups, tags, glossary terms
+- **Relationships** — typed edges like `OwnedBy`, `DownstreamOf`, `Consumes`, `Contains`
+
+This graph model lets you answer questions like "show me all datasets owned by the data-platform team that are consumed by the revenue dashboard" by traversing edges. The UI renders this as a clickable lineage graph, a search filter, or a usage heatmap.
+
+<MermaidDiagram chart={`graph LR
+    subgraph Sources["Metadata Sources"]
+        W[Snowflake]
+        O[Airflow]
+        B[Looker]
+        D[dbt]
+    end
+    
+    subgraph DataHub["DataHub Architecture"]
+        I[Ingestion Framework]
+        GMS[Metadata Service<br/>GraphQL + REST API]
+        DB[(MySQL/Postgres<br/>Metadata Store)]
+        ES[(Elasticsearch<br/>Search Index)]
+        UI[React Frontend]
+        ACT[Actions Framework]
+    end
+    
+    W --> |Connector| I
+    O --> |Connector| I
+    B --> |Connector| I
+    D --> |Connector| I
+    I --> |Write Metadata| GMS
+    GMS --> |Store| DB
+    GMS --> |Index| ES
+    GMS --> |Serve| UI
+    GMS --> |Events| ACT
+    ACT --> |Trigger| SLACK[Slack Alerts]
+    ACT --> |Trigger| TAG[Auto-Tagging]
+    
+    style GMS fill:#e0f0ff,stroke:#0066cc
+    style UI fill:#e0f0ff,stroke:#0066cc
+    style ACT fill:#fff4e6,stroke:#cc8800
+`} />
+
+## Catalog Capabilities
+
+A production catalog provides six core capabilities:
+
+1. **Discovery** — full-text search across dataset names, column names, descriptions, tags, glossary terms, and owner names. Search ranking uses relevance signals (usage frequency, recency, user engagement) to surface the most trusted tables first.
+
+2. **Classification** — apply tags and glossary terms to datasets and columns. Tags are lightweight labels (`PII`, `financial`, `deprecated`). Glossary terms are business definitions with rich descriptions, related terms, and ownership (`customer` glossary term defines what the company means by "customer").
+
+3. **Ownership registration** — assign technical owners (who can fix breakages), business owners (who define requirements), and stewards (who approve access). The catalog surfaces owner contact info so users know who to ask for access or report issues to.
+
+4. **Lineage visualization** — render upstream and downstream dependencies as an interactive graph. Clicking a node navigates to that dataset's detail page. Lineage comes from connectors that extract it from orchestrators (Airflow DAGs), transformation tools (dbt models), or query logs (Snowflake query history parsed for table dependencies).
+
+5. **Usage analytics** — track who queries each dataset, how often, from which tools. This answers "is anyone using this table?" before decommissioning it and surfaces power users who can answer questions about the data.
+
+6. **Schema evolution tracking** — version schema changes over time. When a column is dropped or renamed, the catalog shows when it happened and which pipeline or user made the change (if lineage metadata includes job execution history).
+
+These capabilities turn the catalog into the **trust index** — the first place users go to evaluate whether a dataset is safe to use.
+
+## Catalog as Trust Index
+
+The catalog connects the trust plane components from Lessons 1-3 in a single interface. Here's how it looks from a user's perspective:
+
+An analyst searches for "customer churn". The search returns `analytics.customer_cohorts` as the top result. The dataset detail page shows:
+
+- **Description** — "Monthly customer cohorts with churn labels, used for retention modeling"
+- **Owner** — Technical owner: data-platform@company.com, Business owner: product-analytics@company.com
+- **Freshness** — Last updated 2 hours ago (green checkmark), updated daily at 6am UTC
+- **Quality metrics** — 3 quality checks passing (null check on customer_id, uniqueness check, row count within expected range), 1 check warning (engagement_score has 5% nulls, expected <2%)
+- **Lineage** — Upstream: `raw.events`, `raw.subscriptions`, `raw.accounts`. Downstream: `dashboards.retention_dashboard`, `ml_features.churn_prediction_v2`
+- **Schema** — 12 columns, including `customer_id` (tagged `PII`), `churn_label` (tagged `ML_TARGET`), `engagement_score` (tagged `DERIVED`)
+- **Contract status** — Conforms to `customer_cohorts_v1.contract.yaml` (linked)
+- **Usage** — 47 queries in the last 7 days, top consumers: Sarah (BI team), churn-prediction-pipeline, retention-dashboard
+
+This is the **trust index** in action — the analyst sees quality results from Great Expectations, lineage edges from Marquez or dbt, contract conformance from CI, PII tags from auto-classification, and usage stats from query logs, all synthesized in one view.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Trust["Trust Plane Components"]
+        Q[Great Expectations<br/>Quality Results]
+        L[Marquez/dbt<br/>Lineage Edges]
+        C[Data Contracts<br/>YAML Files]
+        A[IAM Policies<br/>Access Rules]
+        U[Query Logs<br/>Usage Stats]
+    end
+    
+    subgraph Catalog["Data Catalog - Trust Index"]
+        D[Dataset Detail Page]
+        D --> F[Freshness: 2h ago ✓]
+        D --> QM[Quality: 3/4 checks passing ⚠]
+        D --> LG[Lineage Graph: 3 upstream, 2 downstream]
+        D --> SC[Schema: 12 columns, 2 PII tagged]
+        D --> CO[Contract: customer_cohorts_v1 ✓]
+        D --> US[Usage: 47 queries, 3 top consumers]
+        D --> OW[Owner: data-platform@company.com]
+    end
+    
+    Q --> QM
+    L --> LG
+    C --> CO
+    A --> OW
+    U --> US
+    
+    D -.-> |User sees| TR[Trust Decision]
+    TR --> |Safe to use| GO[Proceed with query]
+    TR --> |Warning flags| ASK[Contact owner first]
+    
+    style D fill:#e0f0ff,stroke:#0066cc
+    style TR fill:#fff4e6,stroke:#cc8800
+`} />
+
+## Critical Distinction: Visibility vs Enforcement
+
+The catalog **describes** policies and **exposes** context. It does NOT enforce policies. This distinction is crucial to avoid architectural mistakes.
+
+**What the catalog does:**
+
+- Displays that `customer_id` is tagged `PII`
+- Shows that user Sarah does NOT have `PII_VIEWER` role
+- Links to the access policy document that explains the approval process
+
+**What the catalog does NOT do:**
+
+- Block Sarah's query when she tries `SELECT customer_id FROM customers`
+- Apply automatic masking to `customer_id` in query results
+- Enforce row-level filters based on user role
+
+**Why enforcement happens elsewhere:**
+
+- **Query engines** enforce column-level access controls (Trino's column masks, Snowflake's dynamic data masking, BigQuery's column-level security)
+- **Storage layers** enforce row-level security (Snowflake row access policies, BigQuery authorized views, Delta Lake row filters)
+- **APIs and retrieval paths** enforce application-level access rules (service checks user JWT claims before returning customer records)
+
+The catalog is the **discovery plane** — it helps users understand what policies exist and what context matters. The enforcement plane lives in the systems that serve the actual data.
+
+This separation matters because enforcement must be **fast** (evaluated on every query) and **reliable** (a catalog outage should not break production queries). The catalog can be slow or temporarily unavailable without breaking data access — users just lose visibility until it's back online.
+
+**Anti-pattern:** treating the catalog as an enforcement chokepoint. Example: requiring all queries to first check the catalog API to see if the user has access. This introduces latency, a single point of failure, and bypasses the native access controls in Snowflake or Trino that are optimized for performance and correctness.
+
+**Correct pattern:** the catalog indexes the same metadata that enforcement systems use (it reads IAM roles, Snowflake policies, dbt tags), but enforcement happens in the query engine, storage layer, or API gateway, not in the catalog.
+
+## Active Metadata
+
+Traditional catalogs are **passive** — they index metadata and let users search it. **Active metadata** systems respond to metadata changes by triggering actions.
+
+Examples of active metadata:
+
+- **Freshness alerts** — when a dataset's `last_updated` timestamp exceeds the SLA (e.g., `daily_sales` should update by 8am but it's now 10am), the catalog sends a Slack alert to the dataset owner and marks the dataset as "stale" in the UI.
+
+- **Auto-classification** — when a new column is added to a dataset, the catalog scans the column name and sample values against PII patterns (email regex, SSN format, credit card number) and automatically tags the column as `PII` if it matches.
+
+- **Tag propagation** — when a dbt model tagged `financial` writes to a downstream table, the catalog automatically applies the `financial` tag to that table and its columns, propagating compliance context through lineage.
+
+- **Schema change notifications** — when a column is dropped or renamed, the catalog identifies all downstream dashboards and pipelines that depend on that column (via lineage) and sends a warning to their owners.
+
+- **Usage-based deprecation** — when a dataset has zero queries for 90 days, the catalog marks it as `deprecated` and notifies the owner to confirm whether it can be deleted.
+
+DataHub's **Actions framework** implements active metadata via event-driven triggers. The metadata service emits events when entities change (e.g., `DatasetPropertiesChanged`, `OwnershipChanged`, `TagAdded`). Action plugins subscribe to these events and execute logic — send a Slack message, write a log, update another metadata field, or trigger an external workflow.
+
+Example DataHub action configuration (YAML):
+
+```yaml
+name: pii-auto-tagging
+type: metadata-change-processor
+source:
+  type: kafka
+  config:
+    connection:
+      bootstrap: localhost:9092
+      schema_registry_url: http://localhost:8081
+filter:
+  event_type: EntityChangeEvent_v1
+  entity_type: dataset
+pipeline:
+  - step: extract-columns
+    config:
+      extract_schema: true
+  - step: classify-pii
+    config:
+      patterns:
+        - name: email
+          regex: ".*email.*"
+          tag: PII
+        - name: ssn
+          regex: ".*ssn.*|.*social_security.*"
+          tag: PII
+  - step: apply-tags
+    config:
+      target: column
+sink:
+  type: datahub-rest
+  config:
+    server: http://localhost:8080
+```
+
+This action listens for dataset schema changes, scans new columns for PII patterns, and applies the `PII` tag automatically.
+
+<CodeBlock code={`# DataHub metadata ingestion recipe (YAML)
+# This recipe extracts metadata from Snowflake and pushes it to DataHub
+
+source:
+  type: snowflake
+  config:
+    username: \${SNOWFLAKE_USER}
+    password: \${SNOWFLAKE_PASSWORD}
+    account_id: my-account
+    warehouse: ANALYTICS_WH
+    role: DATAHUB_ROLE
+    
+    # Extract table and column metadata
+    include_tables: true
+    include_views: true
+    
+    # Extract lineage from Snowflake query history
+    include_table_lineage: true
+    include_view_lineage: true
+    
+    # Extract usage stats (queries per table)
+    include_usage_statistics: true
+    start_time: "-7d"  # Last 7 days of query logs
+    
+    # Extract column-level profiling
+    profiling:
+      enabled: true
+      profile_table_level_only: false
+      include_field_null_count: true
+      include_field_min_value: true
+      include_field_max_value: true
+    
+    # Extract tags from Snowflake tag system
+    extract_tags: true
+
+transformers:
+  # Add platform instance tag
+  - type: simple_add_dataset_tags
+    config:
+      tag_urns:
+        - "urn:li:tag:snowflake"
+  
+  # Auto-classify PII columns by name pattern
+  - type: pattern_add_dataset_tags
+    config:
+      semantics: PATTERN
+      rules:
+        - pattern: ".*email.*"
+          tag: "urn:li:tag:PII"
+        - pattern: ".*ssn.*"
+          tag: "urn:li:tag:PII"
+        - pattern: ".*credit_card.*"
+          tag: "urn:li:tag:PII"
+
+sink:
+  type: datahub-rest
+  config:
+    server: http://datahub-gms:8080
+    token: \${DATAHUB_TOKEN}
+
+# Schedule: run daily at 2am
+`} language="yaml" filename="snowflake_to_datahub.yml" />
+
+## DataHub vs OpenMetadata vs Managed Catalogs
+
+You have three architectural paths:
+
+**DataHub (open-source, self-hosted):**
+
+- **Pro:** Most mature open-source catalog, 100+ connectors, active community, strong lineage and usage analytics, flexible metadata model (you can add custom aspects), actions framework for active metadata
+- **Con:** Infrastructure overhead (MySQL/Postgres, Elasticsearch, Kafka for actions, frontend hosting), requires Java/Python expertise to extend connectors, UI can be slow with >100k datasets
+- **When to choose:** You need full control over metadata, you want to extend the model or connectors, you have the platform team capacity to run it, or you need active metadata actions that aren't available in managed catalogs
+
+**OpenMetadata (open-source, self-hosted):**
+
+- **Pro:** Modern UI (React + TypeScript), simpler deployment (single Docker Compose stack), built-in data quality integration (Great Expectations, Deequ), column-level lineage out of the box, easier to customize UI
+- **Con:** Smaller connector ecosystem (60+ vs DataHub's 100+), less mature (launched 2021 vs DataHub 2019), fewer production deployments, actions framework less flexible than DataHub's
+- **When to choose:** You prefer a modern UI and simpler deployment over connector breadth, you want column-level lineage without custom parsing, or you're starting fresh and don't need DataHub's ecosystem
+
+**Managed catalogs (Atlan, Alation, Collibra, AWS Glue Data Catalog, Google Data Catalog):**
+
+- **Pro:** No infrastructure overhead, enterprise support, pre-built integrations with BI tools, collaboration features (discussions, approval workflows), compliance certifications (SOC2, HIPAA)
+- **Con:** Vendor lock-in, limited extensibility (you can't add custom metadata fields or connectors), pricing scales with dataset count, active metadata actions are basic (alerts only, no custom triggers)
+- **When to choose:** You have <10 data engineers and don't want to run infrastructure, you need enterprise support, or you're already committed to a cloud vendor (AWS Glue if you're all-in on AWS, Google Data Catalog if you're all-in on GCP)
+
+**Decision framework:**
+
+- Start with **managed catalogs** if you're a small team (<10 data engineers) with no platform capacity to run infrastructure. AWS Glue or Google Data Catalog are fine for basic discovery and tagging.
+- Move to **OpenMetadata** if you need column-level lineage, modern UI, and built-in quality integration, and you're willing to run Docker Compose but don't need DataHub's connector breadth.
+- Move to **DataHub** if you need active metadata actions, 100+ connectors, flexible metadata model, or you're at scale (>100k datasets) and need mature lineage and usage analytics.
+
+Most teams that start with AWS Glue or Google Data Catalog eventually migrate to DataHub or OpenMetadata when they need active metadata, custom tagging, or lineage that spans multiple clouds and SaaS tools.
+
+<MermaidDiagram chart={`graph TD
+    START{Catalog Decision}
+    
+    START --> Q1{Small team<br/>< 10 engineers?}
+    Q1 --> |Yes| Q2{Cloud vendor<br/>lock-in OK?}
+    Q1 --> |No| Q3{Need active<br/>metadata actions?}
+    
+    Q2 --> |AWS| GLUE[AWS Glue<br/>Data Catalog]
+    Q2 --> |GCP| GDC[Google Data<br/>Catalog]
+    Q2 --> |Multi-cloud| ATLAN[Atlan/Alation<br/>Managed]
+    
+    Q3 --> |Yes| Q4{Need 100+<br/>connectors?}
+    Q3 --> |No| Q5{Need column-level<br/>lineage out of box?}
+    
+    Q4 --> |Yes| DH[DataHub]
+    Q4 --> |No| OM[OpenMetadata]
+    
+    Q5 --> |Yes| OM
+    Q5 --> |No| DH2[DataHub<br/>or OpenMetadata]
+    
+    style GLUE fill:#fff4e6,stroke:#cc8800
+    style GDC fill:#fff4e6,stroke:#cc8800
+    style ATLAN fill:#fff4e6,stroke:#cc8800
+    style DH fill:#e0f0ff,stroke:#0066cc
+    style OM fill:#e0f0ff,stroke:#0066cc
+    style DH2 fill:#e0f0ff,stroke:#0066cc
+`} />
+
+## Failure Modes
+
+Three common mistakes when deploying catalogs:
+
+**1. Catalog as enforcement point**
+
+Treating the catalog API as the access control chokepoint. Example: requiring all queries to call the catalog API to check user permissions before executing. This adds latency, a single point of failure, and bypasses native access controls in Snowflake or Trino. The catalog should **describe** policies, not **enforce** them. Enforcement happens in query engines, storage layers, or APIs.
+
+**2. Metadata without action**
+
+Running a catalog that indexes quality metrics, lineage, and freshness, but NOT configuring active metadata actions. Users see that a dataset is stale, but no one is notified to fix it. Or they see a column tagged `PII`, but the tag doesn't propagate to downstream tables. The catalog becomes a read-only museum of metadata that doesn't drive behavior. Fix: configure actions for freshness alerts, auto-classification, and tag propagation. If your catalog doesn't support actions (e.g., AWS Glue), build external automation that reads catalog metadata and triggers alerts or workflows.
+
+**3. Classification without automation**
+
+Manually tagging every table and column with `PII`, `financial`, `deprecated` tags. This doesn't scale past 100 tables. Auto-classification based on column name patterns, data profiling, or ML models (scanning sample values for email addresses, SSNs, credit card numbers) is required at scale. Example: DataHub's pattern-based tagging transformer, OpenMetadata's PII profiler, or AWS Glue's ML-powered sensitive data detection. Manual tagging is fine for glossary terms (business definitions that require human judgment), but compliance tags like `PII` must be automated.
+
+## Putting It Together
+
+By the end of this lesson, you understand:
+
+- The **metadata silo problem** — quality metrics, lineage, contracts, and access policies scattered across tools
+- The **data catalog** as trust index — a unified interface that connects all trust artifacts in one place
+- **DataHub** as reference architecture — metadata graph (entities, aspects, relationships), ingestion framework, actions for active metadata
+- **Catalog capabilities** — discovery, classification, ownership, lineage visualization, usage analytics, schema evolution tracking
+- **Critical distinction** — catalogs describe and expose policy context; enforcement happens in query engines, storage layers, or APIs
+- **Active metadata** — metadata that triggers actions (freshness alerts, auto-classification, tag propagation, schema change notifications)
+- **Decision framework** — managed catalogs for small teams, OpenMetadata for modern UI + column lineage, DataHub for active metadata + 100+ connectors
+- **Failure modes** — catalog as enforcement point, metadata without action, classification without automation
+
+Next lesson (Module 7 Lesson 5) covers **data contracts** — formal interface specifications that define schema, freshness, and quality guarantees for datasets, enforced in CI and integrated with the catalog as contract conformance status.

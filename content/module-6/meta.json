@@ -1,0 +1,53 @@
+{
+  "id": 6,
+  "title": "Lakehouse, Query Serving & Data Products",
+  "description": "Iceberg/Delta/Hudi, catalogs, query engines, semantic layers, APIs, self-service consumption",
+  "color": "#fc8181",
+  "lessons": [
+    {
+      "slug": "01-why-the-lakehouse-matters",
+      "title": "Why the Lakehouse Matters",
+      "description": "Evolution from warehouse to lake to lakehouse; open formats, decoupled compute and storage, reproducibility",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-apache-iceberg-and-open-table-formats",
+      "title": "Apache Iceberg & Open Table Formats",
+      "description": "Iceberg deep-dive: snapshots, time travel, hidden partitioning; catalog selection alongside table-format selection",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-query-engines-and-analytical-serving",
+      "title": "Query Engines & Analytical Serving",
+      "description": "Trino for federated queries, DuckDB for embedded analytics; workload management, guardrails, tenant isolation",
+      "estimatedMinutes": 13,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-data-products-and-self-service-consumption",
+      "title": "Data Products & Self-Service Consumption",
+      "description": "Data-as-a-product with explicit contracts: owner, schema, freshness, quality, access, cost, deprecation lifecycle",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-lakehouse-decision-framework",
+      "title": "Lakehouse Decision Framework",
+      "description": "Lakehouse vs warehouse vs hybrid; practical enterprise patterns; catalog-driven table management",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

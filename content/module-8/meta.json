@@ -1,0 +1,53 @@
+{
+  "id": 8,
+  "title": "ML Data Infrastructure",
+  "description": "Feature engineering, offline/online serving, feature stores, training-data lineage, model-data consistency",
+  "color": "#68d391",
+  "lessons": [
+    {
+      "slug": "01-why-ml-needs-dedicated-data-infrastructure",
+      "title": "Why ML Needs Dedicated Data Infrastructure",
+      "description": "Training-serving skew, feature consistency, the data problems that break ML systems",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-feature-engineering-pipelines",
+      "title": "Feature Engineering Pipelines",
+      "description": "Batch and streaming feature computation, point-in-time correctness, backfilling, feature dependencies",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["flowchart", "sequence"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-feature-stores-with-feast",
+      "title": "Feature Stores with Feast",
+      "description": "Feast: offline store, online store, materialization; comparison with Tecton and platform-native alternatives",
+      "estimatedMinutes": 15,
+      "diagramTypes": ["architecture", "sequence"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-training-data-labels-and-model-traceability",
+      "title": "Training Data, Labels & Model Traceability",
+      "description": "Dataset versioning with Iceberg snapshots, label management, bias detection, training-data lineage to model",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["flowchart", "architecture"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-ml-data-decision-framework",
+      "title": "ML Data Decision Framework",
+      "description": "When you need a feature store vs direct queries; model-data consistency patterns; connecting to the trust plane",
+      "estimatedMinutes": 10,
+      "diagramTypes": ["comparison", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    }
+  ]
+}

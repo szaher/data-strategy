@@ -1,0 +1,302 @@
+---
+title: "Why Storage Architecture Matters"
+quiz:
+  - question: "What is 'data gravity' in the context of storage architecture?"
+    options:
+      - "The physical weight of storage hardware in a data center"
+      - "The tendency of data to attract compute, applications, and more data as it grows larger"
+      - "The compression ratio achieved by a storage system"
+      - "The latency penalty when accessing remote data"
+    correctIndex: 1
+  - question: "Which storage access pattern is best suited for OLAP analytics workloads?"
+    options:
+      - "Random reads and writes across many small records"
+      - "Sequential scans across columnar or object storage"
+      - "Append-heavy writes to a write-ahead log"
+      - "Low-latency key-value lookups"
+    correctIndex: 1
+  - question: "What is the primary difference between durability and availability in storage systems?"
+    options:
+      - "Durability measures access speed, availability measures data retention"
+      - "Durability ensures data survives failures, availability ensures data is accessible when needed"
+      - "Durability applies to hot storage, availability applies to cold storage"
+      - "They are the same concept with different names"
+    correctIndex: 1
+---
+
+## Overview
+
+Storage architecture is the foundation of your data platform. Every architectural choice you make — from ingestion patterns to ML model serving — is constrained by the storage substrate you select. Choose the wrong storage layer, and you'll spend years building workarounds in every layer above it.
+
+In Module 2, we discussed resilience: how platforms survive failures through redundancy, backups, and observability. Storage architecture is where resilience meets economics. A storage layer must balance durability (data survives failures), availability (data is accessible), performance (latency and throughput), and cost (storage, access, and egress).
+
+This lesson introduces the core principles that govern storage choices: **data gravity**, **durability guarantees**, **access patterns**, **cost tiers**, and the special considerations that AI workloads introduce. By the end, you'll understand why storage decisions are strategic, not tactical, and how the wrong choice cascades into every downstream system.
+
+## The Problem: Storage Decisions Cascade
+
+Imagine you've built a data platform on top of a traditional OLTP database. Your pipeline ingests events via CDC, lands them in PostgreSQL tables, and your analytics team runs queries directly against the source database. For a few months, this works fine.
+
+Then scale hits. The analytics queries start blocking transactional writes. You add read replicas, but now you have replication lag. You partition tables, but cross-partition queries are slow. You build materialized views, but they consume disk and require maintenance. You introduce a cache layer, but cache invalidation is hard. Every layer you add is a workaround for a fundamental mismatch: **OLTP databases are optimized for random reads/writes, not sequential scans**.
+
+This is what happens when storage architecture doesn't match access patterns. The initial decision (use PostgreSQL for everything) looked simple and cheap. The long-term cost was years of engineering effort building compensating systems.
+
+> **Tip:** Storage decisions are hard to reverse. Once you've committed to a storage layer, migrating terabytes or petabytes of data to a new system is expensive, slow, and risky. Choose carefully at the start.
+
+## Data Gravity: The Physics of Large Datasets
+
+**Data gravity** is the principle that data attracts compute, applications, and more data. The larger a dataset grows, the harder it becomes to move. Think of data as a planet: the more mass it accumulates, the stronger its gravitational pull.
+
+Here's why data gravity matters:
+
+- **Compute follows data** — moving 100 TB of data to compute is slower and more expensive than moving compute (containers, functions, queries) to the data.
+- **Applications cluster around data** — if your primary dataset lives in AWS S3, your ML training jobs, analytics queries, and serving infrastructure will tend to run in AWS to avoid cross-cloud egress costs.
+- **Data attracts more data** — once you have a "system of record" in a particular storage layer, new datasets (derived tables, feature stores, embeddings) will land in the same ecosystem to simplify joins and reduce latency.
+
+### Implications for Architecture
+
+1. **Choose your gravity well carefully** — the first large dataset you store establishes a center of mass. Future systems will orbit around it.
+2. **Co-locate related data** — if your RAG system needs vector embeddings and source documents, store them in the same region and storage tier. Cross-region reads add latency and egress costs.
+3. **Plan for lock-in** — once you have 10 PB in a cloud object store, migrating to a different provider is a multi-quarter project. Embrace the lock-in or design for portability from day one (e.g., S3-compatible APIs, open table formats).
+
+Data gravity is not inherently bad — it's a constraint you design around. The mistake is ignoring it and assuming data is infinitely portable.
+
+## Durability Guarantees: What "11 Nines" Really Means
+
+Storage systems advertise **durability** guarantees like "99.999999999% durability" (11 nines). This means:
+
+- If you store 10,000,000 objects for 10,000 years, you can expect to lose one object.
+- Over a single year, the probability of losing a specific object is approximately 1 in 100 billion.
+
+### How Durability is Achieved
+
+**Replication** — multiple copies of data stored on different physical disks or nodes.
+- 3-way replication: three copies across three availability zones. If one zone fails, two copies remain.
+- Tradeoff: 3x storage cost, but high availability (any copy can serve reads).
+
+**Erasure coding** — data is split into fragments with parity shards. If some fragments are lost, the original data can be reconstructed from the remaining fragments.
+- Example: 10 data fragments + 4 parity fragments. You can lose any 4 fragments and still reconstruct the full object.
+- Tradeoff: lower storage overhead (1.4x instead of 3x), but higher compute cost for reconstruction and slower access if fragments are missing.
+
+Cloud object stores (S3, GCS, Azure Blob) use erasure coding for cold/archive tiers and replication for hot tiers.
+
+### Durability vs. Availability
+
+**Durability** — the probability that data survives hardware failures, bit rot, and disasters. A durable system doesn't lose data.
+
+**Availability** — the probability that data is accessible when you request it. An available system responds to reads/writes without error.
+
+A system can be durable but unavailable (data exists but the service is down). Or it can be available but not durable (reads succeed now, but data may be lost during a failure).
+
+Example: A database with synchronous replication to a secondary region is highly durable (data is replicated before the write is acknowledged). If the primary region goes down, the system is temporarily unavailable until failover completes, but no data is lost.
+
+> **Tip:** Don't confuse availability with durability. If a vendor promises "99.99% availability," ask about durability guarantees separately. An available system with poor durability can silently lose data.
+
+## Access Patterns Drive Storage Choices
+
+Different workloads demand different storage characteristics. The most important question when choosing a storage layer is: **What is the access pattern?**
+
+<MermaidDiagram chart={`graph TB
+    subgraph AccessPatterns["Access Patterns"]
+        AP1[Random Reads/Writes]
+        AP2[Sequential Scans]
+        AP3[Append-Heavy]
+        AP4[Unstructured/Multimodal]
+        AP5[Low-Latency Key-Value]
+    end
+    
+    subgraph StorageChoices["Storage Choices"]
+        S1[OLTP Databases<br/>PostgreSQL, MySQL]
+        S2[Columnar/Object Storage<br/>Parquet, ORC, S3]
+        S3[Log/Event Stores<br/>Kafka, Kinesis]
+        S4[Object Storage<br/>S3-Compatible]
+        S5[In-Memory/KV Stores<br/>Redis, DynamoDB]
+    end
+    
+    AP1 --> S1
+    AP2 --> S2
+    AP3 --> S3
+    AP4 --> S4
+    AP5 --> S5
+    
+    style AccessPatterns fill:#e0f0ff,stroke:#0066cc
+    style StorageChoices fill:#f0ffe0,stroke:#66cc00
+`} />
+
+### Random Reads/Writes → OLTP Databases
+
+Transactional workloads require:
+- **Low-latency point lookups** — find a single row by primary key in milliseconds.
+- **ACID guarantees** — multi-row updates must be atomic.
+- **Indexes** — secondary indexes on non-primary-key columns for fast filtering.
+
+Storage choice: PostgreSQL, MySQL, SQL Server, Oracle. These use **B-tree indexes** and **row-oriented storage** optimized for writes and small reads.
+
+### Sequential Scans → Columnar/Object Storage
+
+Analytics workloads require:
+- **Full table scans** — aggregate millions or billions of rows.
+- **Column projection** — read only the columns needed for a query (not entire rows).
+- **Compression** — reduce I/O by compressing columnar data (e.g., run-length encoding for repeated values).
+
+Storage choice: **Parquet** or **ORC** files in object storage (S3, GCS, Azure Blob). These formats store data by column, enabling efficient scans and compression. Query engines like Presto, Trino, Spark, and DuckDB read Parquet directly from object storage.
+
+### Append-Heavy → Log/Event Stores
+
+Event streaming workloads require:
+- **High write throughput** — ingest millions of events per second.
+- **Ordered append** — events are written sequentially in time order.
+- **Replay and retention** — reprocess old events or retain for compliance.
+
+Storage choice: **Kafka**, **Kinesis**, **Pulsar**. These systems store events in immutable logs, optimized for sequential writes and sequential reads. Random access is slow or unsupported.
+
+### Unstructured/Multimodal → Object Storage
+
+AI and content workloads require:
+- **Large blobs** — images, videos, audio, PDFs, model checkpoints.
+- **Cheap storage** — unstructured data is often large but accessed infrequently.
+- **HTTP-based access** — serve content directly to browsers or ML pipelines.
+
+Storage choice: **S3-compatible object stores** (AWS S3, MinIO, Ceph). These are designed for "write once, read many" workloads. They do not support in-place updates (you must overwrite the entire object) or transactional semantics.
+
+### Low-Latency Key-Value → In-Memory Stores
+
+Caching and session storage workloads require:
+- **Sub-millisecond latency** — serve reads in microseconds.
+- **Simple data model** — key-value pairs, no complex queries.
+- **Ephemeral data** — caches can be rebuilt if lost.
+
+Storage choice: **Redis**, **DynamoDB**, **Memcached**. These systems store data in memory (or SSD with memory caching) and sacrifice durability for speed. Redis offers optional persistence, but the primary use case is caching.
+
+## Cost Tiers: Hot, Warm, Cold, Archive
+
+Storage cost is not uniform. Cloud providers offer multiple **storage tiers** based on access frequency. The tradeoff: cheaper storage costs more per access.
+
+| Tier       | Use Case                           | Storage Cost | Access Cost | Latency       |
+|------------|------------------------------------|--------------|-------------|---------------|
+| **Hot**    | Frequent access (daily)            | High         | Low         | Milliseconds  |
+| **Warm**   | Infrequent access (weekly/monthly) | Medium       | Medium      | Milliseconds  |
+| **Cold**   | Rare access (quarterly)            | Low          | High        | Seconds       |
+| **Archive**| Compliance/backup (yearly or never)| Very Low     | Very High   | Hours         |
+
+### Example: AWS S3 Tiers
+
+- **S3 Standard** — hot tier, optimized for frequent access.
+- **S3 Infrequent Access (IA)** — warm tier, 50% cheaper than Standard but charges per GB retrieved.
+- **S3 Glacier Instant Retrieval** — cold tier, millisecond retrieval, 80% cheaper than Standard.
+- **S3 Glacier Deep Archive** — archive tier, 95% cheaper than Standard, but retrieval takes 12-48 hours.
+
+### Lifecycle Policies
+
+Most data starts hot and cools over time. A CDC event from today is read frequently during processing. The same event from six months ago is rarely accessed. **Lifecycle policies** automatically transition objects between tiers based on age.
+
+Example policy:
+1. Objects are created in S3 Standard (hot).
+2. After 30 days, transition to S3 IA (warm).
+3. After 90 days, transition to S3 Glacier (cold).
+4. After 1 year, transition to S3 Glacier Deep Archive (archive).
+
+This reduces storage costs by 80-90% without manual intervention.
+
+> **Warning:** Egress costs (data transfer out of a region or cloud provider) often exceed storage costs. If you store data in S3 but serve it from a different cloud, you'll pay $0.09/GB egress. For 10 TB/month, that's $900 — more than the storage cost itself. Co-locate storage and compute.
+
+## AI Workloads: Special Considerations
+
+AI and RAG workloads introduce new storage patterns that don't fit traditional OLTP or OLAP models.
+
+### 1. Retaining Raw Documents for RAG
+
+Retrieval-Augmented Generation (RAG) systems retrieve source documents, chunk them into passages, embed each chunk, and store the embeddings in a vector database. But embeddings alone are not enough — you also need the **original text** to send to the LLM after retrieval.
+
+This means you need **two storage layers**:
+- **Vector store** (e.g., Pinecone, Weaviate, pgvector) — stores embeddings for similarity search.
+- **Document store** (e.g., S3, PostgreSQL JSONB) — stores the original text keyed by document ID.
+
+Both must be kept in sync. If you delete a document from the vector store but not the document store (or vice versa), retrieval breaks.
+
+### 2. Model Artifacts
+
+Training a large model produces:
+- **Checkpoints** — model weights saved at intervals during training (10-100 GB per checkpoint).
+- **Final weights** — the trained model (1-500 GB depending on model size).
+- **Optimizer state** — momentum and gradient history for resuming training (often 2-3x model size).
+
+These artifacts are large, accessed infrequently (after training completes), and must be retained for reproducibility. Object storage (S3) is the default choice, often in the **warm** tier. If you need to serve models for inference, you copy weights from S3 to a local disk or memory.
+
+### 3. Multimodal Assets
+
+Vision and audio models require:
+- **Images** — training datasets (ImageNet, COCO) are terabytes of JPEG/PNG files.
+- **Video** — even compressed, video datasets are petabytes.
+- **Audio** — speech datasets (LibriSpeech, Common Voice) are hundreds of gigabytes.
+
+These assets are stored in object storage and accessed sequentially during training (data loaders stream files in batches). Random access is rare. Lifecycle policies move old datasets to cold storage after training completes.
+
+### 4. Embeddings and Vectors
+
+Vector embeddings (768-4096 dimensions per document) are small individually but large in aggregate. A corpus of 10 million documents with 1536-dimensional embeddings (OpenAI's `text-embedding-3-small`) requires:
+
+10,000,000 documents × 1536 dimensions × 4 bytes/float = **61 GB** (uncompressed)
+
+Vector databases apply compression (quantization, product quantization) to reduce this by 4-8x, but storage cost is still significant at scale.
+
+Unlike document stores, vector databases are **hot** — they serve low-latency similarity searches. Storing vectors in cold object storage and rehydrating on demand is too slow for production use.
+
+## Decision Framework: Choosing the Right Storage
+
+Here's a decision matrix to guide storage choices:
+
+| Requirement                        | Recommended Storage             | Avoid                          |
+|------------------------------------|---------------------------------|--------------------------------|
+| Transactional writes, ACID         | PostgreSQL, MySQL               | Object storage, Kafka          |
+| Sequential scans, analytics        | Parquet in S3, BigQuery         | OLTP databases                 |
+| Append-heavy event ingestion       | Kafka, Kinesis                  | OLTP databases                 |
+| Large blobs (images, videos)       | S3, GCS, Azure Blob             | Databases (BLOB columns)       |
+| Low-latency key-value lookups      | Redis, DynamoDB                 | OLTP databases, object storage |
+| Vector similarity search           | Pinecone, Weaviate, pgvector    | Generic databases              |
+| Long-term retention, compliance    | S3 Glacier, GCS Archive         | Hot storage tiers              |
+
+For the recurring integration scenario (CDC → processing → lakehouse → ML/RAG):
+- **CDC events** — Kafka (append-heavy, replay)
+- **Raw documents** — S3 Standard (hot tier, frequent access during ingestion)
+- **Processed tables** — Parquet in S3 (analytics queries, lifecycle to IA after 30 days)
+- **Vector embeddings** — pgvector or Pinecone (low-latency similarity search)
+- **Model checkpoints** — S3 IA (warm tier, infrequent access)
+
+## Failure Modes: When Storage Choices Go Wrong
+
+### 1. Data Gravity Lock-In
+
+**Failure:** You store 5 PB in AWS S3. Two years later, you want to migrate to Google Cloud for cost savings. Egress costs are $450,000 (5 PB × $0.09/GB). The migration takes six months and blocks other projects.
+
+**Prevention:** Choose cloud providers based on where your compute will run long-term. If multi-cloud is a requirement, use S3-compatible APIs (MinIO, Ceph) and open table formats (Iceberg, Delta) that can be migrated without rewriting code.
+
+### 2. Durability Assumptions
+
+**Failure:** You assume that because your database is "in the cloud," it's automatically durable. You skip backups. A misconfigured IAM policy deletes the entire database. No backups exist.
+
+**Prevention:** Understand the **shared responsibility model**. Cloud providers guarantee infrastructure durability (disks don't fail silently), but you are responsible for backups, replication, and disaster recovery. Automate backups to a separate account or region.
+
+### 3. Cost Surprises from Egress
+
+**Failure:** You store data in AWS S3 but serve it to users via a CDN in Google Cloud. Egress costs from AWS to GCP are $0.09/GB. You serve 100 TB/month. Monthly egress cost: $9,000.
+
+**Prevention:** Co-locate storage and serving infrastructure in the same cloud and region. If multi-cloud is unavoidable, use a CDN with free ingress (Cloudflare) or negotiate egress discounts with your cloud provider.
+
+### 4. Choosing Storage Before Defining Access Patterns
+
+**Failure:** You choose PostgreSQL because "we know PostgreSQL" before defining the access pattern. Later, you discover the workload is 90% sequential scans. You spend months adding materialized views, partitions, and read replicas to work around the mismatch.
+
+**Prevention:** Define access patterns first (random vs. sequential, read-heavy vs. write-heavy, latency requirements, data size), then choose storage. Don't start with a technology and force-fit the workload.
+
+## Summary
+
+Storage architecture is the foundation of your data platform. The storage layer you choose constrains every system built on top of it — ingestion pipelines, processing frameworks, analytics queries, ML training, and serving infrastructure.
+
+Key principles:
+- **Data gravity** — large datasets are expensive to move. Choose your center of mass carefully.
+- **Durability vs. availability** — durability means data survives failures; availability means data is accessible. Both matter.
+- **Access patterns drive storage choices** — random access requires databases, sequential scans require columnar storage, append-heavy workloads require logs, unstructured data requires object storage.
+- **Cost tiers** — storage is cheap, but access and egress are not. Lifecycle policies automate tier transitions.
+- **AI workloads** — RAG requires both vector stores and document stores. Model artifacts are large and belong in warm storage. Embeddings are hot and require specialized databases.
+
+In the next lesson, we'll explore **object storage** (S3-compatible systems) in depth: how they work, when to use them, and how to optimize cost and performance. Object storage is the cornerstone of modern lakehouses, and understanding its semantics is essential for building scalable data platforms.

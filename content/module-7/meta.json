@@ -1,0 +1,53 @@
+{
+  "id": 7,
+  "title": "Trust Plane — Quality, Lineage, Catalog & Governance",
+  "description": "Data contracts, active metadata, OpenLineage, catalogs, tests, SLAs, privacy, policy enforcement",
+  "color": "#ecc94b",
+  "lessons": [
+    {
+      "slug": "01-why-trust-is-a-platform-concern",
+      "title": "Why Trust Is a Platform Concern",
+      "description": "The cost of untrustworthy data; trust as an architectural property; data contracts as the foundational mechanism",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": false,
+      "hasQuiz": true
+    },
+    {
+      "slug": "02-data-quality-observability-and-testing",
+      "title": "Data Quality, Observability & Testing",
+      "description": "Great Expectations as reference; quality checks, freshness, volume, schema drift as one asset-health system",
+      "estimatedMinutes": 14,
+      "diagramTypes": ["flowchart", "sequence"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "03-data-lineage-with-openlineage",
+      "title": "Data Lineage with OpenLineage",
+      "description": "OpenLineage and Marquez; dataset/job lineage as dependable baseline; column-level lineage where supported",
+      "estimatedMinutes": 13,
+      "diagramTypes": ["architecture", "flowchart"],
+      "hasCode": true,
+      "hasQuiz": true
+    },
+    {
+      "slug": "04-data-catalogs-and-active-metadata",
+      "title": "Data Catalogs & Active Metadata",
+      "description": "DataHub as reference; catalog visibility vs policy enforcement; the catalog as the trust index",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["architecture", "comparison"],
+      "hasCode": true,
+      "hasQuiz": false
+    },
+    {
+      "slug": "05-governance-privacy-and-policy-enforcement",
+      "title": "Governance, Privacy & Policy Enforcement",
+      "description": "Access control, PII, data residency, retention/deletion propagation, policy enforcement across lakehouse, APIs, and vector retrieval",
+      "estimatedMinutes": 12,
+      "diagramTypes": ["flowchart", "architecture"],
+      "hasCode": true,
+      "hasQuiz": true
+    }
+  ]
+}

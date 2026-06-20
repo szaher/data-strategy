@@ -1,0 +1,402 @@
+---
+title: "Reference Architectures"
+quiz:
+  - question: "What is the primary advantage of the managed-cloud-first blueprint?"
+    options:
+      - "Maximum customization and control"
+      - "Lowest total cost of ownership"
+      - "Operational simplicity and faster time to value"
+      - "Complete vendor independence"
+    correctIndex: 2
+  - question: "Which blueprint is best suited for organizations with strict data residency or regulatory requirements?"
+    options:
+      - "Managed-cloud-first"
+      - "Kubernetes-centric"
+      - "Hybrid/regulated"
+      - "All blueprints are equally suited"
+    correctIndex: 2
+  - question: "In the end-to-end scenario, what is the role of Apache Iceberg?"
+    options:
+      - "Processing real-time streams"
+      - "Providing the lakehouse storage layer with ACID properties"
+      - "Orchestrating workflows"
+      - "Serving feature vectors for ML"
+    correctIndex: 1
+---
+
+## The Problem: Ad-Hoc Integration
+
+Most data platforms evolve organically. A team adopts Kafka for event streaming. Another team spins up Airflow for batch jobs. A third team runs Spark on EMR. ML engineers build a custom feature store. Each decision is rational in isolation, but the result is a **patchwork of disconnected systems** that share no common patterns for deployment, monitoring, or security.
+
+The cost of ad-hoc integration compounds over time. Every new tool requires learning a different deployment model, a different monitoring approach, a different way to handle credentials. SREs maintain separate Terraform modules, separate alerting rules, separate disaster recovery procedures. Engineers waste days debugging cross-system issues that wouldn't exist if components shared a common runtime.
+
+Reference architectures solve this by providing **composable blueprints**—pre-validated combinations of tools that work together, deployed on a common substrate, following shared patterns for observability and operations. You still choose which components you need, but the integration points are already defined.
+
+## Three Composable Blueprints
+
+There is no single "best" data platform architecture. The right choice depends on your organization's **cloud maturity, regulatory constraints, team capabilities, and differentiation strategy**. The three blueprints below represent different trade-off positions along the spectrum from simplicity to control.
+
+### Blueprint 1: Managed-Cloud-First
+
+**Philosophy:** Delegate undifferentiated heavy lifting to cloud providers. Optimize for **time to value** and **operational simplicity** over cost or customization.
+
+**Core components:**
+- **Data warehouse:** BigQuery (GCP) or Redshift (AWS)
+- **Event streaming:** Confluent Cloud or Amazon MSK
+- **Orchestration:** Cloud Composer (managed Airflow) or AWS MWAA
+- **Lakehouse:** BigLake (GCP) or AWS Glue Data Catalog + Athena
+- **ML platform:** Vertex AI (GCP) or SageMaker (AWS)
+- **Feature store:** Vertex AI Feature Store or SageMaker Feature Store
+- **Observability:** Cloud-native logging, metrics, and tracing (Cloud Logging/CloudWatch, managed Prometheus, Cloud Trace/X-Ray)
+
+**When to choose this blueprint:**
+- Small to mid-size teams (< 50 engineers)
+- Cloud-first organizations with minimal on-premises infrastructure
+- Startups and businesses prioritizing speed over cost optimization
+- Use cases where vendor lock-in is acceptable
+- Teams without deep Kubernetes or infrastructure expertise
+
+**Trade-offs:**
+- **Pros:** Fastest time to deployment, minimal operational overhead, automatic scaling, integrated security and compliance features
+- **Cons:** Higher per-unit cost at scale, vendor lock-in, limited customization, difficulty migrating workloads across clouds
+
+### Blueprint 2: Kubernetes-Centric
+
+**Philosophy:** Deploy all data platform components as **Kubernetes operators** to achieve portability, consistency, and infrastructure-as-code across clouds and on-premises.
+
+**Core components:**
+- **Event streaming:** Strimzi (Kafka on Kubernetes)
+- **Batch processing:** Spark Operator
+- **Stream processing:** Flink Operator
+- **Orchestration:** Argo Workflows or Airflow on Kubernetes
+- **Lakehouse:** Apache Iceberg with S3/GCS/ADLS object storage
+- **Query engine:** Trino on Kubernetes
+- **Feature store:** Feast (Kubernetes-native)
+- **Observability:** Prometheus + Grafana + OpenTelemetry
+
+**When to choose this blueprint:**
+- Organizations with existing Kubernetes expertise
+- Multi-cloud or hybrid cloud requirements
+- Need for infrastructure portability (avoiding cloud vendor lock-in)
+- Medium to large teams (50+ engineers) with dedicated platform teams
+- Use cases requiring deep customization of runtime behavior
+
+**Trade-offs:**
+- **Pros:** Vendor neutrality, consistent deployment model across all components, fine-grained resource control, ability to run on-premises
+- **Cons:** Higher operational complexity, requires Kubernetes expertise, longer time to initial deployment, team must manage upgrades and patches
+
+### Blueprint 3: Hybrid/Regulated
+
+**Philosophy:** Use managed services for **commodity components** (compute, networking, base storage) but self-host **differentiated or regulated components** (data processing, feature engineering, sensitive data storage) to meet compliance, cost, or control requirements.
+
+**Core components:**
+- **Event streaming:** Confluent Cloud (managed) with private networking
+- **Orchestration:** Managed Airflow (Cloud Composer/MWAA)
+- **Batch processing:** Self-hosted Spark on Kubernetes (regulated data) + managed Dataproc/EMR (non-sensitive workloads)
+- **Stream processing:** Self-hosted Flink on Kubernetes (PII/PHI data)
+- **Lakehouse:** Apache Iceberg with cloud object storage + customer-managed encryption keys (CMEK)
+- **Query engine:** Self-hosted Trino with fine-grained access control
+- **Feature store:** Self-hosted Feast with encryption at rest
+- **ML serving:** Self-hosted KServe (for regulated models) + Vertex AI/SageMaker (for non-regulated models)
+- **Observability:** Hybrid—cloud-native metrics, self-hosted Grafana for dashboards, centralized logging with retention controls
+
+**When to choose this blueprint:**
+- Organizations in regulated industries (healthcare, finance, government)
+- Strict data residency or sovereignty requirements
+- Need for granular audit trails and encryption controls
+- Cost optimization for high-volume workloads (managed services for low-volume, self-hosted for high-volume)
+- Differentiation through custom ML infrastructure
+
+**Trade-offs:**
+- **Pros:** Compliance flexibility, cost optimization at scale, control over sensitive data paths, ability to customize differentiated components
+- **Cons:** Highest operational complexity, requires expertise in both cloud services and self-hosted infrastructure, slower initial deployment, split operational model
+
+## End-to-End Scenario: Hybrid Blueprint
+
+Let's trace a **single event** through the full stack, showing how every component from Modules 1-9 integrates in production. This scenario uses the **hybrid/regulated blueprint** because it demonstrates the widest range of integration points.
+
+**Business context:** A healthcare platform tracks patient interactions (appointments, prescriptions, lab results) and uses ML to predict readmission risk. The raw data contains PHI (Protected Health Information) and must remain encrypted and auditable at every stage.
+
+<MermaidDiagram chart={`graph TB
+    subgraph Source["Source Systems"]
+        DB[(PostgreSQL<br/>Patient DB)]
+    end
+    
+    subgraph CDC["Change Data Capture"]
+        Debezium[Debezium<br/>CDC Connector]
+    end
+    
+    subgraph Streaming["Event Streaming"]
+        Kafka[Confluent Cloud<br/>Private Link]
+        Topic1[raw-events]
+        Topic2[processed-events]
+    end
+    
+    subgraph Processing["Stream Processing"]
+        Flink[Flink on K8s<br/>PII Masking + Enrichment]
+    end
+    
+    subgraph Lakehouse["Lakehouse Layer"]
+        Iceberg[Apache Iceberg<br/>CMEK Encryption]
+        ObjStore[S3/GCS<br/>Customer-Managed Keys]
+    end
+    
+    subgraph Query["Query Layer"]
+        Trino[Trino<br/>Row-Level Security]
+    end
+    
+    subgraph ML["ML Feature Pipeline"]
+        Feast[Feast Feature Store<br/>Encrypted at Rest]
+        Transform[Feature Transform<br/>Spark on K8s]
+    end
+    
+    subgraph Serving["Production Serving"]
+        KServe[KServe<br/>Readmission Model]
+        API[REST API<br/>mTLS + JWT]
+    end
+    
+    subgraph Observability["Observability"]
+        Prometheus[Prometheus<br/>Metrics]
+        Grafana[Grafana<br/>Dashboards]
+        Jaeger[Jaeger<br/>Distributed Tracing]
+        AuditLog[Audit Logs<br/>CloudWatch/Cloud Logging]
+    end
+    
+    DB -->|Row Change| Debezium
+    Debezium -->|CDC Event| Kafka
+    Kafka --> Topic1
+    Topic1 -->|Subscribe| Flink
+    Flink -->|Mask PII, Enrich| Topic2
+    Topic2 -->|Sink| Iceberg
+    Iceberg -->|Store| ObjStore
+    Trino -->|Query| Iceberg
+    Transform -->|Read| Iceberg
+    Transform -->|Write| Feast
+    Feast -->|Serve Features| KServe
+    KServe -->|Predict| API
+    
+    Flink -.->|Metrics| Prometheus
+    Trino -.->|Metrics| Prometheus
+    KServe -.->|Metrics| Prometheus
+    Prometheus -.->|Visualize| Grafana
+    
+    Flink -.->|Traces| Jaeger
+    Trino -.->|Traces| Jaeger
+    KServe -.->|Traces| Jaeger
+    
+    DB -.->|Audit| AuditLog
+    Flink -.->|Audit| AuditLog
+    Trino -.->|Audit| AuditLog
+    KServe -.->|Audit| AuditLog
+    
+    style Source fill:#fff4e6,stroke:#f59e0b
+    style CDC fill:#fef3c7,stroke:#f59e0b
+    style Streaming fill:#dbeafe,stroke:#3b82f6
+    style Processing fill:#dbeafe,stroke:#3b82f6
+    style Lakehouse fill:#e0e7ff,stroke:#6366f1
+    style Query fill:#e0e7ff,stroke:#6366f1
+    style ML fill:#fce7f3,stroke:#ec4899
+    style Serving fill:#fce7f3,stroke:#ec4899
+    style Observability fill:#f3f4f6,stroke:#6b7280
+`} />
+
+### Step-by-Step Flow
+
+**1. Source DB change (Module 2: Data Modeling)**
+
+A clinician updates a patient's prescription in PostgreSQL. The `prescriptions` table has a `last_modified` timestamp and a JSONB column for medication details.
+
+**2. CDC capture (Module 3: Data Integration)**
+
+Debezium's PostgreSQL connector runs as a Kafka Connect worker. It reads the database transaction log (write-ahead log), converts the row change into a structured event, and publishes it to the `raw-events` topic in Confluent Cloud. The event includes the full row before and after the change, the transaction timestamp, and metadata (table name, primary key).
+
+**3. Event streaming (Module 4: Event-Driven Architecture)**
+
+Confluent Cloud stores the event in the `raw-events` topic. The topic is configured with **customer-managed encryption keys (CMEK)** and accessible only via AWS PrivateLink (no public internet exposure). Retention is set to 7 days for compliance.
+
+**4. Stream processing (Module 5: Processing Patterns)**
+
+A Flink job running on Kubernetes subscribes to `raw-events`. It applies two transformations:
+- **PII masking:** Replaces patient names and addresses with SHA-256 hashes (deterministic, allowing join operations without exposing raw PII)
+- **Enrichment:** Joins the prescription event with a reference dataset (drug formulary) stored in Iceberg to add drug class and contraindication flags
+
+The enriched event is written to the `processed-events` topic. Flink emits OpenTelemetry traces for each event, which are collected by a Jaeger sidecar.
+
+**5. Lakehouse sink (Module 6: Lakehouse Architecture)**
+
+A second Flink job consumes `processed-events` and writes to an Apache Iceberg table (`processed_prescriptions`) stored on S3 with CMEK encryption. Iceberg metadata tracks the schema version, partition layout (by date), and file-level statistics. The table uses **copy-on-write** for updates to maintain ACID consistency.
+
+**6. Query layer (Module 7: Query Engines)**
+
+Data analysts query the `processed_prescriptions` table using Trino. Trino's **row-level security** policies enforce that users can only see rows for patients they are authorized to access (based on their organizational role, stored in an LDAP directory). Trino pushes down filters to Iceberg, reading only the relevant Parquet files.
+
+**7. Feature engineering (Module 8: ML Integration)**
+
+A daily Spark job running on Kubernetes reads from the `processed_prescriptions` table, computes **feature vectors** (e.g., "number of prescriptions in the last 30 days", "polypharmacy flag"), and writes them to Feast's offline store (another Iceberg table). Feast's online store (Redis) is populated with the latest feature values for low-latency serving.
+
+**8. ML inference (Module 8: ML Integration)**
+
+A readmission risk model is deployed on KServe. When a clinician opens a patient's chart, the frontend calls a REST API that:
+- Authenticates the user with mTLS + JWT
+- Retrieves feature vectors from Feast's online store
+- Sends features to the KServe model endpoint
+- Returns the predicted readmission probability
+
+**9. Observability (Module 10: Production Best Practices)**
+
+Throughout the pipeline:
+- **Metrics:** Flink, Trino, and KServe emit Prometheus metrics (latency, throughput, error rates) scraped by a Prometheus server running on Kubernetes. Grafana dashboards visualize SLIs (Service Level Indicators) for each component.
+- **Traces:** OpenTelemetry instrumentation in Flink, Trino, and KServe sends traces to Jaeger, allowing engineers to trace a single prescription event from ingestion to inference.
+- **Audit logs:** Every database access, Flink transformation, Trino query, and model prediction is logged to Cloud Logging/CloudWatch with structured metadata (user ID, timestamp, action, resource). Logs are retained for 7 years to meet HIPAA requirements.
+
+This end-to-end flow demonstrates how the hybrid blueprint **composes managed services** (Confluent Cloud for Kafka, Cloud Logging for audit trails) with **self-hosted components** (Flink, Trino, KServe) to meet regulatory requirements while minimizing operational overhead for commodity infrastructure.
+
+## Decision Framework: Choosing Your Blueprint
+
+The choice between blueprints is not purely technical—it reflects your organization's **capabilities, constraints, and strategic priorities**. Use this framework to evaluate which blueprint fits your context.
+
+### Organizational Context Dimensions
+
+**1. Team size and expertise**
+- **< 10 engineers, limited cloud/Kubernetes experience:** Managed-cloud-first
+- **10-50 engineers, some Kubernetes experience:** Hybrid (managed orchestration + self-hosted processing)
+- **50+ engineers, dedicated platform team:** Kubernetes-centric
+
+**2. Regulatory and compliance requirements**
+- **No strict data residency or encryption mandates:** Managed-cloud-first
+- **Moderate compliance (SOC 2, ISO 27001):** Managed-cloud-first with CMEK and private networking
+- **Strict compliance (HIPAA, GDPR, FedRAMP):** Hybrid or Kubernetes-centric with self-hosted data processing
+
+**3. Cloud strategy**
+- **Single cloud, cloud-native strategy:** Managed-cloud-first
+- **Multi-cloud or hybrid cloud:** Kubernetes-centric
+- **Exit optionality from current cloud provider:** Kubernetes-centric
+- **On-premises + cloud:** Hybrid
+
+**4. Cost profile**
+- **Early-stage, prioritizing speed over cost:** Managed-cloud-first
+- **Moderate scale, cost-conscious:** Hybrid (managed for low-volume, self-hosted for high-volume)
+- **Large scale, cost optimization critical:** Kubernetes-centric or hybrid with aggressive resource tuning
+
+**5. Differentiation strategy**
+- **Data platform is a cost center (not a competitive advantage):** Managed-cloud-first
+- **Data platform enables differentiated analytics or ML:** Hybrid (managed for commodity, self-hosted for differentiation)
+- **Data platform is the core product (e.g., a data SaaS company):** Kubernetes-centric
+
+### Migration Paths
+
+You do not need to commit to one blueprint forever. Many organizations **start with managed-cloud-first** and migrate components to Kubernetes-centric or hybrid as they scale and build platform expertise.
+
+**Common migration triggers:**
+- **Cost:** Managed service bills exceed $50K/month—evaluate self-hosting high-volume components (Kafka, Spark, Trino)
+- **Compliance:** New regulatory requirements demand on-premises or self-hosted processing
+- **Customization:** Need to modify Kafka broker behavior, Flink runtime, or Trino query planner beyond what managed services expose
+- **Multi-cloud:** Acquired company uses different cloud provider—Kubernetes-centric architecture simplifies cross-cloud integration
+
+A typical migration sequence:
+1. Start with fully managed services
+2. Self-host Kafka (Strimzi) to reduce event streaming costs
+3. Self-host Spark/Flink on Kubernetes for custom processing logic
+4. Self-host Trino for fine-grained access control and query federation
+5. Keep orchestration (Airflow), ML platform (Vertex AI/SageMaker), and observability (Cloud Logging/CloudWatch) managed
+
+## Comparison: Three Blueprints
+
+<MermaidDiagram chart={`graph TB
+    subgraph Managed["Managed-Cloud-First"]
+        M1[BigQuery/Redshift]
+        M2[Confluent Cloud/MSK]
+        M3[Cloud Composer/MWAA]
+        M4[Vertex AI/SageMaker]
+        M5[Cloud Logging/CloudWatch]
+    end
+    
+    subgraph K8s["Kubernetes-Centric"]
+        K1[Trino on K8s]
+        K2[Strimzi Kafka]
+        K3[Argo Workflows]
+        K4[Feast + KServe]
+        K5[Prometheus + Grafana]
+    end
+    
+    subgraph Hybrid["Hybrid/Regulated"]
+        H1[Managed Kafka<br/>+ Self-Hosted Flink]
+        H2[Managed Airflow<br/>+ Self-Hosted Spark]
+        H3[Iceberg + CMEK]
+        H4[Self-Hosted Trino<br/>+ Managed ML]
+        H5[Hybrid Observability]
+    end
+    
+    M1 -->|Migration| K1
+    M2 -->|Migration| K2
+    M3 -->|Migration| K3
+    M4 -->|Migration| K4
+    
+    M1 -.->|Partial Migration| H1
+    M2 -.->|Partial Migration| H2
+    
+    style Managed fill:#dbeafe,stroke:#3b82f6
+    style K8s fill:#fce7f3,stroke:#ec4899
+    style Hybrid fill:#e0e7ff,stroke:#6366f1
+`} />
+
+| Dimension | Managed-Cloud-First | Kubernetes-Centric | Hybrid/Regulated |
+|-----------|---------------------|-------------------|------------------|
+| **Time to first deployment** | 1-2 weeks | 4-8 weeks | 6-12 weeks |
+| **Operational complexity** | Low | High | Medium-High |
+| **Per-unit cost** | High | Low-Medium | Medium |
+| **Vendor lock-in** | High | Low | Medium |
+| **Customization** | Low | High | Medium-High |
+| **Compliance flexibility** | Medium | High | High |
+| **Team size requirement** | 5-10 engineers | 20+ engineers | 15+ engineers |
+| **Best for** | Startups, small teams | Large orgs, multi-cloud | Regulated industries |
+
+## Failure Modes and Anti-Patterns
+
+### Premature Complexity
+
+**Symptom:** A 5-person startup deploys Strimzi, Flink Operator, Trino on Kubernetes, and self-hosted Airflow before processing a single production event.
+
+**Why it happens:** Engineers optimize for hypothetical future scale or portability requirements that may never materialize. Reading Kubernetes-centric architecture blogs creates FOMO ("everyone else is doing this, we should too").
+
+**Consequence:** The team spends 6 months fighting Kubernetes networking issues, certificate rotation bugs, and operator upgrades instead of building the core product. The data platform becomes a distraction, not an enabler.
+
+**Fix:** Start with managed-cloud-first. Migrate components to Kubernetes only when you hit concrete limitations (cost, compliance, customization needs). Complexity must be justified by scale or regulatory requirements, not speculation.
+
+### Ignoring Organizational Capabilities
+
+**Symptom:** An organization with no Kubernetes expertise chooses the Kubernetes-centric blueprint because it "avoids vendor lock-in."
+
+**Why it happens:** Architecture decisions are made by consultants or senior engineers without input from the team that will operate the platform. Vendor lock-in is treated as an absolute risk, ignoring the opportunity cost of building and maintaining infrastructure.
+
+**Consequence:** The platform is perpetually in a "proof of concept" state. Every upgrade breaks something. Incidents take hours to debug because no one understands the full stack. Engineers burn out and leave.
+
+**Fix:** Choose a blueprint that matches your **current capabilities**, not your aspirational capabilities. If you don't have Kubernetes expertise, either hire it first or use managed services. Vendor lock-in is a risk, but operational instability is a certainty.
+
+### Mixing Blueprints Incoherently
+
+**Symptom:** An organization runs Kafka on Kubernetes, Airflow on Cloud Composer, Spark on EMR, Trino on managed infrastructure, and Feast on Kubernetes. Each tool uses a different deployment model, different monitoring stack, different credential management approach.
+
+**Why it happens:** Each team chooses the path of least resistance for their immediate problem without coordinating across teams. The platform evolves organically over years without a unifying architecture vision.
+
+**Consequence:** No one understands the full stack. Debugging cross-component issues requires knowledge of four different deployment models. Security audits are nightmares because credentials are scattered across IAM roles, Kubernetes secrets, and environment variables.
+
+**Fix:** Pick **one blueprint as the default** and deviate only with explicit justification. If you choose Kubernetes-centric, deploy all new components on Kubernetes unless there's a compelling reason not to. If you choose managed-cloud-first, resist the urge to self-host components unless the cost or compliance benefit is quantified.
+
+### Over-Engineering the Hybrid Blueprint
+
+**Symptom:** An organization self-hosts Kafka, Flink, Spark, Trino, and Airflow to "maintain control," but still uses managed services for object storage, networking, and compute. The result is the operational complexity of Kubernetes-centric without the benefit of vendor neutrality.
+
+**Why it happens:** Fear of managed service limitations leads to preemptive self-hosting. The team assumes they will need deep customization before they actually hit the limits of managed services.
+
+**Consequence:** The team maintains five different operators, five different upgrade schedules, five different disaster recovery procedures. Incidents in self-hosted components (e.g., Kafka broker crashes) distract from building business logic.
+
+**Fix:** Self-host only the components where managed services are **demonstrably insufficient** (e.g., you need custom Flink runtime behavior, or BigQuery's concurrency limits block your workload). For everything else, default to managed.
+
+## Summary
+
+Reference architectures are not prescriptive templates—they are **composable blueprints** that encode common trade-off positions. The managed-cloud-first blueprint optimizes for simplicity and speed. The Kubernetes-centric blueprint optimizes for portability and control. The hybrid blueprint optimizes for compliance and cost efficiency by mixing managed and self-hosted components.
+
+The end-to-end scenario demonstrates that all three blueprints solve the same business problem. The difference is not in what they do, but in **who operates them, how they are deployed, and where control boundaries lie**.
+
+Choose your blueprint based on organizational context, not industry trends. Start simple and migrate to complexity only when scale, compliance, or differentiation demands it. The best architecture is the one your team can operate reliably, not the one that looks impressive on a slide deck.

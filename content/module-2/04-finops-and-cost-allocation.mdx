@@ -1,0 +1,280 @@
+---
+title: "FinOps & Cost Allocation"
+---
+
+## Overview
+
+Data platforms are often the largest cloud spend category in modern enterprises — yet most teams can't answer "what does this pipeline cost to run?" or "is this workload cheaper on K8s or BigQuery?" **FinOps** is the practice of connecting cloud cost to engineering decisions, treating spend as a measurable outcome of architecture and design.
+
+This lesson introduces FinOps for data platforms: the tagging and allocation mechanics that enable visibility, the **unit economics** that connect cost to value, and the optimization levers that make "reduce cost" an actionable engineering goal. We'll also revisit the workload placement decision from Lesson 2 through a cost lens — same workload, different platforms, different economics.
+
+## Why FinOps Matters for Data Platforms
+
+Cloud bills aggregate thousands of line items into a monthly total. For engineering teams, that total is actionable only when broken down by **workload**, **team**, **project**, and **environment**. Without this visibility, data platforms exhibit predictable failure modes:
+
+- **Invisible growth** — pipelines multiply, storage accumulates, queries scale, but no single change triggers an alarm. The bill grows 20% quarter-over-quarter with no obvious culprit.
+- **Optimization theater** — teams optimize what's measurable (instance types, spot usage) while ignoring what's expensive (query inefficiency, storage sprawl, AI inference costs).
+- **Misaligned incentives** — the team that builds a pipeline doesn't see its cost, so there's no feedback loop. The finance team sees the cost but can't trace it back to a decision.
+
+**FinOps solves this by closing the loop:** engineers see the cost impact of their decisions, and finance sees the engineering context behind the spend. The FinOps lifecycle has three phases:
+
+1. **Inform** — make cost visible and attributable (tagging, dashboards, unit metrics)
+2. **Optimize** — act on the insights (rightsizing, tiering, query tuning)
+3. **Operate** — embed cost awareness into platform governance (budgets, alerts, showback)
+
+Data platforms complicate traditional FinOps because costs are often **shared** (a Kafka cluster serves 50 topics from 10 teams) and **non-linear** (doubling data volume doesn't double query cost if you partition well, but it does if you don't). The key is to move from **resource-level tagging** (this EC2 instance costs $X) to **workload-level unit economics** (this pipeline costs $Y per TB processed).
+
+## Tagging and Allocation
+
+**Resource tagging** is the foundation of cost visibility. Every cloud resource (compute, storage, network) supports **labels** or **tags** — key-value pairs that annotate what a resource is for. A typical tagging strategy includes:
+
+- **team** — `team=data-platform`, `team=ml-engineering`
+- **project** — `project=customer-360`, `project=fraud-detection`
+- **environment** — `environment=prod`, `environment=dev`, `environment=staging`
+- **cost-center** — `cost-center=engineering`, `cost-center=product`
+
+Tags flow into cost allocation reports, where you can group and filter spend by any combination of labels. This enables **showback** (reporting cost back to teams for awareness) and **chargeback** (billing internal teams for their usage, common in large enterprises).
+
+### What to Tag
+
+At minimum, tag:
+
+- **Compute** — VMs, Kubernetes node pools, serverless functions
+- **Storage** — object storage buckets, persistent volumes, database instances
+- **Data services** — BigQuery datasets, Kafka clusters, data warehouses
+- **AI/ML resources** — model training jobs, inference endpoints, embedding services
+
+Tag at the **highest level of granularity you can enforce.** If your team deploys via Terraform or Helm, inject tags at template time. If engineers create resources manually, use cloud policy guardrails (e.g., GCP Organization Policies, AWS Service Control Policies) to **block untagged resource creation** in production.
+
+### Allocating Shared Resources
+
+The hardest FinOps challenge for data platforms is **shared infrastructure:** a Kubernetes cluster that runs 30 teams' workloads, a Kafka cluster with 100 topics from 15 projects, a data lake with petabytes of multi-tenant data. How do you attribute the cost of the cluster to individual teams?
+
+Two patterns:
+
+1. **Label-based proportional allocation** — if Kafka brokers are tagged `team=shared-infra` but topics are labeled with owning teams, you can allocate broker cost in proportion to topic partition count, message volume, or storage used. Cloud providers' cost allocation APIs surface resource usage metrics that enable this.
+
+2. **Namespace/project-level isolation** — in Kubernetes, each team gets a namespace with **resource quotas** (CPU, memory limits). Tooling like **Kubecost** or **OpenCost** watches actual usage per namespace and splits the node pool cost accordingly. For BigQuery, GCP's **slot reservations** can be assigned per project, making cost directly attributable.
+
+For untagged or unclaimed resources, either:
+- Allocate to a "shared pool" cost center and distribute overhead proportionally
+- Assign to a default owner (usually the platform team) and audit quarterly to reclaim or retire
+
+## Unit Economics for Data Platforms
+
+Tagging tells you **what** costs money. **Unit economics** tells you **why** it costs that much and **how** to optimize. A unit cost metric connects spend to a measurable output:
+
+- **Cost per pipeline run** — total compute + storage cost divided by number of runs
+- **Cost per TB processed** — Spark cluster spend divided by data volume transformed
+- **Cost per TB stored** — object storage + snapshot + replication cost per month
+- **Cost per query** — BigQuery or Trino slot usage divided by query count
+- **Cost per active Kafka partition** — broker + storage cost divided by partition count
+- **Cost per feature retrieval** — feature store read cost (API calls, cache hits/misses)
+- **Cost per AI request** — embedding generation, LLM inference, or RAG query cost per call
+
+These metrics translate "the bill is too high" into actionable engineering problems:
+
+> "Our fraud detection pipeline costs $12 per TB processed, but the industry benchmark is $4/TB. Why? Because we're reading the full dataset on every run instead of using incremental processing."
+
+> "Feature retrieval costs $0.002 per call, but 80% of calls hit the same 5% of features. If we add a Redis cache tier, we can cut cost to $0.0005 per call."
+
+> "Embedding generation costs $0.15 per 1K requests, but we're re-embedding unchanged documents every night. If we hash-check for changes first, we save 90% of that spend."
+
+Unit economics also reveal **scaling behavior.** A pipeline that costs $50/TB at 10TB/day might cost $30/TB at 100TB/day if fixed costs (cluster startup, metadata queries) amortize over more work. Conversely, a poorly designed pipeline might **increase** unit cost at scale if it scans all partitions regardless of filter predicates.
+
+### Calculating Unit Cost
+
+Here's a simple Python calculator for **cost per pipeline run:**
+
+<CodeBlock code={`#!/usr/bin/env python3
+"""
+Calculate unit cost per pipeline run from cloud billing data.
+Assumes you've tagged pipeline compute resources with project=pipeline-name.
+"""
+
+def calculate_unit_cost(total_cost_usd: float, run_count: int) -> dict:
+    """
+    Compute cost per run and annualized projection.
+    
+    Args:
+        total_cost_usd: Total spend for the pipeline over the period
+        run_count: Number of successful pipeline runs in the same period
+    
+    Returns:
+        Dictionary with cost_per_run and annualized_cost
+    """
+    cost_per_run = total_cost_usd / run_count if run_count > 0 else 0
+    
+    # Assume daily runs, project to annual
+    annual_runs = run_count * (365 / 30)  # scale 30-day sample to yearly
+    annualized_cost = cost_per_run * annual_runs
+    
+    return {
+        "cost_per_run": round(cost_per_run, 4),
+        "annualized_cost": round(annualized_cost, 2),
+        "run_count": run_count,
+    }
+
+# Example: pipeline cost $450 over 30 days, ran 300 times
+result = calculate_unit_cost(total_cost_usd=450, run_count=300)
+print(f"Cost per run: \${result['cost_per_run']}")
+print(f"Projected annual cost: \${result['annualized_cost']}")
+
+# Output:
+# Cost per run: $1.5
+# Projected annual cost: $5475.0
+`} language="python" filename="unit_cost_calculator.py" />
+
+With this baseline, you can compare optimization proposals: "If we switch to Spot instances, cost per run drops to $0.90 — a 40% reduction and $2,190 annual savings."
+
+## Rightsizing and Optimization Levers
+
+Once you have visibility (tagging) and metrics (unit economics), you can **optimize.** The most impactful levers for data platforms:
+
+### 1. Compute Rightsizing
+
+**Spot and preemptible instances** offer 60-90% discounts for interruptible workloads. Use them for:
+
+- **Batch processing** (Spark, dbt transformations) — if a job is retryable, spot interruptions are acceptable
+- **Model training** — checkpointing to object storage makes training resumable after preemption
+- **Development/staging clusters** — ephemeral environments tolerate interruptions
+
+**Reserved capacity** locks in 30-70% discounts for predictable, steady-state workloads:
+
+- **Kafka brokers** — always-on, predictable load
+- **PostgreSQL/MySQL databases** — production OLTP systems
+- **Kubernetes node pools** — baseline capacity (not autoscaled spikes)
+
+**Auto-scaling** reduces waste for bursty workloads:
+
+- **Trino workers** — scale up during business hours, scale down overnight
+- **Kubernetes HPA** (Horizontal Pod Autoscaler) for API services and streaming consumers
+- **BigQuery on-demand vs. slots** — on-demand for unpredictable queries, flat-rate slots for high-volume analytics
+
+### 2. Storage Tiering
+
+Object storage (GCS, S3) offers **storage classes** with different cost/performance tradeoffs:
+
+- **Standard/Hot** — frequent access, low latency ($0.020/GB/month)
+- **Nearline/Cool** — monthly access, retrieval fee ($0.010/GB/month + $0.01/GB read)
+- **Coldline/Archive** — quarterly or annual access ($0.004/GB/month + $0.02/GB read)
+
+**Lifecycle policies** automate tiering: data lands in Standard, transitions to Nearline after 30 days, Coldline after 90 days, Archive after 365 days. For **Iceberg** and **Delta Lake** tables, you can tier by **partition age** — recent partitions stay hot, old partitions move to cold storage.
+
+### 3. Query Optimization
+
+Poor query patterns are a top cost driver for data platforms. Common fixes:
+
+- **Partition pruning** — filter on partition keys so the query engine reads only relevant files
+- **Columnar formats** (Parquet, ORC) — read only the columns you need, not full rows
+- **Materialized views** — precompute expensive aggregations for dashboards
+- **Query result caching** — BigQuery and Trino cache results for identical queries
+
+A single poorly written query that scans a full petabyte-scale table can cost hundreds of dollars. **Query cost attribution** (BigQuery logs per-query slot usage) lets you identify and fix the most expensive queries first.
+
+### 4. AI Cost Optimization
+
+AI workloads introduce new cost dynamics:
+
+- **Embedding generation** — batch embed documents overnight instead of on-demand; cache embeddings in vector databases (Pinecone, Weaviate) rather than regenerating
+- **LLM inference** — use **prompt caching** (Claude, GPT-4) to reuse common context; route queries to smaller models (Haiku, GPT-4o-mini) when reasoning depth isn't needed
+- **RAG pipelines** — limit retrieval to top-K documents before reranking; use semantic caching to avoid re-fetching identical queries
+
+AI costs scale with **request volume** and **context length.** A production RAG system serving 1M queries/month with 8K context tokens can cost $10K-$50K/month depending on model choice. Unit cost per query is the design constraint.
+
+## Connecting FinOps to Architecture Decisions
+
+Recall Lesson 2's workload placement decision: **build vs. rent** for data infrastructure. The choice between a managed service and self-hosted Kubernetes has direct cost implications. Let's compare:
+
+<MermaidDiagram chart={`graph LR
+    subgraph Managed["Managed Service (e.g., Confluent Cloud Kafka)"]
+        A1[No Ops Overhead]
+        A2[Pay per GB ingested + stored]
+        A3[Auto-scaling included]
+        A4[Fixed per-partition cost]
+    end
+    
+    subgraph SelfHosted["Self-Hosted on Kubernetes"]
+        B1[Ops + maintenance cost]
+        B2[Pay for VMs + storage]
+        B3[Manual scaling]
+        B4[Cost scales with cluster size]
+    end
+    
+    Managed --> Decision{Break-even at scale?}
+    SelfHosted --> Decision
+    
+    Decision -->|< 100 GB/day| C1[Managed cheaper]
+    Decision -->|> 1 TB/day| C2[Self-hosted cheaper]
+    Decision -->|100 GB - 1 TB/day| C3[Depends on ops capacity]
+    
+    style Managed fill:#e6f7ff,stroke:#1890ff
+    style SelfHosted fill:#fff7e6,stroke:#fa8c16
+    style Decision fill:#f0f0f0,stroke:#595959
+`} />
+
+**Example cost breakdown** for a Kafka workload processing **500 GB/day**:
+
+**Managed (Confluent Cloud):**
+- Ingress: 500 GB/day × $0.10/GB = $50/day = **$1,500/month**
+- Storage: 10 TB retained × $0.10/GB = **$1,000/month**
+- Total: **$2,500/month**
+
+**Self-hosted (Kubernetes):**
+- 6 broker nodes, 16 vCPU, 64 GB RAM each: 6 × $300/month = **$1,800/month**
+- 30 TB SSD storage: $0.17/GB/month × 30,000 GB = **$5,100/month**
+- Ops overhead (1 FTE @ 20% time): $15K/month × 0.2 = **$3,000/month**
+- Total: **$9,900/month**
+
+At 500 GB/day, **managed is 4× cheaper** when you include ops cost. The break-even point is around **1.5 TB/day** — at higher scale, the fixed cost of Kubernetes nodes amortizes, and the managed service's per-GB pricing becomes the bottleneck.
+
+This is the **FinOps lens on architecture:** the "right" choice depends on your scale, growth trajectory, and ops capacity. Unit economics (cost per GB processed) let you model the crossover point **before** committing to a build-vs-rent decision.
+
+## Failure Modes
+
+FinOps initiatives fail when they focus on **process over outcomes.** Common anti-patterns:
+
+### 1. Tagging Without Action
+
+Teams invest months in tagging hygiene, build beautiful dashboards, then… nothing changes. **Why?** Because visibility alone doesn't create accountability. Effective FinOps pairs tagging with **governance:**
+
+- **Budget alerts** — teams get notified when a project crosses 80% of its monthly budget
+- **Showback reports** — quarterly cost reviews where teams explain high-spend areas
+- **Cost anomaly detection** — automated alerts when a workload's unit cost spikes (e.g., cost per pipeline run jumps 3× overnight)
+
+### 2. Optimizing Before Measuring
+
+"We should use Spot instances" is a common reflex. But if you haven't measured **which workloads are expensive** and **why**, you're optimizing blindly. The most expensive workload might be a poorly written query that scans 10× more data than necessary — Spot instances save 70%, but fixing the query saves 90%.
+
+**Always measure unit cost first, then prioritize optimization by impact:**
+
+1. Identify the top 5 cost drivers (pipelines, queries, storage buckets)
+2. Calculate their unit economics
+3. Propose optimizations and model the savings
+4. Implement the highest-ROI change first
+
+### 3. Ignoring AI Costs
+
+AI and ML workloads are growing faster than traditional data pipelines, but many FinOps programs still focus on compute and storage. **Embedding generation**, **LLM inference**, and **vector search** can dwarf pipeline costs for AI-heavy platforms.
+
+Track AI costs as a separate category:
+
+- **Training** — GPU hours, distributed training frameworks
+- **Inference** — model serving, API calls, prompt caching efficiency
+- **Embeddings** — vector generation and storage
+- (RAG retrieval** — vector database queries, reranking, LLM context assembly
+
+Each category has its own optimization playbook: training benefits from Spot GPUs and checkpointing; inference benefits from prompt caching and model distillation; RAG benefits from semantic caching and hybrid search.
+
+## Summary
+
+**FinOps** transforms cloud cost from an opaque monthly bill into an engineering feedback loop. For data platforms, this means:
+
+- **Tag resources** by team, project, and environment to enable cost attribution
+- **Calculate unit economics** — cost per pipeline run, per TB processed, per query, per AI request — to connect spend to architectural decisions
+- **Optimize based on data** — rightsize compute, tier storage, tune queries, cache AI outputs
+- **Revisit build-vs-rent decisions** through a cost lens, modeling break-even points at scale
+
+The goal is not to minimize cost at all costs (some expensive workloads deliver enormous value) but to ensure that **cost is a known and managed outcome** of platform design. When engineers can answer "what does this cost?" and "how do I make it cheaper?", FinOps has succeeded.
+
+Next lesson, we'll integrate these platform foundations — workload placement, security, and cost — into a unified **platform-as-product** delivery model.

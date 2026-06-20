@@ -1,0 +1,345 @@
+---
+title: "Why Processing Architecture Matters"
+quiz:
+  - question: "What was the primary maintenance problem with Lambda architecture?"
+    options:
+      - "It required too much storage capacity"
+      - "It maintained separate batch and streaming paths producing the same output (correct)"
+      - "It only worked with structured data"
+      - "It couldn't handle real-time workloads"
+    correctIndex: 1
+  - question: "What is the modern approach to batch vs streaming processing?"
+    options:
+      - "Always use streaming for everything"
+      - "Always use batch processing to reduce costs"
+      - "Choose the right engine for each workload with unified output formats (correct)"
+      - "Avoid batch processing entirely"
+    correctIndex: 2
+  - question: "When should you use materialized views instead of event-driven projections?"
+    options:
+      - "When you need sub-second latency for operational systems"
+      - "When periodic refresh (minutes to hours) meets your freshness requirements (correct)"
+      - "When you have unlimited compute budget"
+      - "When you need to process unstructured data"
+    correctIndex: 1
+---
+
+## Overview
+
+In Modules 1-4, you built a foundation: strategic thinking, platform selection, storage architecture, and data movement patterns. You learned how CDC captures database changes, how Kafka streams events, and how the lakehouse stores everything. But raw data sitting in storage is not yet useful.
+
+**Processing** is the layer where data becomes valuable. It's where you transform messy source records into clean, structured datasets. Where you enrich transactional events with context. Where you validate, aggregate, and reshape data to serve analytics, machine learning, and operational systems.
+
+The processing layer sits between movement and consumption. Events flow from Kafka, land in your lakehouse, get processed by engines like Spark or Flink, and produce clean tables that power dashboards, models, and APIs. The challenge: choosing the wrong processing architecture wastes compute, creates maintenance burden, and slows your entire pipeline.
+
+This lesson introduces the processing layer. You'll understand why architecture matters, how to choose between unified and specialized processing paths, and when to use batch versus streaming engines. By the end, you'll recognize the patterns that scale and the anti-patterns that break.
+
+## The Processing Challenge
+
+Raw data rarely arrives in the shape you need. Consider the recurring scenario from earlier modules:
+
+1. Your source database captures customer orders
+2. CDC streams every INSERT, UPDATE, DELETE to Kafka
+3. Events land in your lakehouse as raw JSON
+
+What happens next? You need to:
+
+- **Transform** — flatten nested JSON, cast data types, rename inconsistent fields
+- **Enrich** — join order events with customer profiles and product catalogs
+- **Validate** — filter malformed records, enforce business rules, deduplicate
+- **Aggregate** — compute daily revenue, customer lifetime value, inventory levels
+- **Shape for consumption** — produce clean tables optimized for analytics, ML feature stores, or operational APIs
+
+This is the **processing challenge**. You must choose engines, patterns, and architectures that balance latency, cost, complexity, and maintainability. A poor choice compounds over time—you end up with duplicate pipelines, wasted compute, and brittle code that breaks when requirements change.
+
+The stakes are high. Processing often consumes the largest share of your data platform budget. It's also where technical debt accumulates fastest. A well-designed processing architecture scales with your team and workloads. A poorly designed one becomes a bottleneck that slows every downstream consumer.
+
+## The Evolution: Lambda to Modern Processing
+
+For years, the **Lambda architecture** dominated data processing discussions. It promised the best of both worlds: batch processing for historical accuracy and streaming for real-time responsiveness. But it delivered a maintenance nightmare.
+
+### Lambda Architecture: The Dual-Path Problem
+
+Lambda separated batch and streaming into two code paths producing the same logical output:
+
+- **Batch layer** — processes historical data in large chunks (hours or days of events at once), produces accurate aggregates, runs on frameworks like MapReduce or Spark batch jobs
+- **Speed layer** — processes real-time events as they arrive, produces approximate aggregates, runs on streaming frameworks like Storm or Flink
+- **Serving layer** — merges results from both layers, prioritizes speed layer for recent data and batch layer for historical data
+
+The idea: batch corrects errors over time, streaming provides low-latency results. The reality: you maintain two codebases computing the same metric. When business logic changes, you update it twice. When a bug appears, you debug it in two places. When performance degrades, you optimize two systems.
+
+Lambda's fatal flaw was **duplication**. Every aggregation lived in two implementations—one batch, one streaming. Over time, the two drifted. The batch layer calculated revenue one way, the streaming layer calculated it slightly differently. Users saw inconsistent numbers depending on query timing. Engineers spent more time reconciling discrepancies than building features.
+
+### Kappa Architecture: The Everything-Streaming Dream
+
+**Kappa architecture** tried to fix Lambda by eliminating the batch layer entirely. The idea: treat everything as a stream, reprocess historical data by replaying the event log, maintain a single codebase for all processing.
+
+Kappa worked beautifully for some workloads—real-time dashboards, fraud detection, recommendation engines. But it struggled with others:
+
+- **Large-scale backfills** — reprocessing months of historical data in a streaming engine is slower and more expensive than running a batch job
+- **Complex joins** — streaming engines optimize for low-latency transformations, not multi-way joins across large datasets
+- **Cost at scale** — keeping streaming infrastructure running 24/7 for workloads that only need hourly updates wastes money
+
+Kappa's mistake was **over-generalization**. Not every workload needs sub-second latency. Some pipelines benefit from batch-style optimizations—partitioned reads, columnar compression, vectorized execution. Forcing everything through a streaming engine trades simplicity for efficiency.
+
+### Modern Approach: Unified Output, Right-Fit Engines
+
+The current best practice abandons one-size-fits-all architectures. Instead, it combines three principles:
+
+1. **Choose the right engine for each workload** — use batch engines (Spark, Trino) for historical analysis and backfills, streaming engines (Flink, Spark Structured Streaming) for real-time processing
+2. **Unify output formats** — both batch and streaming pipelines write to the same lakehouse tables (Apache Iceberg, Delta Lake), ensuring consistency without code duplication
+3. **Recognize batch and stream serve different needs** — batch optimizes for throughput and cost, streaming optimizes for latency and freshness
+
+You no longer maintain two codebases computing the same metric. Instead, you maintain purpose-built pipelines that share storage formats. A batch job computes daily revenue aggregates and writes them to an Iceberg table. A streaming job computes real-time revenue and appends to the same table with a different partition key. Consumers query one table and get both historical accuracy and up-to-the-minute freshness.
+
+This approach acknowledges reality: **some workloads genuinely need both batch and stream**, but you shouldn't duplicate business logic to achieve it. Unified table formats (Iceberg ACID semantics, time travel, schema evolution) make this possible.
+
+## Processing Patterns
+
+Once you've chosen the right engines, you need to pick the right **processing pattern** for each use case. Four patterns dominate modern data platforms:
+
+### 1. Materialized Views
+
+A **materialized view** is a precomputed dataset refreshed on a schedule. Think of it as a saved query result that updates periodically—every hour, every day, or on-demand.
+
+**When to use materialized views:**
+
+- Your consumers tolerate staleness (minutes to hours old)
+- The computation is expensive but changes slowly
+- You want to optimize read performance for frequently accessed aggregations
+
+**Example:** A daily revenue summary by product category. The underlying orders table updates constantly, but recalculating revenue from scratch for every dashboard query is wasteful. Instead, a batch job runs nightly, computes the aggregates, and writes them to a materialized view table. Dashboard queries read the precomputed results instantly.
+
+Materialized views trade freshness for efficiency. They work well for reporting dashboards, executive summaries, and historical analysis—anywhere staleness is acceptable.
+
+### 2. Event-Driven Projections
+
+An **event-driven projection** continuously updates as new events arrive. It's a real-time derivative dataset maintained by a streaming engine.
+
+**When to use event-driven projections:**
+
+- You need low-latency updates (seconds to minutes)
+- The dataset serves operational systems that require fresh data
+- The transformation is stateful (running totals, windowed aggregations)
+
+**Example:** A customer profile table that reflects the most recent activity. Every time a customer clicks a product, makes a purchase, or updates preferences, an event flows to Kafka. A Flink job consumes these events, updates the customer profile projection, and writes it to a serving layer (Iceberg table, Redis cache, or Postgres). Operational systems query the projection to personalize recommendations in real time.
+
+Event-driven projections enable operational use cases that batch processing cannot support. They're essential for fraud detection, personalization, and any system where staleness breaks the user experience.
+
+### 3. Operational Data Products
+
+An **operational data product** is a purpose-built dataset optimized for serving operational systems—APIs, microservices, real-time dashboards. It's not a raw table or a simple aggregation; it's a carefully designed dataset with schema, access patterns, and performance guarantees.
+
+**When to use operational data products:**
+
+- Downstream consumers are operational systems (not just analysts)
+- You need to enforce SLAs (latency, availability, consistency)
+- The dataset requires API access, not just SQL queries
+
+**Example:** A fraud score service. Raw transaction events land in Kafka. A streaming pipeline computes risk scores using ML models and writes them to a low-latency key-value store (Redis, DynamoDB). The payment service queries the fraud score API before authorizing transactions. The dataset is designed for sub-100ms lookups, schema versioning, and high availability.
+
+Operational data products blur the line between data engineering and backend engineering. They require thinking about indexes, caching, failover, and rate limiting—not just transformations and aggregations.
+
+### 4. ELT vs ETL
+
+**ETL (Extract, Transform, Load)** transforms data before loading it into the warehouse. **ELT (Extract, Load, Transform)** loads raw data first, then transforms it inside the warehouse.
+
+The choice depends on your warehouse capabilities and team skills:
+
+- **Use ELT when:**
+  - Your warehouse is powerful enough to handle transformations (Snowflake, BigQuery, Databricks)
+  - You want analysts to control transformation logic using SQL
+  - You need flexibility to reprocess data without re-extracting from sources
+
+- **Use ETL when:**
+  - Transformations require languages beyond SQL (Python, Scala)
+  - You need to filter or deduplicate massive datasets before loading (cost/performance optimization)
+  - Source data is too messy to land raw (PII scrubbing, malformed JSON)
+
+Modern platforms favor ELT because lakehouse engines (Spark, Trino) handle complex transformations efficiently, and version-controlled SQL (dbt, SQLMesh) lets teams collaborate on transformation logic. But ETL still has a place for preprocessing that doesn't fit SQL.
+
+## Unified vs Specialized Processing Paths
+
+The following diagram illustrates the modern approach: choose the right engine for each workload, but unify on output formats.
+
+<MermaidDiagram chart={`graph TD
+    subgraph Sources["Data Sources"]
+        K[Kafka Events]
+        S3[Object Storage]
+        DB[Databases]
+    end
+    subgraph Batch["Batch Path"]
+        SP[Spark]
+        DBT[dbt]
+    end
+    subgraph Stream["Stream Path"]
+        FL[Flink]
+    end
+    subgraph Output["Unified Output"]
+        ICE[Iceberg Tables]
+    end
+    K --> FL
+    K --> SP
+    S3 --> SP
+    S3 --> DBT
+    DB --> SP
+    SP --> ICE
+    DBT --> ICE
+    FL --> ICE
+    style Sources fill:#ebf8ff,stroke:#3182ce
+    style Batch fill:#fefcbf,stroke:#d69e2e
+    style Stream fill:#fed7d7,stroke:#e53e3e
+    style Output fill:#c6f6d5,stroke:#38a169
+`} />
+
+## Choosing a Processing Pattern
+
+Use the following decision framework to select the right pattern based on your freshness and complexity requirements.
+
+<MermaidDiagram chart={`flowchart TD
+    A[New Processing Need] --> B{Latency Requirement?}
+    B -->|Sub-second| C[Event-Driven Projection]
+    B -->|Minutes to hours| D{Complexity?}
+    B -->|Daily or slower| E[Materialized View]
+    D -->|Simple SQL| F[dbt / ELT]
+    D -->|Complex transforms| G[Spark Batch]
+    C --> H{State Required?}
+    H -->|Yes| I[Flink Stateful Stream]
+    H -->|No| J[Flink Stateless Map]
+    style A fill:#ebf8ff,stroke:#3182ce
+    style C fill:#fed7d7,stroke:#e53e3e
+    style E fill:#c6f6d5,stroke:#38a169
+    style F fill:#fefcbf,stroke:#d69e2e
+    style G fill:#fefcbf,stroke:#d69e2e
+    style I fill:#fed7d7,stroke:#e53e3e
+    style J fill:#fed7d7,stroke:#e53e3e
+`} />
+
+## When to Share vs Separate Processing Pipelines
+
+Should you use one engine for everything or maintain separate batch and streaming pipelines?
+
+### Single-Engine Approach
+
+Modern frameworks like **Spark Structured Streaming** and **Flink batch mode** can handle both batch and streaming workloads with the same API. You write transformation logic once and run it in batch or streaming mode depending on the data source.
+
+**Advantages:**
+
+- One codebase to maintain
+- Easier to test and deploy
+- Unified skill set for your team
+
+**Disadvantages:**
+
+- Compromises optimization—batch workloads may not leverage columnar compression, streaming workloads may not achieve minimal latency
+- Framework limitations—not all features work in both modes
+
+**When to use:** You have a small team, workloads have similar latency requirements, and the framework supports your use cases end-to-end.
+
+### Dual-Engine Approach
+
+Alternatively, maintain purpose-built pipelines: Spark for batch, Flink for streaming. Both write to the same Iceberg tables.
+
+**Advantages:**
+
+- Optimize each workload—batch jobs use partitioned reads and vectorized execution, streaming jobs minimize state size and checkpointing overhead
+- Pick the best tool for each job—some tasks genuinely suit one engine better
+
+**Disadvantages:**
+
+- Separate codebases require more engineering effort
+- Team must learn multiple frameworks
+- Increased operational complexity (more clusters to monitor)
+
+**When to use:** You have workloads with vastly different latency/cost profiles, a large team that can specialize, and the budget to run multiple processing clusters.
+
+The decision framework is simple: **start with single-engine for simplicity, split to dual-engine when optimization becomes critical**. Premature optimization wastes time. But when batch jobs take hours because you're forcing them through a streaming engine—or when streaming jobs miss SLAs because you're batching them—it's time to specialize.
+
+## Bridging from Module 4: Events Feed Processing
+
+Module 4 introduced data movement: CDC captures database changes, Kafka streams events, connectors land data in the lakehouse. The processing layer consumes those outputs.
+
+Here's how the pieces connect:
+
+1. **CDC events arrive in Kafka topics** — each topic represents a source table (orders, customers, products)
+2. **Processing engines subscribe to topics** — Spark Structured Streaming or Flink jobs consume events in real time
+3. **Transformations enrich and validate** — join order events with customer profiles, filter invalid records, compute aggregates
+4. **Processed data lands in the lakehouse** — write to Iceberg tables with partitions by date, optimized for downstream queries
+5. **Consumers read clean tables** — analysts query with SQL, ML pipelines extract features, operational APIs serve aggregated views
+
+Without processing, you'd have raw CDC events in Kafka and raw JSON files in S3. Processing transforms that chaos into structured, queryable, governed datasets.
+
+The key insight: **movement and processing are separate concerns**. Kafka excels at reliable, ordered event delivery. It's not designed for complex transformations. Processing engines excel at stateful aggregations and multi-way joins. They're not designed for durable event storage. Separating the two lets each layer optimize for its strength.
+
+## Decision Framework: Choosing Your Processing Pattern
+
+Given a new use case, how do you choose the right processing pattern?
+
+### Step 1: Define Freshness Requirements
+
+- **Seconds to minutes** → event-driven projection or operational data product
+- **Minutes to hours** → materialized view with frequent refresh
+- **Hours to days** → batch-computed materialized view
+
+### Step 2: Assess Complexity
+
+- **Simple filtering/mapping** → ELT in the warehouse (SQL-based transformations)
+- **Stateful aggregations (running totals, windowing)** → streaming engine (Flink, Spark Structured Streaming)
+- **Complex multi-way joins with historical data** → batch engine (Spark, Trino)
+
+### Step 3: Evaluate Serving Requirements
+
+- **Analytical queries (dashboards, reports)** → materialized view in lakehouse
+- **Operational APIs (sub-100ms lookups)** → operational data product with key-value store
+- **Mixed (both analytical and operational)** → hybrid approach (lakehouse + serving layer cache)
+
+### Step 4: Consider Cost
+
+- **High query volume, static data** → precompute with materialized view
+- **Low query volume, frequently changing data** → compute on-demand (ELT)
+- **Real-time operational need** → streaming pipeline despite higher cost
+
+This framework avoids both under-engineering (batch everything, accept staleness) and over-engineering (stream everything, waste money).
+
+## Common Failure Modes
+
+Even with a solid framework, teams fall into predictable traps:
+
+### Failure Mode 1: Lambda Duplication
+
+Building separate batch and streaming pipelines that compute the same metric. The two drift over time, producing inconsistent results. Users lose trust in the data.
+
+**Fix:** Use unified table formats (Iceberg, Delta) and write both batch and streaming outputs to the same tables. Share transformation logic through libraries or SQL macros.
+
+### Failure Mode 2: Everything-Streaming
+
+Forcing all workloads through a streaming engine because "real-time is always better." This wastes money on workloads that don't need low latency and makes batch-style operations (large joins, backfills) painfully slow.
+
+**Fix:** Match engine to workload. Use streaming for operational systems, batch for historical analysis. Accept that different latency requirements justify different engines.
+
+### Failure Mode 3: Wrong Engine for Workload
+
+Running complex multi-way joins in a streaming engine optimized for low-latency, stateless transformations. Or running a simple filter-map pipeline in a heavyweight batch framework.
+
+**Fix:** Understand engine strengths. Streaming excels at stateful, incremental processing over ordered events. Batch excels at parallelized, partitioned scans over large historical datasets. Pick accordingly.
+
+### Failure Mode 4: No Separation Between Raw and Processed
+
+Writing processed data back to the same table as raw ingestion, mixing clean records with dirty ones. When you discover a bug in processing logic, you can't reprocess without re-ingesting from the source.
+
+**Fix:** Maintain staging layers. Raw data lands in bronze tables (append-only, immutable). Processing reads bronze, writes to silver (cleaned, validated) and gold (aggregated, business-ready). Keep layers separate for reprocessing flexibility.
+
+## Summary
+
+The processing layer transforms raw data into valuable datasets. You've moved beyond ingestion (Module 4) into transformation, enrichment, and aggregation. The architecture you choose determines cost, maintainability, and scalability.
+
+**Key takeaways:**
+
+- **Lambda architecture's dual-path approach created maintenance nightmares.** Separate batch and streaming codebases drifted over time.
+- **Kappa's everything-streaming dream didn't fit all workloads.** Batch and stream serve different latency/cost tradeoffs.
+- **Modern approach: right-fit engines with unified output formats.** Use batch for throughput-optimized workloads, streaming for latency-sensitive ones, but write both to the same Iceberg tables.
+- **Four core patterns:** materialized views (precomputed, periodic refresh), event-driven projections (continuous updates), operational data products (serving-layer optimized), ELT vs ETL (transform location).
+- **Single-engine simplicity vs dual-engine optimization.** Start simple, specialize when workload demands justify it.
+- **Events from Kafka feed processing engines.** CDC data flows through transformation pipelines before landing in queryable lakehouse tables.
+
+Next lesson: you'll dive into batch processing engines—Spark, Trino, and the tradeoffs between them. You'll learn when to use each and how to structure batch pipelines for cost and performance.

@@ -1,0 +1,561 @@
+---
+title: "Batch Processing with Apache Spark"
+quiz:
+  - question: "What is data skew and why is it a problem in Spark?"
+    options:
+      - "Uneven distribution of data across partitions causing some tasks to lag (correct)"
+      - "A schema validation error in the data"
+      - "Compression format incompatibility"
+      - "Network latency between nodes"
+    correctIndex: 0
+  - question: "How does Spark Operator on Kubernetes improve operationalization?"
+    options:
+      - "It eliminates the need for distributed computing"
+      - "It enables Spark jobs to be managed as K8s workloads with resource isolation (correct)"
+      - "It removes the shuffle phase"
+      - "It converts all jobs to streaming automatically"
+    correctIndex: 1
+  - question: "What is the 'small files problem' in Spark?"
+    options:
+      - "Inability to read files smaller than 1 MB"
+      - "Too many small partitions creating excessive overhead and poor parallelism (correct)"
+      - "Encryption of small files"
+      - "A bug in the Spark API"
+    correctIndex: 1
+---
+
+## Overview
+
+When you need to process terabytes of data daily — transforming raw events into aggregated metrics, joining datasets across dozens of tables, or preparing training data for machine learning models — batch processing frameworks become essential. **Apache Spark** has emerged as the dominant engine for large-scale batch transformations, combining a unified API with sophisticated query optimization and the ability to scale horizontally across hundreds of machines.
+
+This lesson covers Spark from a data engineering perspective: the architecture that enables distributed computation, the **Spark Operator** that integrates Spark with Kubernetes for modern cloud-native deployments, and the production failure modes that distinguish working pipelines from fragile ones. You'll learn not just how Spark works, but how to recognize and prevent the data skew, small file proliferation, and shuffle amplification that cause most production batch jobs to fail.
+
+By the end of this lesson, you will understand how to design Spark pipelines that process large datasets efficiently, leverage the DataFrame API for readable and optimized transformations, and integrate with lakehouse storage like Iceberg. You'll also know when Spark is the right tool — and when simpler alternatives are more appropriate.
+
+## Spark Architecture: Driver and Executors
+
+**Apache Spark** is a distributed computing framework that runs data transformations in parallel across a cluster of machines. Unlike traditional batch systems that write intermediate results to disk after every step, Spark holds data in memory when possible and chains transformations into a single execution plan, minimizing I/O and network overhead.
+
+The architecture consists of two primary components:
+
+**Driver:** A single process that coordinates the entire Spark application. The driver parses your code, builds a logical query plan, optimizes it (via the **Catalyst optimizer**), and schedules tasks across executor nodes. The driver also tracks task completion, handles failures, and collects final results.
+
+**Executors:** Worker processes distributed across the cluster that execute the actual data transformations. Each executor runs multiple tasks in parallel (one task per CPU core), reads data from storage (object storage, databases, or filesystems), applies transformations, and writes results. Executors communicate with each other during shuffle operations (when data must be redistributed across partitions) and report status back to the driver.
+
+<MermaidDiagram chart={`graph TB
+    subgraph K8s["Kubernetes Cluster"]
+        Driver["Driver Pod<br/>(SparkApplication CRD)"]
+        Exec1["Executor Pod 1<br/>(4 CPU, 16 GB)"]
+        Exec2["Executor Pod 2<br/>(4 CPU, 16 GB)"]
+        Exec3["Executor Pod 3<br/>(4 CPU, 16 GB)"]
+        Driver --> Exec1
+        Driver --> Exec2
+        Driver --> Exec3
+        Exec1 -.shuffle.-> Exec2
+        Exec2 -.shuffle.-> Exec3
+    end
+    
+    Storage["Object Storage<br/>(S3/MinIO)"]
+    Iceberg["Iceberg Tables<br/>(lakehouse)"]
+    
+    Storage --> Exec1
+    Storage --> Exec2
+    Storage --> Exec3
+    Exec1 --> Iceberg
+    Exec2 --> Iceberg
+    Exec3 --> Iceberg
+    
+    style Driver fill:#fef3c7,stroke:#f59e0b
+    style Exec1 fill:#dbeafe,stroke:#3b82f6
+    style Exec2 fill:#dbeafe,stroke:#3b82f6
+    style Exec3 fill:#dbeafe,stroke:#3b82f6
+    style Storage fill:#e0e7ff,stroke:#6366f1
+    style Iceberg fill:#d1fae5,stroke:#10b981
+`} />
+
+This separation allows Spark to scale elastically: you can add more executors during peak load and release them afterward. The driver remains lightweight (it only orchestrates; it doesn't process data), while executors handle the compute-intensive transformations.
+
+## DataFrame API and Spark SQL
+
+Modern Spark applications use the **DataFrame API** as the primary interface for data transformations. A DataFrame is a distributed collection of rows organized into named columns, conceptually similar to a table in a relational database or a pandas DataFrame — but with the data partitioned across executors.
+
+The DataFrame API provides a declarative syntax where you describe *what* transformations to apply (filter rows, join tables, aggregate groups), and Spark's **Catalyst optimizer** determines *how* to execute them efficiently. This contrasts with the legacy **RDD (Resilient Distributed Dataset)** API, which required manual specification of each low-level transformation step. DataFrames are now the recommended approach for all new Spark code.
+
+**Spark SQL** extends the DataFrame API by allowing you to write queries in standard SQL syntax. Under the hood, SQL queries compile to the same optimized execution plans as DataFrame operations — the choice between DataFrame methods and SQL is purely stylistic.
+
+Example transformations:
+
+<CodeBlock code={`from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, sum, window, to_timestamp
+
+# Initialize Spark session (in production, configured by Spark Operator)
+spark = SparkSession.builder \\
+    .appName("event-aggregation") \\
+    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions") \\
+    .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog") \\
+    .config("spark.sql.catalog.lakehouse.type", "hadoop") \\
+    .config("spark.sql.catalog.lakehouse.warehouse", "s3a://lakehouse/warehouse") \\
+    .getOrCreate()
+
+# Read from multiple Parquet files in object storage (S3/MinIO)
+events_df = spark.read.parquet("s3a://raw-events/2026-06-18/*.parquet")
+
+# Filter and parse timestamp
+parsed_df = events_df \\
+    .filter(col("event_type") == "purchase") \\
+    .withColumn("event_time", to_timestamp(col("timestamp"), "yyyy-MM-dd HH:mm:ss"))
+
+# Aggregate by 1-hour windows
+hourly_revenue = parsed_df \\
+    .groupBy(
+        window(col("event_time"), "1 hour"),
+        col("product_id")
+    ) \\
+    .agg(
+        sum(col("amount")).alias("total_revenue"),
+        count("*").alias("purchase_count")
+    )
+
+# Write to Iceberg table (ACID-compliant lakehouse format)
+hourly_revenue.writeTo("lakehouse.analytics.hourly_revenue") \\
+    .using("iceberg") \\
+    .tableProperty("write.format.default", "parquet") \\
+    .partitionedBy("window") \\
+    .createOrReplace()
+`} language="python" filename="event_aggregation_pipeline.py" />
+
+This pipeline demonstrates key Spark capabilities: reading from distributed object storage, applying transformations that Catalyst will optimize, and writing to an Iceberg table that provides ACID guarantees and time-travel versioning.
+
+## Lazy Evaluation and Query Planning
+
+Spark uses **lazy evaluation**: when you call DataFrame methods like `filter()` or `groupBy()`, Spark does not execute the transformation immediately. Instead, it builds a **logical plan** — a graph of operations to perform. Execution only begins when you invoke an **action** (operations that produce a result, such as `write()`, `count()`, or `collect()`).
+
+This laziness enables optimization. Before running any code, Spark's **Catalyst optimizer** analyzes the logical plan and applies transformations:
+
+- **Predicate pushdown:** Move filters as early as possible (e.g., filter rows before a join, or push filters into the storage layer when reading Parquet/Iceberg).
+- **Projection pruning:** Only read columns that are actually used in the query, reducing I/O.
+- **Join reordering:** Choose the most efficient join order based on data size estimates.
+- **Constant folding:** Simplify expressions that can be computed at compile time.
+
+The optimized logical plan is then converted to a **physical plan** — the actual sequence of tasks that executors will run. The physical plan is divided into **stages**, separated by **shuffle boundaries** (points where data must be redistributed across partitions, such as joins or aggregations by key).
+
+Each stage contains multiple **tasks**, with one task per partition. If you have 1000 partitions and 100 executor cores, Spark will run 100 tasks in parallel, then the next 100, and so on, until all partitions are processed.
+
+Understanding this execution model is critical for debugging performance: if a job is slow, check the Spark UI to see how many stages it has (too many stages = too many shuffles), whether any tasks are lagging (data skew), and whether too many small tasks are running (small file problem).
+
+## Partitions, Shuffles, and Stages
+
+**Partitions** are the unit of parallelism in Spark. A DataFrame is divided into partitions, and each partition is processed independently by a single task on one executor core. The number of partitions determines the maximum parallelism: if you have 10 partitions, at most 10 tasks can run concurrently (even if you have 100 cores available).
+
+**Shuffles** occur when data must be redistributed across partitions to satisfy a transformation. Common operations that trigger shuffles include:
+
+- **groupBy / aggregations:** All rows with the same key must be moved to the same partition.
+- **Joins:** Rows with matching join keys must be colocated.
+- **repartition / coalesce:** Explicitly change the number of partitions.
+- **distinct / dropDuplicates:** Requires redistributing data to identify unique rows.
+
+Shuffles are expensive: they involve writing intermediate data to disk (or memory), sending it over the network, and reading it back on the receiving executor. Minimizing shuffles is a primary performance optimization strategy.
+
+**Stages** are groups of tasks that can run without shuffling. A shuffle boundary creates a stage break: tasks in stage N must complete before stage N+1 can begin. Viewing the Spark UI's DAG visualization shows how many stages your job has and where the shuffle boundaries occur.
+
+## Spark Operator on Kubernetes
+
+Running Spark on **Kubernetes** using the **Spark Operator** has become the standard deployment model for cloud-native data platforms. Instead of provisioning a permanent Spark cluster (which sits idle between jobs and complicates resource management), Spark Operator allows you to submit Spark jobs as Kubernetes workloads that dynamically request resources, run, and terminate.
+
+The **SparkApplication CRD (Custom Resource Definition)** defines a Spark job as a Kubernetes manifest:
+
+<CodeBlock code={`apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: hourly-revenue-aggregation
+  namespace: data-pipelines
+spec:
+  type: Python
+  mode: cluster
+  image: "docker.io/my-org/spark-pyspark:3.5.0"
+  imagePullPolicy: Always
+  mainApplicationFile: "s3a://pipelines/event_aggregation_pipeline.py"
+  sparkVersion: "3.5.0"
+  
+  driver:
+    cores: 1
+    memory: "2g"
+    serviceAccount: spark-driver
+    labels:
+      version: "3.5.0"
+    env:
+      - name: AWS_REGION
+        value: "us-east-1"
+  
+  executor:
+    cores: 4
+    instances: 10
+    memory: "16g"
+    labels:
+      version: "3.5.0"
+    env:
+      - name: AWS_REGION
+        value: "us-east-1"
+  
+  dynamicAllocation:
+    enabled: true
+    initialExecutors: 5
+    minExecutors: 3
+    maxExecutors: 20
+  
+  sparkConf:
+    "spark.sql.extensions": "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions"
+    "spark.sql.catalog.lakehouse": "org.apache.iceberg.spark.SparkCatalog"
+    "spark.sql.catalog.lakehouse.type": "hadoop"
+    "spark.sql.catalog.lakehouse.warehouse": "s3a://lakehouse/warehouse"
+    "spark.hadoop.fs.s3a.endpoint": "http://minio.storage.svc.cluster.local:9000"
+    "spark.hadoop.fs.s3a.access.key": "AKIAIOSFODNN7EXAMPLE"
+    "spark.hadoop.fs.s3a.secret.key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    "spark.hadoop.fs.s3a.path.style.access": "true"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+  
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 3
+    onFailureRetryInterval: 10
+`} language="yaml" filename="spark-application.yaml" />
+
+Key benefits of this approach:
+
+**Resource isolation:** Each Spark job runs in its own set of pods, preventing resource contention between jobs.
+
+**Dynamic allocation:** Executors scale up during peak stages (e.g., shuffle-heavy joins) and scale down afterward, optimizing cluster utilization.
+
+**Integration with cloud storage:** Spark reads and writes directly to S3, MinIO, or other object storage, eliminating the need for HDFS.
+
+**RBAC and security:** Kubernetes service accounts control access to storage, secrets, and other cluster resources.
+
+**Observability:** Spark logs and metrics integrate with Kubernetes monitoring tools (Prometheus, Grafana, ELK stack).
+
+## Reading from Multiple Sources
+
+One of Spark's strengths is its ability to read from diverse data sources with a unified API. Common sources include:
+
+**Parquet files:** Columnar storage format optimized for analytics. Supports predicate pushdown and projection pruning.
+
+```python
+df = spark.read.parquet("s3a://data-lake/events/*.parquet")
+```
+
+**Iceberg tables:** Lakehouse table format with ACID transactions, schema evolution, and time travel.
+
+```python
+df = spark.read.table("lakehouse.analytics.events")
+```
+
+**JDBC (relational databases):** Read from PostgreSQL, MySQL, Oracle, etc. Use partition columns to parallelize reads.
+
+```python
+df = spark.read.jdbc(
+    url="jdbc:postgresql://db.example.com:5432/warehouse",
+    table="customers",
+    properties={"user": "spark", "password": "secret"},
+    column="customer_id",
+    lowerBound=1,
+    upperBound=1000000,
+    numPartitions=100
+)
+```
+
+**Kafka:** Read streaming data in batch mode (process a specific offset range).
+
+```python
+df = spark.read \\
+    .format("kafka") \\
+    .option("kafka.bootstrap.servers", "kafka:9092") \\
+    .option("subscribe", "events") \\
+    .option("startingOffsets", "earliest") \\
+    .option("endingOffsets", "latest") \\
+    .load()
+```
+
+**CSV, JSON, Avro, ORC:** Built-in readers for common formats. CSV and JSON are slow (row-based, text parsing); prefer Parquet or Avro for large datasets.
+
+The choice of source format impacts performance dramatically. Parquet and Iceberg enable column pruning and predicate pushdown (only read relevant columns and rows), while CSV forces full file scans.
+
+## Common Transformations: Joins, Aggregations, Windows
+
+Spark's DataFrame API supports the full range of SQL transformations. Three patterns dominate production pipelines:
+
+**Joins:** Combine datasets on a shared key. Spark supports inner, left, right, full outer, cross, and anti joins.
+
+```python
+users_df = spark.read.table("lakehouse.analytics.users")
+purchases_df = spark.read.table("lakehouse.analytics.purchases")
+
+enriched_purchases = purchases_df.join(
+    users_df,
+    on="user_id",
+    how="left"
+)
+```
+
+Joins trigger shuffles (both datasets are redistributed by the join key). For small dimension tables, use **broadcast joins** to avoid shuffling the large fact table:
+
+```python
+from pyspark.sql.functions import broadcast
+
+enriched_purchases = purchases_df.join(
+    broadcast(users_df),
+    on="user_id",
+    how="left"
+)
+```
+
+**Aggregations:** Group rows by key and compute aggregate functions (sum, count, avg, min, max).
+
+```python
+from pyspark.sql.functions import sum, count, avg
+
+daily_metrics = purchases_df \\
+    .groupBy("purchase_date", "product_id") \\
+    .agg(
+        sum("amount").alias("total_revenue"),
+        count("*").alias("purchase_count"),
+        avg("amount").alias("avg_order_value")
+    )
+```
+
+**Window functions:** Compute aggregates over a sliding window of rows without collapsing groups (similar to SQL window functions like `ROW_NUMBER()`, `RANK()`, `LAG()`, `LEAD()`).
+
+```python
+from pyspark.sql.window import Window
+from pyspark.sql.functions import row_number, lag
+
+window_spec = Window.partitionBy("user_id").orderBy(col("purchase_date").desc())
+
+recent_purchases = purchases_df \\
+    .withColumn("rank", row_number().over(window_spec)) \\
+    .filter(col("rank") <= 5)
+```
+
+## Writing to Lakehouse: Iceberg Tables
+
+After transforming data, write results to the **lakehouse** for downstream analytics and reporting. **Apache Iceberg** is the preferred table format because it provides:
+
+- **ACID transactions:** Writes are atomic; readers never see partial updates.
+- **Schema evolution:** Add or rename columns without rewriting existing data.
+- **Time travel:** Query historical versions of the table (e.g., "show me yesterday's data").
+- **Partition evolution:** Change partitioning scheme without migrating data.
+- **Snapshot isolation:** Multiple writers can append data concurrently without conflicts.
+
+Writing to Iceberg from Spark:
+
+```python
+hourly_revenue.writeTo("lakehouse.analytics.hourly_revenue") \\
+    .using("iceberg") \\
+    .tableProperty("write.format.default", "parquet") \\
+    .partitionedBy("event_date") \\
+    .createOrReplace()
+```
+
+Iceberg stores metadata separately from data files, allowing it to track which files belong to which table version. This enables fast snapshot creation (no data copying) and efficient time-travel queries.
+
+## Failure Mode 1: Data Skew
+
+**Data skew** occurs when one or a few partitions contain vastly more data than others. This causes a small number of tasks to run much longer than the rest, bottlenecking the entire stage (since all tasks in a stage must complete before the next stage begins).
+
+Symptoms:
+- Spark UI shows one or two tasks taking 10x–100x longer than others.
+- Out-of-memory errors on specific executors.
+- High GC (garbage collection) time on lagging tasks.
+
+Common causes:
+- **Skewed join keys:** Joining on a column where one key (e.g., `user_id = NULL` or a popular product) has millions of rows while others have dozens.
+- **Skewed group-by keys:** Aggregating by a column with hot keys (e.g., counting events by `country_code`, where one country dominates).
+- **Uneven partition boundaries:** Reading data partitioned by date when recent dates have 10x more data than older dates.
+
+<MermaidDiagram chart={`flowchart TD
+    Detect["Detect Skew<br/>(Spark UI: task duration variance)"]
+    Identify["Identify Skewed Keys<br/>(compute key frequencies)"]
+    Decide{Skew Type?}
+    
+    Detect --> Identify
+    Identify --> Decide
+    
+    Decide -->|Join Skew| SaltJoin["Salted Join:<br/>replicate small table,<br/>add random salt to large table"]
+    Decide -->|GroupBy Skew| TwoStage["Two-Stage Aggregation:<br/>pre-aggregate with salt,<br/>final aggregate without salt"]
+    Decide -->|Partition Skew| Repartition["Repartition by Composite Key<br/>(e.g., date + hash(id))"]
+    
+    SaltJoin --> Validate["Validate: Check Task Duration Distribution"]
+    TwoStage --> Validate
+    Repartition --> Validate
+    
+    style Detect fill:#fef3c7,stroke:#f59e0b
+    style Identify fill:#fef3c7,stroke:#f59e0b
+    style SaltJoin fill:#d1fae5,stroke:#10b981
+    style TwoStage fill:#d1fae5,stroke:#10b981
+    style Repartition fill:#d1fae5,stroke:#10b981
+    style Validate fill:#dbeafe,stroke:#3b82f6
+`} />
+
+Mitigation strategies:
+
+**Salted joins:** Add a random "salt" column to the skewed key to spread hot keys across multiple partitions, then perform the join multiple times (once per salt value) and union the results.
+
+**Two-stage aggregation:** First aggregate with a salted key to distribute load, then re-aggregate on the true key.
+
+**Adaptive query execution (AQE):** Enable `spark.sql.adaptive.enabled=true` to let Spark detect skew at runtime and dynamically adjust partition counts.
+
+Data skew is the most common cause of Spark job failures in production. Always inspect the Spark UI after a failed job to check task duration variance.
+
+## Failure Mode 2: Small File Problem
+
+The **small file problem** arises when a dataset consists of thousands or millions of small files (each under 10–50 MB). Reading many small files incurs significant overhead:
+
+- **Metadata operations:** Each file requires a separate API call to object storage (list, open, read metadata).
+- **Task overhead:** Spark creates one task per file by default, leading to thousands of tiny tasks that spend more time scheduling and initializing than processing data.
+- **Reduced parallelism:** If you have 10,000 files but only 100 executor cores, tasks run sequentially in 100 batches — each batch has high startup cost.
+
+This problem is common when writing Spark output without coalescing partitions:
+
+```python
+# Bad: creates one file per partition (potentially thousands)
+df.write.parquet("s3a://output/data/")
+
+# Good: coalesce to a reasonable number of files before writing
+df.coalesce(10).write.parquet("s3a://output/data/")
+```
+
+For Iceberg tables, enable **file compaction** to merge small files into larger ones in the background:
+
+```sql
+-- Compact small files in Iceberg table
+CALL lakehouse.system.rewrite_data_files(
+    table => 'analytics.hourly_revenue',
+    strategy => 'binpack',
+    options => map('target-file-size-bytes', '536870912')  -- 512 MB
+);
+```
+
+When reading small files, use `spark.sql.files.maxPartitionBytes` to control how many files are read per task (Spark will group multiple small files into one task).
+
+## Failure Mode 3: Shuffle Amplification
+
+**Shuffle amplification** occurs when unnecessary shuffles are introduced due to suboptimal query plans. Each shuffle writes and reads intermediate data, consuming disk I/O, network bandwidth, and memory.
+
+Common causes:
+
+**Repeated shuffles on the same key:** Joining the same two tables multiple times or performing multiple aggregations without caching intermediate results.
+
+```python
+# Bad: joins the same tables twice, triggering two shuffles
+result1 = large_df.join(small_df, on="key")
+result2 = large_df.join(small_df, on="key").filter(col("status") == "active")
+
+# Good: cache the join result and filter afterward
+joined = large_df.join(small_df, on="key").cache()
+result1 = joined
+result2 = joined.filter(col("status") == "active")
+```
+
+**Wide transformations before narrow ones:** Performing a shuffle (e.g., groupBy) before filtering rows.
+
+```python
+# Bad: groups first, then filters (shuffles all data, even rows that will be filtered)
+df.groupBy("category").count().filter(col("count") > 100)
+
+# Good: filter first, then group (only shuffles relevant rows)
+df.filter(col("count") > 100).groupBy("category").count()
+```
+
+**Broadcast join missed:** Spark fails to detect that a small table can be broadcast, forcing a shuffle join instead.
+
+Enable **Adaptive Query Execution (AQE)** to let Spark dynamically convert shuffle joins to broadcast joins when it detects a small table at runtime:
+
+```python
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.autoBroadcastJoinThreshold", "10MB")
+```
+
+## Failure Mode 4: Failed and Backfilled Jobs
+
+Batch pipelines fail for many reasons: upstream data delay, schema changes, resource exhaustion, transient network errors. The critical question is: **how do you recover without reprocessing the entire history or losing a day's data?**
+
+**Idempotent writes:** Design pipelines so that re-running a job for the same input produces the same output and does not create duplicates. Use Iceberg's ACID writes or upsert patterns (merge-on-read).
+
+**Partition-level backfills:** If a job fails for one day, reprocess only that day's partition (not the entire month). Structure your data lake with daily partitions and make your Spark jobs partition-aware:
+
+```python
+# Read only the failed partition
+events_df = spark.read.parquet("s3a://raw-events/2026-06-18/*.parquet")
+
+# Write to the same partition (overwrite mode)
+result_df.write \\
+    .mode("overwrite") \\
+    .partitionBy("event_date") \\
+    .parquet("s3a://processed-events/")
+```
+
+**Checkpointing for long pipelines:** For multi-hour jobs, write intermediate results to storage and checkpoint progress. If the job fails, restart from the last checkpoint instead of the beginning.
+
+**Monitoring and alerting:** Track job execution time, data volume processed, and error rates. Alert when a job exceeds expected SLA or processes anomalously low data (which may indicate upstream failure).
+
+**Backfill automation:** Build tooling to trigger backfills automatically when a job fails, parameterized by date range. Use orchestrators like Airflow, Dagster, or Argo Workflows to manage dependencies and retries.
+
+## AI Cross-Cut: Embedding Generation and Dataset Preparation
+
+Spark is widely used in AI/ML pipelines for two critical batch workloads:
+
+**Embedding generation at scale:** Convert millions of text documents, images, or user behavior sequences into vector embeddings for retrieval-augmented generation (RAG) or recommendation systems.
+
+```python
+from pyspark.sql.functions import udf
+from pyspark.sql.types import ArrayType, FloatType
+
+# UDF calls a pre-trained embedding model (e.g., Sentence Transformers)
+@udf(returnType=ArrayType(FloatType()))
+def generate_embedding(text):
+    # In production, load the model once per executor (use broadcast or model server)
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer('all-MiniLM-L6-v2')
+    return model.encode(text).tolist()
+
+documents_df = spark.read.table("lakehouse.content.documents")
+embeddings_df = documents_df.withColumn("embedding", generate_embedding(col("content")))
+embeddings_df.write.mode("overwrite").table("lakehouse.embeddings.document_vectors")
+```
+
+For large-scale embedding generation, distribute the model to executors using Spark's broadcast variables or call a remote model server (e.g., Triton Inference Server) to avoid loading the model on every executor.
+
+**Dataset preparation for ML training:** Clean, deduplicate, tokenize, and filter datasets before training large language models or vision models.
+
+Common tasks:
+- **Deduplication:** Remove exact or near-duplicate examples (important for LLM training to avoid overfitting).
+- **Filtering:** Remove low-quality examples (e.g., documents with high perplexity, images with low resolution).
+- **Tokenization:** Convert text into token IDs for transformer models (use Spark UDFs calling HuggingFace tokenizers).
+- **Sampling:** Downsample overrepresented categories or create stratified training splits.
+
+Spark's distributed processing makes it possible to prepare datasets with billions of examples — a scale where single-machine tools fail.
+
+## When to Use Spark vs. Alternatives
+
+Spark is not always the right tool. Consider alternatives when:
+
+**Small data (< 1 GB):** Use pandas, DuckDB, or Polars — they are faster for small datasets because they avoid distributed coordination overhead.
+
+**Streaming-first workloads:** Use Flink or native Kafka Streams if your primary requirement is low-latency stream processing. Spark Structured Streaming is capable but optimized for micro-batch processing (not sub-second latency).
+
+**SQL-only transformations on a data warehouse:** If your transformations are pure SQL and you already have a data warehouse (BigQuery, Snowflake, Redshift), use the warehouse's native SQL engine instead of Spark — it's faster and simpler.
+
+**Simple ETL without complex joins or aggregations:** Use orchestrator-native transforms (dbt for SQL, Airflow's Pandas operators, etc.).
+
+Use Spark when:
+- You need to process terabytes of data daily.
+- You have complex multi-way joins, window functions, or custom UDFs.
+- You need to integrate multiple data sources (object storage, databases, Kafka).
+- You're preparing large-scale training datasets for machine learning.
+
+## Summary
+
+Apache Spark provides a distributed computing framework for large-scale batch transformations, combining a unified DataFrame API with sophisticated query optimization. Deploying Spark on Kubernetes via the Spark Operator enables elastic resource management, integration with cloud storage, and observability through standard Kubernetes tooling. Writing to Iceberg tables adds ACID guarantees, schema evolution, and time-travel capabilities to your lakehouse.
+
+Production Spark pipelines fail due to predictable causes: data skew (uneven partition sizes causing task stragglers), small file proliferation (metadata overhead and poor parallelism), shuffle amplification (unnecessary data redistribution), and failed job recovery (lack of idempotency and backfill automation). Recognizing and preventing these failure modes distinguishes working pipelines from fragile ones.
+
+In the next lesson, we will explore real-time stream processing with Apache Flink, comparing its event-time semantics, stateful operators, and low-latency guarantees with Spark's micro-batch model.

@@ -1,0 +1,475 @@
+---
+title: "Feature Stores with Feast"
+quiz:
+  - question: "What is the primary purpose of Feast's offline store?"
+    options:
+      - "To serve features to production inference code"
+      - "To store historical features for model training (correct)"
+      - "To cache feature computations during development"
+      - "To manage feature metadata and schemas"
+    correctIndex: 1
+  - question: "What does Feast materialization do?"
+    options:
+      - "Validates feature data for quality issues"
+      - "Converts features to numeric representations"
+      - "Copies feature values from offline store to online store (correct)"
+      - "Compresses feature data for storage efficiency"
+    correctIndex: 2
+  - question: "Compared to Tecton, Feast is best suited for:"
+    options:
+      - "Fully managed enterprise feature platforms"
+      - "Real-time streaming-only use cases"
+      - "Graph-based feature exploration"
+      - "Open-source, self-managed deployments (correct)"
+    correctIndex: 3
+---
+
+## The Problem: Ad-Hoc Feature Serving
+
+You've built a feature pipeline (Lesson 2) that generates engineered features for training. You train a model, evaluate it on historical data, and achieve 92% accuracy. You deploy the model to production and write inference code that replicates your feature engineering logic. Within a week, you notice:
+
+- **Prediction latency spikes** — your inference service computes features from scratch on every request, joining across multiple tables and calculating rolling aggregations
+- **Online/offline skew** — production predictions drift from training results because the inference code reimplements feature logic differently than the training pipeline
+- **Cold-start failures** — new users or entities have no precomputed features, causing inference to fall back to default values or fail entirely
+- **Stale features** — batch feature updates run every 12 hours, so the model serves features that are half a day old during peak traffic
+
+The root cause: **features are produced once for training, then reimplemented manually for inference**. Without a shared serving layer, every model deployment becomes a separate engineering project.
+
+A **feature store** solves this by centralizing feature storage and serving. It provides two data paths:
+
+1. **Offline store** — historical feature retrieval for training datasets (batch reads from data warehouses or object storage)
+2. **Online store** — low-latency feature serving for inference (sub-10ms reads from in-memory or key-value stores)
+
+A **materialization pipeline** keeps the online store in sync with the offline store, running on a schedule (hourly, daily) or triggered by upstream data arrival.
+
+## Feast as the Open-Source Reference
+
+**Feast** (Feature Store) is the most widely adopted open-source feature store, originally developed at Gojek and now a Linux Foundation project. It follows the **offline/online dual-store pattern** and runs as a self-managed service, typically deployed on Kubernetes.
+
+### Feast Architecture
+
+<MermaidDiagram chart={`graph LR
+    subgraph Sources["Data Sources"]
+        BQ[BigQuery]
+        PG[PostgreSQL]
+        S3[S3 / Parquet]
+    end
+    
+    subgraph Feast["Feast Core"]
+        Registry[Feature Registry]
+        OfflineStore[Offline Store<br/>BigQuery/Snowflake/Spark]
+        OnlineStore[Online Store<br/>Redis/DynamoDB/Firestore]
+        MaterializationEngine[Materialization Engine]
+    end
+    
+    subgraph Consumers["Feature Consumers"]
+        Training[Training Pipeline]
+        Inference[Inference Service]
+    end
+    
+    BQ --> OfflineStore
+    PG --> OfflineStore
+    S3 --> OfflineStore
+    
+    OfflineStore -->|Batch reads| Training
+    OfflineStore -->|Scheduled job| MaterializationEngine
+    MaterializationEngine -->|Write precomputed features| OnlineStore
+    OnlineStore -->|Low-latency reads| Inference
+    
+    Registry -.->|Feature definitions| OfflineStore
+    Registry -.->|Feature definitions| OnlineStore
+    
+    style Sources fill:#f9f9f9,stroke:#999
+    style Feast fill:#e3f2fd,stroke:#1976d2
+    style Consumers fill:#fff3e0,stroke:#f57c00
+`} />
+
+**Components:**
+
+- **Feature Registry** — YAML or SQL-backed catalog of feature definitions, sources, and metadata. Versioned and shared across all Feast clients.
+- **Offline Store** — adapter layer that reads from batch data sources (BigQuery, Snowflake, Redshift, Spark). Used for historical feature retrieval when building training datasets.
+- **Online Store** — adapter layer that writes to low-latency key-value stores (Redis, DynamoDB, Firestore). Used for real-time feature serving during inference.
+- **Materialization Engine** — scheduled job that queries the offline store, computes the latest feature values, and writes them to the online store. Runs as a Kubernetes CronJob or Airflow DAG.
+
+### Defining Features in Feast
+
+Features are defined in Python using Feast's SDK. A **feature view** declares a set of features, their source, and their entity key (the join key used to look up features).
+
+<CodeBlock code={`from feast import FeatureView, Entity, Field
+from feast.types import Float32, Int64
+from feast.data_source import BigQuerySource
+from datetime import timedelta
+
+# Define the entity (primary key for feature lookups)
+user = Entity(
+    name="user_id",
+    description="User identifier",
+)
+
+# Define the data source
+user_features_source = BigQuerySource(
+    table="analytics.user_features",
+    timestamp_field="event_timestamp",
+)
+
+# Define the feature view
+user_activity_features = FeatureView(
+    name="user_activity_features",
+    entities=[user],
+    ttl=timedelta(days=7),  # Features expire after 7 days
+    schema=[
+        Field(name="total_purchases", dtype=Int64),
+        Field(name="avg_session_duration_minutes", dtype=Float32),
+        Field(name="days_since_last_login", dtype=Int64),
+    ],
+    source=user_features_source,
+)
+`} language="python" filename="feature_repo/features.py" />
+
+**Key concepts:**
+
+- **Entity** — the primary key used to retrieve features (e.g., `user_id`, `product_id`, `session_id`)
+- **Feature View** — a logical grouping of features that share the same entity and source
+- **TTL (time-to-live)** — defines how long features remain valid in the online store before they are considered stale
+- **Timestamp field** — the event timestamp used for point-in-time correct joins when retrieving historical features
+
+Once defined, you register the feature view with Feast:
+
+```bash
+feast apply
+```
+
+This updates the feature registry and configures the offline/online stores to recognize the new features.
+
+### Feature Serving: Offline vs Online
+
+<MermaidDiagram chart={`sequenceDiagram
+    participant TrainingPipeline
+    participant OfflineStore
+    participant MaterializationJob
+    participant OnlineStore
+    participant InferenceService
+    
+    Note over TrainingPipeline,OfflineStore: Historical Feature Retrieval (Training)
+    TrainingPipeline->>OfflineStore: get_historical_features(entity_df, features)
+    OfflineStore->>OfflineStore: Point-in-time correct join
+    OfflineStore-->>TrainingPipeline: Historical feature DataFrame
+    
+    Note over MaterializationJob,OnlineStore: Materialization (Batch Sync)
+    MaterializationJob->>OfflineStore: Query latest feature values
+    OfflineStore-->>MaterializationJob: Latest features per entity
+    MaterializationJob->>OnlineStore: Write precomputed features
+    
+    Note over InferenceService,OnlineStore: Real-Time Serving (Inference)
+    InferenceService->>OnlineStore: get_online_features(user_id=12345)
+    OnlineStore-->>InferenceService: {total_purchases: 42, avg_session_duration: 18.5}
+    InferenceService->>InferenceService: Run model inference
+`} />
+
+**Offline retrieval (training):**
+
+```python
+from feast import FeatureStore
+import pandas as pd
+
+store = FeatureStore(repo_path=".")
+
+# Entity DataFrame: which entities and timestamps to retrieve features for
+entity_df = pd.DataFrame({
+    "user_id": [101, 102, 103],
+    "event_timestamp": [
+        "2026-06-01 10:00:00",
+        "2026-06-02 14:30:00",
+        "2026-06-03 08:15:00",
+    ]
+})
+
+# Retrieve historical features with point-in-time correctness
+training_df = store.get_historical_features(
+    entity_df=entity_df,
+    features=["user_activity_features:total_purchases",
+              "user_activity_features:avg_session_duration_minutes"]
+).to_df()
+```
+
+This performs a **point-in-time correct join**: for each entity at each timestamp, Feast retrieves the feature values that were valid *at that moment in time*. This prevents **data leakage** where future feature values contaminate historical training examples.
+
+**Online retrieval (inference):**
+
+```python
+features = store.get_online_features(
+    features=["user_activity_features:total_purchases",
+              "user_activity_features:avg_session_duration_minutes"],
+    entity_rows=[{"user_id": 12345}]
+).to_dict()
+
+# Output: {'user_id': [12345], 'total_purchases': [42], 'avg_session_duration_minutes': [18.5]}
+```
+
+This reads precomputed feature values from the online store (e.g., Redis). Latency is typically 1-5ms for in-memory stores.
+
+### Materialization: Keeping Online Features Fresh
+
+The materialization pipeline runs on a schedule and copies the latest feature values from the offline store to the online store.
+
+**Manual materialization:**
+
+```bash
+feast materialize-incremental $(date -u +"%Y-%m-%dT%H:%M:%S")
+```
+
+This queries the offline store for all feature values between the last materialization timestamp and now, then writes them to the online store.
+
+**Scheduled materialization (Kubernetes CronJob):**
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: feast-materialization
+spec:
+  schedule: "0 * * * *"  # Every hour
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: feast-materialize
+            image: feastdev/feature-server:latest
+            command:
+            - feast
+            - materialize-incremental
+            - $(date -u +"%Y-%m-%dT%H:%M:%S")
+```
+
+**Push sources** — Feast also supports **push-based** feature updates, where upstream services write feature values directly to the online store via Feast's gRPC API. This is useful for streaming features that change more frequently than the materialization schedule.
+
+### Feature Services: Grouping Features for Models
+
+A **feature service** is a named collection of features that a model consumes. It simplifies retrieval by allowing you to reference a single service name instead of listing individual features.
+
+```python
+from feast import FeatureService
+
+recommendation_features = FeatureService(
+    name="recommendation_v1",
+    features=[
+        "user_activity_features:total_purchases",
+        "user_activity_features:avg_session_duration_minutes",
+        "product_features:avg_rating",
+        "product_features:total_reviews",
+    ]
+)
+```
+
+At inference time:
+
+```python
+features = store.get_online_features(
+    features=recommendation_features,
+    entity_rows=[{"user_id": 12345, "product_id": 678}]
+)
+```
+
+This decouples model code from individual feature definitions, making it easier to version and evolve feature sets.
+
+## Running Feast on Kubernetes
+
+Feast runs as three primary workloads:
+
+1. **Feature Server** — gRPC/HTTP API for online feature serving (horizontally scaled Deployment)
+2. **Materialization Job** — scheduled job that syncs offline → online (CronJob or Airflow DAG)
+3. **Feature Registry** — YAML files stored in a Git repo or SQL database (PostgreSQL, MySQL)
+
+**Deployment steps:**
+
+1. Define features in `feature_repo/features.py`
+2. Apply the feature definitions: `feast apply`
+3. Deploy the feature server: `kubectl apply -f feast-server-deployment.yaml`
+4. Schedule materialization: `kubectl apply -f feast-materialization-cronjob.yaml`
+5. Configure clients to point to the feature server endpoint
+
+**Offline store options:** BigQuery, Snowflake, Redshift, Spark, file-based (Parquet)
+
+**Online store options:** Redis, DynamoDB, Firestore, Cassandra, PostgreSQL
+
+Most deployments use **Redis** for the online store due to its low latency and high throughput.
+
+## Comparison: Feast vs Tecton vs Platform-Native
+
+### Feast (Open-Source, Self-Managed)
+
+**Strengths:**
+- Free and open-source
+- Full control over deployment and configuration
+- Active community and plugin ecosystem
+- Works with any cloud or on-premises infrastructure
+
+**Weaknesses:**
+- Requires operational expertise (Kubernetes, Redis, scheduling)
+- No built-in monitoring or alerting (you wire Prometheus/Grafana yourself)
+- Limited support for streaming transformations (batch-oriented)
+- Manual schema migration and versioning
+
+**Best for:** teams with Kubernetes expertise who want to avoid vendor lock-in, or organizations with strict data residency requirements.
+
+### Tecton (Managed, Enterprise)
+
+**Tecton** is a fully managed feature platform built by the original creators of Uber's Michelangelo. It extends the Feast model with **real-time streaming transformations**, **feature monitoring**, and **enterprise governance**.
+
+**Strengths:**
+- Managed infrastructure (no Kubernetes ops)
+- Built-in monitoring: feature drift detection, data quality checks, serving latency dashboards
+- Real-time feature transformations using Flink or Spark Streaming
+- Advanced versioning and rollback for feature definitions
+- Enterprise support and SLAs
+
+**Weaknesses:**
+- Expensive (pricing based on feature volume and compute)
+- Vendor lock-in (migration to another platform requires rewriting feature definitions)
+- Less control over underlying infrastructure
+
+**Best for:** enterprise teams that want a turnkey solution and can afford the premium, or teams building real-time ML systems where streaming transformations are critical.
+
+### Platform-Native Feature Stores
+
+**Vertex AI Feature Store (Google Cloud):**
+- Tightly integrated with BigQuery, Dataflow, and Vertex AI Pipelines
+- Managed online serving with Bigtable backend
+- Point-in-time correct joins and feature monitoring
+- Best for GCP-native ML stacks
+
+**SageMaker Feature Store (AWS):**
+- Integrates with S3, Glue, and SageMaker Pipelines
+- Offline store (S3) and online store (DynamoDB)
+- Feature groups with versioning and lineage tracking
+- Best for AWS-native ML stacks
+
+**Azure Machine Learning Feature Store:**
+- Built on Azure Synapse and Cosmos DB
+- Materialization via Azure Data Factory
+- Best for Azure-native ML stacks
+
+**Tradeoffs of platform-native stores:**
+- **Pros:** No infrastructure to manage, seamless integration with platform ML services, built-in monitoring
+- **Cons:** Vendor lock-in, limited offline store options (often restricted to the platform's data warehouse), less community support than Feast
+
+### Decision Framework
+
+| Requirement | Feast | Tecton | Vertex AI | SageMaker |
+|------------|-------|--------|-----------|-----------|
+| **Cost sensitivity** | <span class="vs-good">Free (self-hosted)</span> | <span class="vs-bad">High (managed)</span> | <span class="vs-neutral">Moderate (pay-per-use)</span> | <span class="vs-neutral">Moderate (pay-per-use)</span> |
+| **Kubernetes expertise** | <span class="vs-bad">Required</span> | <span class="vs-good">Not needed</span> | <span class="vs-good">Not needed</span> | <span class="vs-good">Not needed</span> |
+| **Multi-cloud** | <span class="vs-good">Yes</span> | <span class="vs-good">Yes</span> | <span class="vs-bad">GCP only</span> | <span class="vs-bad">AWS only</span> |
+| **Streaming features** | <span class="vs-bad">Limited</span> | <span class="vs-good">Native support</span> | <span class="vs-neutral">Via Dataflow</span> | <span class="vs-neutral">Via Kinesis</span> |
+| **Monitoring & alerting** | <span class="vs-bad">DIY</span> | <span class="vs-good">Built-in</span> | <span class="vs-neutral">Basic</span> | <span class="vs-neutral">Basic</span> |
+| **Community & plugins** | <span class="vs-good">Large</span> | <span class="vs-neutral">Growing</span> | <span class="vs-neutral">GCP ecosystem</span> | <span class="vs-neutral">AWS ecosystem</span> |
+
+**Rule of thumb:**
+- **Use Feast** if you have Kubernetes expertise, want to avoid vendor lock-in, or need multi-cloud support
+- **Use Tecton** if you need real-time streaming features, enterprise monitoring, and can afford the premium
+- **Use platform-native** (Vertex AI, SageMaker) if you're already all-in on that cloud and want zero infrastructure overhead
+
+## Failure Modes and Mitigations
+
+### 1. Materialization Lag Causing Stale Online Features
+
+**Symptom:** Online features are hours or days behind the offline store, causing models to serve outdated predictions.
+
+**Root causes:**
+- Materialization job runs infrequently (e.g., once per day)
+- Materialization job takes too long to complete (queries the offline store for millions of entities)
+- Materialization job fails silently and no alert fires
+
+**Detection:**
+- Monitor the `feast_materialization_lag_seconds` metric (time between now and the latest materialized timestamp)
+- Set alerts when lag exceeds your SLA (e.g., > 2 hours for hourly materialization)
+
+**Mitigations:**
+- Run materialization more frequently (every 15-30 minutes instead of hourly)
+- Partition materialization by entity ranges (shard the workload across parallel jobs)
+- Use push sources for high-frequency features (write directly to the online store instead of waiting for batch materialization)
+- Implement dead-letter queues for failed materialization jobs
+
+### 2. Online/Offline Skew
+
+**Symptom:** Model predictions in production differ from offline evaluation, even when using the same feature definitions.
+
+**Root causes:**
+- Different preprocessing logic in training vs inference code (e.g., handling nulls differently)
+- Time zone mismatches when querying the offline store vs the online store
+- Rounding or precision differences between BigQuery (offline) and Redis (online)
+
+**Detection:**
+- Log feature values at inference time and compare distributions to training data
+- Run **online/offline consistency checks**: retrieve the same entity+timestamp from both stores and assert feature values match
+
+**Mitigations:**
+- Use Feast's `get_historical_features()` for training and `get_online_features()` for inference — this ensures identical retrieval logic
+- Run nightly consistency checks as part of your CI/CD pipeline
+- Document feature transformation logic in the feature registry (not just in code comments)
+
+### 3. Registry Drift
+
+**Symptom:** Feature definitions on disk (Python files) diverge from the registry (YAML or SQL), causing clients to retrieve incorrect or missing features.
+
+**Root causes:**
+- Developers modify `features.py` but forget to run `feast apply`
+- Multiple teams push conflicting feature definitions without coordination
+- Registry stored in Git but not versioned or reviewed
+
+**Detection:**
+- Run `feast registry-check` in CI to validate that local definitions match the registry
+- Use Git pre-commit hooks to enforce `feast apply` before committing
+
+**Mitigations:**
+- Treat the feature registry as infrastructure-as-code: require pull requests and code review
+- Automate `feast apply` in your CI/CD pipeline after merging
+- Use a SQL-backed registry (PostgreSQL) instead of YAML files for better concurrency control
+
+### 4. Cold-Start with Missing Values
+
+**Symptom:** New users or entities have no precomputed features in the online store, causing inference to fail or fall back to default values.
+
+**Root causes:**
+- Materialization job only computes features for entities that exist in the offline store at materialization time
+- New entities appear in production before the next materialization run
+
+**Detection:**
+- Monitor the online store for cache misses (requests for entity keys that don't exist)
+- Log warnings when inference code receives null feature values
+
+**Mitigations:**
+- Use **default values** in feature definitions (Feast supports this via `Field(default=0)`)
+- Implement **on-demand feature computation**: if a feature is missing, compute it synchronously at inference time and write it back to the online store
+- Use push sources to write features for new entities immediately after they are created
+- Run micro-batch materialization every 5-10 minutes to reduce the cold-start window
+
+### 5. Online Store Capacity Limits
+
+**Symptom:** Online store (Redis, DynamoDB) runs out of memory or throttles requests during peak traffic.
+
+**Root causes:**
+- Feature TTL is too long, causing the online store to accumulate stale entities
+- Too many feature views with overlapping entity keys
+- Materialization job writes faster than the online store can handle
+
+**Detection:**
+- Monitor online store memory usage and eviction rate
+- Track materialization write throughput and latency
+
+**Mitigations:**
+- Reduce feature TTL to evict stale entities more aggressively
+- Use Redis Cluster or DynamoDB auto-scaling to increase capacity
+- Batch materialization writes (write in chunks of 1000 entities instead of one at a time)
+- Archive cold entities (entities not accessed in 30+ days) to offline storage
+
+## Summary
+
+A **feature store** decouples feature production from feature serving, eliminating the need to reimplement feature engineering logic for inference. **Feast** provides the open-source reference architecture: an offline store for training, an online store for inference, and a materialization pipeline to keep them in sync.
+
+**Feast** is best for teams with Kubernetes expertise who want full control and no vendor lock-in. **Tecton** offers a managed alternative with real-time streaming transformations and enterprise monitoring, at a premium cost. **Platform-native stores** (Vertex AI, SageMaker) provide zero-infrastructure overhead but tie you to a single cloud provider.
+
+Common failure modes include **materialization lag** (stale online features), **online/offline skew** (training/inference mismatch), **registry drift** (untracked feature definition changes), and **cold-start issues** (missing features for new entities). Mitigations include more frequent materialization, consistency checks, registry-as-code, and on-demand feature computation.
+
+In Lesson 4, we'll cover **data validation and monitoring** with Great Expectations and Evidently AI, closing the loop on feature quality and drift detection.

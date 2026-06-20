@@ -1,0 +1,561 @@
+---
+title: "Object Storage & Data Lake Foundations"
+quiz:
+  - question: "What is the primary advantage of organizing a data lake using the medallion architecture (landing → bronze → silver → gold)?"
+    options:
+      - "It reduces storage costs by compressing data at each layer"
+      - "It enforces progressive data quality improvement from raw ingestion to business-ready datasets"
+      - "It automatically migrates data between hot, warm, and cold storage tiers"
+      - "It eliminates the need for data governance and access controls"
+    correctIndex: 1
+  - question: "When would MinIO be the preferred object storage solution over cloud-native options like S3 or GCS?"
+    options:
+      - "For all production workloads requiring high durability"
+      - "When building a proof-of-concept with less than 1TB of data"
+      - "For air-gapped environments, sovereignty requirements, or K8s-native labs"
+      - "When storing unstructured data like images and documents"
+    correctIndex: 2
+  - question: "What is the purpose of object versioning in a data lake?"
+    options:
+      - "To automatically compress older versions of objects"
+      - "To enable rollback after accidental deletion or corruption and support compliance audits"
+      - "To partition data by timestamp for faster query performance"
+      - "To replicate objects across multiple regions for disaster recovery"
+    correctIndex: 1
+---
+
+## Overview
+
+In Lesson 1, we explored the gravity that pulls data into centralized storage, the durability requirements that protect against loss, and the access patterns that determine how data is retrieved. We examined cost tiers—hot, warm, cold, archive—and how they map to usage frequency. We also considered the unique storage demands of AI workloads: massive volumes of embeddings, unstructured multimodal content, and rapid-access training datasets.
+
+This lesson builds on that foundation by introducing **object storage** as the architectural primitive for modern data platforms. Every data initiative—whether analytics, machine learning, or operational reporting—begins with object storage. Raw logs, CSVs, Parquet files, JSON exports, images, PDFs, audio files, video clips, and model artifacts all land in **S3-compatible object storage** first. This is the universal interface: AWS S3, Google Cloud Storage (with S3 compatibility), Azure Blob Storage (via S3 gateway), MinIO, Ceph, and others.
+
+We will cover how to organize object storage into a **data lake** using the **medallion architecture** (landing → bronze → silver → gold), how to automate data lifecycle transitions with **lifecycle policies**, how to store multimodal assets for AI pipelines, and when to use **MinIO** as a local or Kubernetes-native reference implementation versus cloud-native object storage in production.
+
+By the end of this lesson, you will understand:
+
+- Why S3-compatible object storage is the foundational layer for all data platforms
+- How to organize raw and processed data using medallion architecture
+- When to use MinIO versus cloud-native object storage (S3, GCS, Azure Blob)
+- How lifecycle policies automate tier transitions and expiration
+- How versioning and immutability protect data integrity and support compliance
+- How multimodal assets (images, PDFs, video) integrate into data lakes and feed AI workflows
+
+---
+
+## S3-Compatible Object Storage: The Universal Interface
+
+**Object storage** is fundamentally different from file systems or block storage. Instead of hierarchical directories or fixed-size blocks, object storage organizes data as **objects** within **buckets**. Each object consists of:
+
+1. **Data** — the actual file content (bytes)
+2. **Metadata** — key-value pairs describing the object (content type, encoding, custom tags)
+3. **Unique identifier** — a globally unique key within the bucket (often resembles a path: `landing/logs/2026/06/19/events.json`)
+
+The **S3 API** has become the de facto standard for object storage. Originally developed by Amazon Web Services, the S3 API is now supported by every major cloud provider and many self-hosted solutions. This universality is critical: write once to the S3 API, run anywhere.
+
+**Why object storage is the architectural primitive:**
+
+- **Scalability** — object storage scales horizontally to petabytes without reconfiguration. Add more nodes or leverage cloud elasticity.
+- **Durability** — cloud object storage delivers 11 nines of durability (99.999999999%) through automatic replication and erasure coding.
+- **Cost efficiency** — tiered storage pricing means you pay for what you use. Hot data costs more, cold data costs pennies per gigabyte-month.
+- **Simplicity** — no mounting, no partitions, no RAID arrays. HTTP-based API, stateless requests, globally accessible endpoints.
+- **Multimodal compatibility** — store structured CSV/Parquet alongside unstructured images, PDFs, audio, video, model checkpoints, embeddings.
+
+**Everything lands in object storage first.** Logs stream from applications into S3. Database exports land as Parquet files. PDFs uploaded by users are written to S3. Training datasets for machine learning models are staged in S3. Fine-tuned LLM weights are versioned in S3. Embeddings for RAG retrieval are persisted in S3 before being indexed into vector databases.
+
+Think of object storage as the **data lake substrate**—the foundational layer on which all other systems are built. Query engines like Trino, Presto, Spark, and DuckDB read directly from S3. Orchestrators like Airflow and Prefect write intermediate outputs to S3. Vector databases ingest embeddings from S3. BI tools query Iceberg/Delta tables stored on S3.
+
+The S3 API is the universal interface. Cloud providers abstract the complexity—replication, erasure coding, global distribution—behind a simple PUT/GET/DELETE API. Self-hosted implementations like MinIO replicate this interface for on-premises or Kubernetes environments.
+
+---
+
+## MinIO: Local and Kubernetes Reference Implementation
+
+**MinIO** is an open-source, S3-compatible object storage server designed for cloud-native environments. It implements the S3 API, making it a drop-in replacement for AWS S3 in development, testing, or production scenarios where cloud-native object storage is not suitable.
+
+**When to use MinIO:**
+
+1. **Local development** — run MinIO in Docker on your laptop. Develop against the S3 API locally, deploy to AWS S3 or GCS in production. No code changes required.
+2. **Kubernetes-native labs** — deploy MinIO as a StatefulSet in Kubernetes. Use it for experimentation, CI/CD testing, or ephemeral environments. Tear down and recreate clusters without cloud dependencies.
+3. **Air-gapped environments** — enterprises with strict network isolation deploy MinIO on-premises. No internet egress, no cloud dependencies.
+4. **Sovereignty and compliance** — regulations in some jurisdictions require data to remain within national borders. MinIO deployed on local infrastructure satisfies these requirements.
+5. **Cost optimization at massive scale** — at petabyte scale, some organizations find it cheaper to operate MinIO on owned hardware than to pay cloud egress and storage fees. This requires substantial operational maturity.
+
+**When NOT to use MinIO:**
+
+- **Default production choice** — MinIO is not the implied production default. Cloud-native object storage (S3, GCS, Azure Blob) provides better durability, global replication, managed lifecycle policies, and zero operational overhead. Most teams should default to cloud-native storage.
+- **Small to medium workloads** — if your data fits comfortably in S3's free tier or costs under $500/month, the operational cost of running MinIO (engineering time, monitoring, backup) exceeds the savings.
+- **Lack of operational expertise** — MinIO requires Kubernetes knowledge, storage provisioning, monitoring, backup strategies, and disaster recovery planning. If your team lacks this expertise, cloud-native storage is the safer choice.
+
+**MinIO shines in specific niches:**
+
+- Developers who want local S3 compatibility without AWS credentials
+- Platform teams building Kubernetes-native data labs
+- Regulated industries with data residency requirements
+- Enterprises with existing on-premises infrastructure and petabyte-scale workloads
+
+**Example: MinIO in Kubernetes**
+
+MinIO can be deployed as a StatefulSet with persistent volumes. Here's a simplified manifest:
+
+<CodeBlock code={`apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+spec:
+  ports:
+    - port: 9000
+      name: api
+    - port: 9001
+      name: console
+  clusterIP: None
+  selector:
+    app: minio
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+spec:
+  serviceName: minio
+  replicas: 4
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+      - name: minio
+        image: minio/minio:latest
+        args:
+        - server
+        - http://minio-{0...3}.minio.default.svc.cluster.local/data
+        - --console-address
+        - ":9001"
+        env:
+        - name: MINIO_ROOT_USER
+          value: "admin"
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: minio-secret
+              key: password
+        ports:
+        - containerPort: 9000
+        - containerPort: 9001
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 100Gi
+`} language="yaml" filename="minio-statefulset.yaml" />
+
+This StatefulSet runs a 4-node MinIO cluster with distributed erasure coding. Each pod gets a persistent volume claim for local storage. MinIO distributes objects across nodes and protects against up to `N/2` node failures (where `N` is the number of nodes).
+
+In production, you would add Prometheus monitoring, Grafana dashboards, automated backups to S3 (yes, MinIO can replicate to cloud storage), and alerting for disk usage and node health.
+
+**Key insight:** MinIO is a reference implementation, not a production default. Use it where it fits—local dev, K8s labs, sovereignty constraints—but default to cloud-native storage for most production workloads.
+
+---
+
+## Data Lake Organization: Medallion Architecture
+
+A **data lake** is a centralized repository that stores structured, semi-structured, and unstructured data at any scale. Unlike data warehouses, which require schema-on-write, data lakes embrace **schema-on-read**: store data in its raw form, apply schema when querying.
+
+The challenge with data lakes is **organization**. Without structure, data lakes become **data swamps**—chaotic, ungoverned, and unusable. The solution is the **medallion architecture**, a layered approach that progressively refines data from raw ingestion to business-ready datasets.
+
+**Medallion layers:**
+
+1. **Landing (Raw Zone)** — data as it arrives, unchanged. Logs, API responses, CSV uploads, database exports. Immutable, append-only. Retention policy: 7-30 days.
+2. **Bronze (Raw Persistent)** — cleaned, validated, but still in source format. Duplicates removed, corrupted records quarantined. Partitioned by date. Retention: 1-2 years.
+3. **Silver (Curated)** — normalized, deduplicated, joined. Columnar format (Parquet). Enriched with metadata. Optimized for analytics. Retention: 2-5 years.
+4. **Gold (Business-Ready)** — aggregated, filtered, business-logic applied. Denormalized for BI tools. Pre-joined dimensions. Retention: indefinite.
+
+**Directory structure example:**
+
+```
+s3://data-lake/
+  landing/
+    logs/2026/06/19/events.json
+    api-exports/2026/06/19/users.csv
+  bronze/
+    logs/year=2026/month=06/day=19/events.parquet
+    users/year=2026/month=06/day=19/users.parquet
+  silver/
+    events_enriched/year=2026/month=06/events.parquet
+    users_cleaned/year=2026/month=06/users.parquet
+  gold/
+    daily_active_users/year=2026/month=06/dau.parquet
+    revenue_summary/year=2026/month=06/revenue.parquet
+```
+
+**Naming conventions:**
+
+- Use lowercase with underscores (`events_enriched`, not `EventsEnriched`)
+- Include date partitions (`year=2026/month=06/day=19`)
+- Use descriptive prefixes (`logs/`, `api-exports/`, `ml-models/`)
+- Suffix with file format (`.parquet`, `.json`, `.csv`)
+
+**Partition layouts:**
+
+Partitioning improves query performance by allowing query engines to skip irrelevant data. Partition by:
+
+- **Time** — `year=2026/month=06/day=19` for time-series data
+- **Geography** — `region=us-west/country=USA/state=CA` for location-based data
+- **Category** — `product_type=electronics/brand=sony` for hierarchical data
+
+Avoid over-partitioning. Too many small files harm performance. Aim for file sizes between 128MB and 1GB.
+
+**Diagram: Medallion Architecture**
+
+<MermaidDiagram chart={`graph LR
+    A[Raw Data Sources] --> B[Landing Zone]
+    B --> C[Bronze Layer]
+    C --> D[Silver Layer]
+    D --> E[Gold Layer]
+    E --> F[BI Tools / ML Pipelines]
+    
+    subgraph Landing["Landing (Raw)"]
+        B
+    end
+    
+    subgraph Bronze["Bronze (Raw Persistent)"]
+        C
+    end
+    
+    subgraph Silver["Silver (Curated)"]
+        D
+    end
+    
+    subgraph Gold["Gold (Business-Ready)"]
+        E
+    end
+    
+    style Landing fill:#fef0f0,stroke:#cc0000
+    style Bronze fill:#f2e6d9,stroke:#cc6600
+    style Silver fill:#e6f2f2,stroke:#0066cc
+    style Gold fill:#e6ffe6,stroke:#00cc00
+`} />
+
+Each layer serves a distinct purpose. Landing is ephemeral. Bronze is the source of truth. Silver is optimized for analytics. Gold is tailored for specific business questions.
+
+---
+
+## Lifecycle Policies: Automate Tier Transitions and Expiration
+
+**Lifecycle policies** automate data management by transitioning objects between storage tiers and expiring objects after a defined period. This reduces costs and enforces retention policies.
+
+**Common lifecycle rules:**
+
+1. **Transition to cold storage** — move bronze data older than 90 days to cold storage (S3 Infrequent Access, GCS Nearline).
+2. **Transition to archive** — move bronze data older than 1 year to archive (S3 Glacier, GCS Archive).
+3. **Expire landing data** — delete landing zone data older than 30 days.
+4. **Expire logs** — delete application logs older than 1 year.
+5. **Version expiration** — delete non-current object versions older than 30 days.
+
+**Example lifecycle policy (AWS S3):**
+
+<CodeBlock code={`{
+  "Rules": [
+    {
+      "Id": "TransitionBronzeToIA",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "bronze/"
+      },
+      "Transitions": [
+        {
+          "Days": 90,
+          "StorageClass": "STANDARD_IA"
+        }
+      ]
+    },
+    {
+      "Id": "TransitionBronzeToGlacier",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "bronze/"
+      },
+      "Transitions": [
+        {
+          "Days": 365,
+          "StorageClass": "GLACIER"
+        }
+      ]
+    },
+    {
+      "Id": "ExpireLandingData",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": "landing/"
+      },
+      "Expiration": {
+        "Days": 30
+      }
+    },
+    {
+      "Id": "ExpireOldVersions",
+      "Status": "Enabled",
+      "NoncurrentVersionExpiration": {
+        "NoncurrentDays": 30
+      }
+    }
+  ]
+}
+`} language="json" filename="s3-lifecycle-policy.json" />
+
+**How lifecycle policies work:**
+
+- Cloud providers scan buckets daily and apply rules to matching objects.
+- Transitions are irreversible without explicit retrieval (e.g., Glacier retrieval takes hours).
+- Expiration permanently deletes objects—use with caution.
+- Policies apply to object prefixes, tags, or the entire bucket.
+
+**Cost impact:**
+
+A 10TB bronze layer stored in S3 Standard costs $230/month. After 90 days, transitioning to S3 IA reduces cost to $125/month. After 1 year, transitioning to Glacier reduces cost to $40/month. Over 3 years, lifecycle policies save $6,660.
+
+**Diagram: Lifecycle Policy Automation**
+
+<MermaidDiagram chart={`flowchart TD
+    A[Object Created] --> B{Age < 90 days?}
+    B -- Yes --> C[S3 Standard]
+    B -- No --> D{Age < 365 days?}
+    D -- Yes --> E[S3 IA]
+    D -- No --> F{Age < 1825 days?}
+    F -- Yes --> G[S3 Glacier]
+    F -- No --> H{Expiration Policy?}
+    H -- Yes --> I[Delete Object]
+    H -- No --> J[S3 Glacier Deep Archive]
+    
+    style C fill:#e6ffe6,stroke:#00cc00
+    style E fill:#fff4e6,stroke:#ff9900
+    style G fill:#e6f2ff,stroke:#0066cc
+    style I fill:#fef0f0,stroke:#cc0000
+    style J fill:#f2f2f2,stroke:#666666
+`} />
+
+Lifecycle policies are set-and-forget. Define them once, let the cloud provider enforce them automatically.
+
+---
+
+## Multimodal Asset Storage: Images, PDFs, Audio, Video
+
+Modern data platforms handle more than structured CSV and Parquet files. **Multimodal assets**—images, PDFs, audio, video—are first-class citizens in AI-driven workflows.
+
+**Use cases:**
+
+- **RAG document corpora** — PDFs, Word docs, Markdown files stored in S3, indexed by embedding models, retrieved by semantic search.
+- **Training datasets** — millions of images for computer vision models, audio files for speech recognition, video clips for action detection.
+- **Embedding source material** — product images, user-generated content, scanned documents converted to embeddings and stored alongside metadata.
+- **Model artifacts** — fine-tuned LLM checkpoints, ONNX exports, quantized models, tokenizers, all versioned in S3.
+
+**Storage patterns:**
+
+1. **Organized by type** — `s3://assets/images/`, `s3://assets/pdfs/`, `s3://assets/audio/`
+2. **Partitioned by date** — `s3://assets/images/year=2026/month=06/day=19/`
+3. **Linked to metadata** — store metadata in Parquet (`image_id, s3_path, upload_time, user_id`), reference S3 paths in queries
+4. **Versioned** — enable object versioning to track changes to model artifacts or documents
+
+**Example: Storing PDFs for RAG**
+
+A RAG pipeline ingests PDFs, chunks them into passages, generates embeddings, and stores both the raw PDF and its embeddings.
+
+<CodeBlock code={`import boto3
+from pathlib import Path
+
+s3 = boto3.client('s3')
+bucket = 'data-lake'
+
+def upload_pdf_for_rag(pdf_path: Path, document_id: str):
+    """Upload PDF to S3 and prepare for embedding."""
+    # Upload raw PDF to bronze layer
+    s3_key = f"bronze/documents/{document_id}.pdf"
+    s3.upload_file(str(pdf_path), bucket, s3_key)
+    
+    # Upload metadata
+    metadata = {
+        'document_id': document_id,
+        's3_path': f"s3://{bucket}/{s3_key}",
+        'upload_time': '2026-06-19T10:30:00Z',
+        'content_type': 'application/pdf'
+    }
+    
+    # Store metadata in silver layer as JSON
+    metadata_key = f"silver/document_metadata/{document_id}.json"
+    s3.put_object(
+        Bucket=bucket,
+        Key=metadata_key,
+        Body=str(metadata).encode('utf-8'),
+        ContentType='application/json'
+    )
+    
+    print(f"Uploaded {pdf_path} to {s3_key}")
+    return s3_key
+
+# Usage
+pdf_file = Path("reports/quarterly-summary.pdf")
+upload_pdf_for_rag(pdf_file, "doc-2026-q2-summary")
+`} language="python" filename="upload-pdf-rag.py" />
+
+The raw PDF lives in bronze. Metadata lives in silver. After chunking and embedding, embeddings are written to a separate prefix (`silver/embeddings/{document_id}.parquet`) and indexed into a vector database.
+
+**Multimodal assets integrate seamlessly into data lakes.** Object storage is format-agnostic. Store everything, process as needed.
+
+---
+
+## Versioning and Immutability: Data Protection and Compliance
+
+**Object versioning** maintains multiple versions of an object in the same bucket. Every PUT request creates a new version. Previous versions remain accessible.
+
+**Why versioning matters:**
+
+1. **Accidental deletion protection** — deleting an object creates a delete marker, but previous versions remain recoverable.
+2. **Corruption rollback** — if a pipeline writes corrupted data, roll back to the previous version.
+3. **Compliance audits** — regulators require access to historical data. Versioning preserves every change.
+4. **Reproducibility** — machine learning experiments reference specific versions of training data and model checkpoints.
+
+**How versioning works:**
+
+Enable versioning on a bucket. Every object gets a unique version ID. When you PUT an object with an existing key, a new version is created. The latest version is returned by default. Previous versions are accessed by version ID.
+
+**Immutability** takes versioning further. **Object lock** prevents deletion or modification for a defined retention period. Use cases:
+
+- **Legal hold** — litigation requires preservation of all data related to a case.
+- **WORM (Write Once Read Many)** — financial records must remain immutable for 7 years.
+- **Audit trails** — compliance frameworks (GDPR, HIPAA, SOX) require immutable logs.
+
+**Example: Enabling versioning and object lock (AWS S3 via boto3):**
+
+<CodeBlock code={`import boto3
+
+s3 = boto3.client('s3')
+
+# Enable versioning
+s3.put_bucket_versioning(
+    Bucket='data-lake',
+    VersioningConfiguration={'Status': 'Enabled'}
+)
+
+# Enable object lock (requires versioning)
+s3.put_object_lock_configuration(
+    Bucket='data-lake',
+    ObjectLockConfiguration={
+        'ObjectLockEnabled': 'Enabled',
+        'Rule': {
+            'DefaultRetention': {
+                'Mode': 'GOVERNANCE',  # or 'COMPLIANCE'
+                'Days': 2555  # ~7 years
+            }
+        }
+    }
+)
+
+print("Versioning and object lock enabled")
+`} language="python" filename="enable-versioning-lock.py" />
+
+**Governance mode** allows privileged users to override retention. **Compliance mode** is absolute—even root users cannot delete objects before the retention period expires.
+
+**Cost of versioning:**
+
+Every version consumes storage. A 1GB object updated 100 times over a year consumes 100GB. Use **lifecycle policies** to expire non-current versions after a defined period (e.g., 30 days).
+
+**Versioning and immutability are table stakes for production data lakes.** Enable them by default. Configure expiration policies to manage costs.
+
+---
+
+## Decision Framework: Cloud-Native vs MinIO
+
+When designing a data platform, you must choose between cloud-native object storage (S3, GCS, Azure Blob) and self-hosted solutions like MinIO.
+
+**Default to cloud-native storage when:**
+
+- Your team lacks Kubernetes or distributed systems expertise
+- Your workload is under 100TB
+- You need global replication or multi-region availability
+- You want zero operational overhead (no patching, no monitoring, no backups)
+- You are building a new greenfield project
+
+**Choose MinIO when:**
+
+- You have strict data residency or sovereignty requirements
+- You are operating in an air-gapped environment (no internet access)
+- You have petabyte-scale workloads and the operational maturity to run distributed storage
+- You need local S3 compatibility for development or CI/CD testing
+- You are deploying a Kubernetes-native data lab
+
+**Hybrid approach:**
+
+Many organizations use **both**. MinIO for local development and Kubernetes staging environments. Cloud-native storage (S3, GCS) for production. This provides:
+
+- Local parity with production APIs
+- No AWS credentials required for local dev
+- Zero egress costs for CI/CD pipelines
+- Production-grade durability and availability where it matters
+
+**Migration path:**
+
+Start with cloud-native storage. Use MinIO only when you encounter constraints (sovereignty, cost at scale, air-gapped). The S3 API ensures portability—switching between MinIO and S3 requires only endpoint and credential changes.
+
+---
+
+## Failure Modes and Anti-Patterns
+
+**Failure mode 1: Flat namespace chaos**
+
+Storing all data in a single bucket prefix without organization. No medallion layers, no date partitions, no naming conventions. Result: data swamp, ungoverned, unqueryable.
+
+**Solution:** Adopt medallion architecture from day one. Even if you only have bronze and silver, structure beats chaos.
+
+**Failure mode 2: No lifecycle policies**
+
+Storing everything in hot storage indefinitely. A 10TB bronze layer costs $2,760/year in S3 Standard. With lifecycle policies, the same data costs $1,020/year.
+
+**Solution:** Define lifecycle policies during bucket creation. Automate tier transitions and expiration.
+
+**Failure mode 3: Treating MinIO as the production default**
+
+Choosing MinIO for production because "it's open source" or "we want to avoid vendor lock-in," without understanding the operational cost.
+
+**Solution:** Cloud-native storage (S3, GCS) is the default. Use MinIO only when you have specific constraints (sovereignty, air-gapped, K8s-native labs). The S3 API is the portability layer, not MinIO itself.
+
+**Failure mode 4: No versioning or immutability**
+
+Accidental deletion or corruption with no recovery path. A pipeline bug overwrites a critical dataset. No rollback, no audit trail.
+
+**Solution:** Enable versioning by default. Add object lock for compliance-critical data.
+
+**Failure mode 5: Over-partitioning**
+
+Creating thousands of tiny files (< 10MB each) by partitioning too aggressively (e.g., `year=2026/month=06/day=19/hour=10/minute=30/`). Query engines spend more time listing files than reading data.
+
+**Solution:** Partition by date (year/month/day) for time-series data. Stop there unless you have billions of rows.
+
+---
+
+## Summary
+
+Object storage is the foundational layer of every modern data platform. The **S3 API** is the universal interface, supported by AWS S3, Google Cloud Storage, Azure Blob, MinIO, and Ceph. Everything lands in object storage first: raw logs, CSV exports, Parquet files, images, PDFs, audio, video, model artifacts, embeddings.
+
+The **medallion architecture** (landing → bronze → silver → gold) organizes data lakes into progressive layers of refinement. Landing is ephemeral. Bronze is the source of truth. Silver is curated and optimized. Gold is business-ready.
+
+**MinIO** is a reference implementation for local development, Kubernetes-native labs, air-gapped environments, and sovereignty requirements. It is not the default production choice—cloud-native storage (S3, GCS) provides better durability, managed lifecycle policies, and zero operational overhead.
+
+**Lifecycle policies** automate tier transitions (hot → warm → cold → archive) and expiration. They reduce costs and enforce retention policies. Define them once, let the cloud provider enforce them.
+
+**Versioning and immutability** protect against accidental deletion and corruption. They enable rollback, support compliance audits, and ensure reproducibility for machine learning experiments.
+
+**Multimodal assets**—images, PDFs, audio, video—are first-class citizens in data lakes. They feed AI/ML pipelines (RAG document corpora, training datasets, embedding source material). Store them alongside structured data, reference them via metadata tables.
+
+**Default to cloud-native storage.** Use MinIO only when you have specific constraints. The S3 API ensures portability. Structure your data lake from day one. Automate lifecycle management. Enable versioning. Build on a solid foundation.
+
+In the next lesson, we will explore **table formats**—Apache Iceberg, Delta Lake, Apache Hudi—that add ACID transactions, schema evolution, and time travel to data lakes. These formats transform object storage from a file dump into a queryable, versioned, governed data warehouse.

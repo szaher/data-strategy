@@ -1,0 +1,306 @@
+---
+title: "Processing Decision Framework"
+quiz:
+  - question: "When is Ray the right choice for a data processing workload?"
+    options:
+      - "When you need large-scale SQL-based ETL transformations"
+      - "When you need distributed Python for ML training and inference (correct)"
+      - "When you need stateful streaming with event-time processing"
+      - "When you need real-time CDC processing from Kafka"
+    correctIndex: 1
+  - question: "What is the primary tradeoff when choosing Flink over Spark for a streaming workload?"
+    options:
+      - "Flink requires always-on compute (cost even when idle) but provides lower latency (correct)"
+      - "Flink only works with SQL, Spark supports multiple languages"
+      - "Flink cannot handle state, Spark can"
+      - "Flink is cheaper per TB processed than Spark"
+    correctIndex: 0
+  - question: "Which engine is best suited for SQL-based analytics engineering with version control and testing?"
+    options:
+      - "Apache Spark with PySpark"
+      - "Apache Flink with Table API"
+      - "dbt running on a data warehouse (correct)"
+      - "Ray with distributed Python"
+    correctIndex: 2
+---
+
+## Overview
+
+The hardest question in data platform design is not "what tools exist?" but "which tool fits this workload?" Teams that default to a single processing engine face the same problem from opposite directions: Spark teams force streaming into batch windows, dbt teams hit warehouse limits on complex Python transforms, Flink teams overpay for always-on compute on infrequent batch jobs, and Ray teams waste cycles building ETL infrastructure.
+
+The solution is **workload-fit selection** — matching engine capabilities to job characteristics. This lesson provides a decision framework for choosing between **Spark**, **Flink**, **dbt**, and **Ray** based on latency requirements, data volume, state needs, team skills, and operational cost. We'll map our recurring scenario (CDC events from Kafka, raw-to-curated transforms, feature computation, embedding generation) to the right engine for each stage, and explain when each tool is the wrong choice.
+
+By the end of this lesson, you'll have a mental model for evaluating processing engines by workload category, a criteria matrix for making selection decisions, and architectural boundaries for building multi-engine pipelines. This is the synthesis of Module 5 — the framework you'll use to design the processing layer of your data platform.
+
+## The Four Engine Categories
+
+Processing engines fall into four workload-fit categories. Each excels at a specific class of problem. Treating them as interchangeable alternatives leads to architectural mismatch.
+
+### Spark: Large-Scale Batch ETL and Data Preparation
+
+**Apache Spark** is a distributed batch processing engine optimized for large-scale transformations. It reads from storage (S3, HDFS, cloud object stores), applies transformations in memory across a cluster, and writes results back to storage. Spark's **sweet spot** is TB-scale batch ETL — jobs that process hours or days of data at once, apply complex multi-stage transforms (joins, aggregations, window functions), and write results to a lakehouse or warehouse.
+
+Spark supports **Spark SQL** (declarative queries), **PySpark** (Python DataFrame API), **Scala**, and **Java**. It integrates with warehouse formats like **Iceberg**, **Delta Lake**, and **Hudi**, making it the default choice for batch data preparation pipelines. Spark jobs are **ephemeral** — compute spins up when the job runs, processes data, and shuts down. You pay per-job, not per-hour.
+
+**When to use Spark:**
+- Batch processing of TB-scale datasets (hourly, daily, weekly cadences)
+- Complex multi-stage ETL with joins across multiple sources
+- Data preparation for machine learning (feature engineering at scale)
+- Migration from legacy Hadoop/Hive systems
+
+**When NOT to use Spark:**
+- Real-time streaming with sub-second latency requirements (use Flink)
+- SQL-only transforms on data already in a warehouse (use dbt)
+- Distributed Python ML training (use Ray, not Spark's MLlib)
+- Small-scale data (< 100 GB) where warehouse queries are faster
+
+### Flink: Stateful Streaming and Real-Time Analytics
+
+**Apache Flink** is a distributed streaming engine optimized for **stateful event processing**. Unlike Spark's batch-first model (micro-batching), Flink processes events **one at a time** with **event-time semantics** — it tracks state across windows, handles late-arriving data, and guarantees exactly-once processing. Flink's **sweet spot** is continuous streaming workloads that require low-latency aggregations, joins, or pattern detection over unbounded event streams.
+
+Flink is **always-on** — clusters run 24/7, even when event volume is low. This provides **millisecond to second latency** but incurs **constant compute cost**. Flink integrates with **Kafka**, **Kinesis**, and **Pulsar** for event ingestion, and writes to **Iceberg**, **S3**, or **Elasticsearch** for sink storage.
+
+**When to use Flink:**
+- Real-time CDC processing from Kafka (enrich, deduplicate, write to lakehouse)
+- Streaming aggregations with event-time windows (e.g., "count events per user per 5-minute window, even if events arrive out of order")
+- Complex event processing (fraud detection, anomaly detection, alerting)
+- Stateful joins between multiple streaming sources
+
+**When NOT to use Flink:**
+- Batch ETL jobs that run once per day (use Spark — Flink's always-on cost is wasted)
+- SQL-only transforms on static tables (use dbt)
+- Ad-hoc analytics queries (use Trino or warehouse query engine)
+- Prototyping or experimentation (Flink's operational complexity is high)
+
+### dbt: SQL-Based Analytics Engineering
+
+**dbt** (data build tool) is a **transformation framework** for SQL-native workflows. It runs **inside** a data warehouse (Snowflake, BigQuery, Redshift, Databricks) and orchestrates **SQL SELECT statements** as a DAG of transformations. dbt's **sweet spot** is analytics engineering — building curated tables, dimension models, and aggregates from raw warehouse data using version-controlled, tested, documented SQL.
+
+dbt does **not** move data between systems. It leverages the warehouse's compute engine, so you pay per query, not per cluster. dbt is **declarative** — you define the desired state (table definitions as SELECT statements), and dbt generates the DDL/DML to materialize them. It integrates with **Git** for version control, **CI/CD** for testing, and **Airflow/Dagster** for orchestration.
+
+**When to use dbt:**
+- SQL-based transformations on data already in a warehouse
+- Building star schemas, dimension tables, or aggregates for BI tools
+- Teams with strong SQL skills but limited Python/JVM expertise
+- Workflows that benefit from version control, testing, and documentation (all analytics engineering fits this)
+
+**When NOT to use dbt:**
+- Complex Python-based transformations (use Spark or Ray)
+- Real-time streaming (dbt runs on batch schedules)
+- Data movement between systems (dbt transforms in-place)
+- Very large transforms that exceed warehouse cost efficiency (use Spark for multi-TB batch transforms)
+
+### Ray: Distributed Python for ML and AI Workloads
+
+**Ray** is a distributed Python runtime optimized for **machine learning training, hyperparameter tuning, and batch inference**. Ray is **not** a Spark or Flink replacement — it is explicitly designed for Python-native distributed compute, not SQL-based ETL. Ray's **sweet spot** is workloads that require **parallel execution of Python functions** across a cluster: training multiple models in parallel, running hyperparameter sweeps, or generating embeddings for millions of text documents.
+
+Ray provides **Ray Train** (distributed training), **Ray Tune** (hyperparameter optimization), **Ray Serve** (model serving), and **Ray Data** (data loading for ML). Ray clusters are **session-based** — you spin up compute for a training job, run the job, and shut down. Ray integrates with **PyTorch**, **TensorFlow**, **scikit-learn**, and **Hugging Face** for model training.
+
+**When to use Ray:**
+- Distributed model training (multi-GPU, multi-node)
+- Hyperparameter tuning at scale (parallel trial execution)
+- Batch inference for embedding generation or model scoring
+- Python-native workflows that don't fit SQL or JVM paradigms
+
+**When NOT to use Ray:**
+- SQL-based ETL (use dbt or Spark SQL)
+- Streaming event processing (use Flink)
+- Simple data transforms that run in-warehouse (use dbt)
+- Teams without Python ML expertise (operational complexity is high)
+
+<MermaidDiagram chart={`graph TB
+    subgraph WorkloadCategories["Workload Categories"]
+        A[Batch ETL<br/>TB-scale transforms] --> Spark[Apache Spark<br/>Distributed batch processing]
+        B[Streaming Analytics<br/>Real-time state] --> Flink[Apache Flink<br/>Stateful streaming]
+        C[SQL Analytics<br/>Warehouse transforms] --> dbt[dbt<br/>SQL transformation framework]
+        D[ML/AI Compute<br/>Python distributed] --> Ray[Ray<br/>Distributed Python runtime]
+    end
+    
+    subgraph DecisionCriteria["Decision Criteria"]
+        L[Latency: hours → Spark<br/>seconds → Flink<br/>batch query → dbt<br/>training job → Ray]
+        V[Volume: TB-scale → Spark<br/>continuous streams → Flink<br/>warehouse tables → dbt<br/>model data → Ray]
+        S[State: stateless → Spark/dbt<br/>stateful → Flink<br/>training state → Ray]
+        T[Team: SQL → dbt<br/>Python ML → Ray<br/>JVM streaming → Flink<br/>polyglot batch → Spark]
+    end
+    
+    style Spark fill:#e3f2fd,stroke:#1976d2
+    style Flink fill:#fff3e0,stroke:#f57c00
+    style dbt fill:#f3e5f5,stroke:#7b1fa2
+    style Ray fill:#e8f5e9,stroke:#388e3c
+`} />
+
+## The Language and Runtime Dimension
+
+Processing engine selection is also shaped by **language and runtime constraints**. Some engines are SQL-native, others require JVM languages, and some are Python-first. Matching the engine to your team's skills and the workload's natural language reduces friction.
+
+### SQL-Native Engines
+
+**dbt**, **Spark SQL**, and **Trino** are SQL-native. They express transformations as SELECT statements and rely on query optimizers to generate execution plans. SQL-native engines are ideal for **analytics engineering** (building curated tables for BI), **batch aggregations** (daily rollups, dimension builds), and **ad-hoc queries** (exploratory analytics).
+
+SQL-native workflows integrate naturally with BI tools (Tableau, Looker, Power BI) and warehouse ecosystems (Snowflake, BigQuery, Databricks). The tradeoff: SQL lacks the expressiveness for complex iterative algorithms, machine learning training, or Python-native libraries.
+
+### JVM Streaming Engines
+
+**Flink** and **Kafka Streams** are JVM-native. They require Java or Scala for custom logic, though Flink provides a **Table API** for SQL-like queries. JVM streaming engines are ideal for **stateful event processing**, **low-latency pipelines**, and **integration with Kafka ecosystems**.
+
+JVM workflows benefit from strong typing, mature debugging tools, and high-performance execution. The tradeoff: JVM has a steeper learning curve for teams without Java/Scala experience, and Python interop is limited.
+
+### Python-Native Distributed Engines
+
+**Ray** and **Dask** are Python-native. They distribute Python functions across clusters without requiring code translation. Python-native engines are ideal for **machine learning**, **scientific computing**, and **data science workflows** that rely on **NumPy**, **pandas**, **PyTorch**, or **scikit-learn**.
+
+Python workflows integrate naturally with Jupyter notebooks, data science IDEs (VS Code, PyCharm), and ML frameworks. The tradeoff: Python's GIL and dynamic typing limit performance for low-latency or high-throughput workloads (use Flink for streaming, Spark for batch ETL).
+
+### Warehouse-Native Transforms
+
+**dbt**, **Snowflake tasks**, and **BigQuery procedures** run inside the warehouse. They leverage the warehouse's compute, optimizer, and storage without spinning up external clusters. Warehouse-native transforms are ideal for **SQL-heavy analytics engineering**, **incremental table builds**, and **workflows that don't cross system boundaries**.
+
+Warehouse-native workflows benefit from zero infrastructure management, pay-per-query pricing, and tight integration with BI tools. The tradeoff: they cannot access external systems (Kafka, S3), and complex Python logic requires external orchestration.
+
+## Decision Criteria Matrix
+
+Choosing the right engine requires evaluating **latency, volume, state, team skills, operational complexity, and cost**. Use this matrix to map your workload to the best-fit engine.
+
+| **Criteria**              | **Spark**                              | **Flink**                              | **dbt**                                | **Ray**                                |
+|---------------------------|----------------------------------------|----------------------------------------|----------------------------------------|----------------------------------------|
+| **Latency**               | Hours to minutes (batch)               | Seconds to milliseconds (streaming)    | Minutes (batch warehouse queries)      | Minutes to hours (batch training/inference) |
+| **Data Volume**           | TB to PB scale                         | GB to TB per day (continuous streams)  | GB to TB (warehouse limits)            | GB to TB (model training data)         |
+| **State Requirements**    | Stateless (or Spark Streaming state)   | Stateful (event-time windows, joins)   | Stateless (SQL transforms)             | Training state (model weights, checkpoints) |
+| **Team Skills**           | SQL, Python, Scala (polyglot)          | Java, Scala (JVM required)             | SQL only                               | Python (ML frameworks)                 |
+| **Operational Complexity**| Medium (cluster tuning, job scheduling)| High (always-on, state management)     | Low (warehouse-native)                 | Medium (cluster setup, ML orchestration) |
+| **Cost Model**            | Per-job (ephemeral compute)            | Always-on (continuous compute)         | Per-query (warehouse pricing)          | Per-session (training jobs)            |
+
+### Latency Requirements
+
+If your workload requires **sub-second latency**, Flink is the only option. Spark's batch model introduces minutes of delay (job scheduling, data loading, execution). dbt runs on warehouse query schedules (minutes to hours). Ray is designed for batch ML jobs (minutes to hours).
+
+If your workload tolerates **hourly or daily latency**, Spark or dbt are more cost-efficient. Flink's always-on compute is wasted for infrequent batch jobs.
+
+### Data Volume
+
+**TB-scale batch transforms** favor Spark. Spark's distributed execution model scales horizontally (add more nodes for larger datasets). dbt runs on warehouse compute, which can become expensive at multi-TB scale (Snowflake charges per query, BigQuery charges per TB scanned).
+
+**Continuous streams** (GB to TB per day) favor Flink. Flink processes events incrementally, avoiding the cost of reprocessing entire datasets on each run.
+
+### State Requirements
+
+**Stateful workloads** (event-time windows, session aggregations, pattern detection) require Flink. Flink maintains **keyed state** across events, handles late arrivals, and provides exactly-once guarantees.
+
+**Stateless transforms** (row-level enrichments, filters, projections) can use Spark or dbt. Spark provides **DataFrame transformations** (map, filter, join). dbt provides **SQL SELECT statements** (WHERE, JOIN, GROUP BY).
+
+**ML training state** (model weights, optimizer state, checkpoints) requires Ray. Ray's distributed training libraries handle gradient synchronization, checkpoint recovery, and fault tolerance.
+
+### Team Skills and Operational Complexity
+
+**SQL-native teams** should default to dbt. dbt's declarative SQL model eliminates the need for Python or JVM expertise. If dbt hits limits (complex Python logic, external system access), consider Spark SQL (batch) or Flink Table API (streaming).
+
+**Python ML teams** should default to Ray for distributed training and inference. Do not force Ray into ETL workloads — use dbt or Spark for data preparation, then pass results to Ray for model training.
+
+**JVM teams** should default to Flink for streaming or Spark for batch. Both engines have mature Java/Scala APIs and integrate with JVM ecosystems (Maven, Gradle, IntelliJ).
+
+**Operational complexity** varies by engine. dbt has the lowest complexity (warehouse-native, no cluster management). Spark and Ray require cluster setup but are ephemeral (no always-on cost). Flink has the highest complexity (always-on clusters, state snapshots, backpressure tuning).
+
+### Cost Model Tradeoffs
+
+**Spark** is **per-job**. You pay for compute only when jobs run. This makes Spark ideal for **infrequent batch jobs** (daily ETL, weekly aggregations). Spark's cost scales with job duration and cluster size (more nodes = higher cost, but faster execution).
+
+**Flink** is **always-on**. Clusters run 24/7 to maintain streaming state and provide low latency. This makes Flink expensive for **infrequent workloads** (e.g., processing events once per hour wastes 59 minutes of compute). Flink's cost is **constant per day**, regardless of event volume.
+
+**dbt** is **per-query**. You pay the warehouse's query pricing (Snowflake per-second, BigQuery per-TB scanned). This makes dbt cost-efficient for **small to medium transforms** but expensive for **multi-TB batch jobs** (Spark's ephemeral compute may be cheaper).
+
+**Ray** is **per-session**. You spin up clusters for training jobs, run the job, and shut down. This makes Ray cost-efficient for **batch ML workloads** (daily training, weekly inference) but wasteful for **always-on inference** (use Ray Serve or model serving platforms).
+
+## Mapping the Recurring Scenario to Engines
+
+Let's map our **recurring scenario** (CDC events from Kafka, raw-to-curated transforms, feature computation, embedding generation) to the right engine for each stage.
+
+### CDC Events from Kafka → Flink (Real-Time) or Spark (Batch)
+
+**If real-time enrichment is required** (write to lakehouse within seconds of source database updates), use **Flink**. Flink consumes CDC events from Kafka, applies stateful enrichments (lookups, deduplication, schema evolution), and writes to **Iceberg tables** with **exactly-once guarantees**. This pattern is ideal for dashboards, alerting, or downstream systems that require fresh data.
+
+**If hourly or daily latency is acceptable**, use **Spark Structured Streaming** or **batch Spark**. Spark reads Kafka offsets in micro-batches (e.g., every 15 minutes), applies transformations, and writes to Iceberg. This pattern is cheaper (ephemeral compute) but introduces latency.
+
+### Raw to Curated Transforms → dbt (SQL) or Spark (Complex/Large-Scale)
+
+**If transforms are SQL-only** (filters, joins, aggregations) and data is already in the warehouse, use **dbt**. dbt reads raw tables, applies transformations, and writes curated tables. This pattern is ideal for **analytics engineering** workflows where the warehouse is the single source of truth.
+
+**If transforms require Python logic** (complex business rules, external API calls, ML feature engineering) or process **multi-TB datasets**, use **Spark**. Spark reads raw data from S3/Iceberg, applies PySpark transformations, and writes curated tables. This pattern is ideal for **data preparation pipelines** that feed ML training.
+
+### Feature Computation → Flink (Real-Time) or Spark (Batch)
+
+**If features must be computed in real-time** (e.g., "user's last 10 actions" for fraud detection), use **Flink**. Flink maintains streaming state for each user, updates features on each event, and writes to a **feature store** (Feast, Tecton) or **Iceberg table**.
+
+**If features are computed in batch** (daily feature refresh for offline training), use **Spark**. Spark reads curated tables, computes features using window functions and aggregations, and writes to a feature store or Iceberg.
+
+### Embedding Generation → Ray (Distributed Python) or Spark (Batch at Scale)
+
+**If embedding generation requires Python libraries** (Hugging Face Transformers, Sentence-BERT), use **Ray**. Ray distributes the embedding model across GPUs, processes text in parallel, and writes embeddings to vector stores (Pinecone, Weaviate) or Iceberg tables.
+
+**If embeddings are generated at TB-scale** and the model is simple (e.g., TF-IDF, pre-trained embeddings), consider **Spark with UDFs**. Spark distributes the computation across CPU nodes, avoiding the complexity of GPU orchestration.
+
+<MermaidDiagram chart={`graph TD
+    subgraph RecurringScenario["Recurring Scenario Mapped to Engines"]
+        Kafka[CDC Events from Kafka] --> CDCDecision{Latency<br/>Requirement?}
+        CDCDecision -->|Real-time<br/>seconds| Flink1[Flink: Stateful enrichment<br/>Write to Iceberg]
+        CDCDecision -->|Batch<br/>hours| Spark1[Spark: Micro-batch or daily<br/>Write to Iceberg]
+        
+        RawData[Raw Data in Lakehouse] --> TransformDecision{SQL-only<br/>or Python?}
+        TransformDecision -->|SQL only<br/>warehouse data| dbt1[dbt: SQL transforms<br/>Write curated tables]
+        TransformDecision -->|Python logic<br/>or TB-scale| Spark2[Spark: PySpark transforms<br/>Write curated tables]
+        
+        Features[Feature Computation] --> FeatureDecision{Real-time<br/>or batch?}
+        FeatureDecision -->|Real-time<br/>per event| Flink2[Flink: Streaming state<br/>Write to feature store]
+        FeatureDecision -->|Batch<br/>daily refresh| Spark3[Spark: Window functions<br/>Write to feature store]
+        
+        Embeddings[Embedding Generation] --> EmbedDecision{Python libs<br/>or scale?}
+        EmbedDecision -->|Python ML<br/>GPU required| Ray1[Ray: Distributed inference<br/>Write to vector store]
+        EmbedDecision -->|TB-scale<br/>simple model| Spark4[Spark: UDFs on CPUs<br/>Write to Iceberg]
+    end
+    
+    style Flink1 fill:#fff3e0,stroke:#f57c00
+    style Flink2 fill:#fff3e0,stroke:#f57c00
+    style Spark1 fill:#e3f2fd,stroke:#1976d2
+    style Spark2 fill:#e3f2fd,stroke:#1976d2
+    style Spark3 fill:#e3f2fd,stroke:#1976d2
+    style Spark4 fill:#e3f2fd,stroke:#1976d2
+    style dbt1 fill:#f3e5f5,stroke:#7b1fa2
+    style Ray1 fill:#e8f5e9,stroke:#388e3c
+`} />
+
+## Failure Modes and Anti-Patterns
+
+Understanding when **not** to use each engine is as important as knowing when to use it. These anti-patterns cause cost overruns, performance issues, and operational complexity.
+
+### Using Ray as an ETL Engine
+
+**Ray is not a Spark replacement for ETL.** Ray's strength is distributed Python for ML workloads, not SQL-based data transformations. Teams that force Ray into ETL roles end up reimplementing Spark's optimizer, fault tolerance, and storage integrations. Use Spark or dbt for ETL, and pass results to Ray for ML training.
+
+### Using Spark for Low-Latency Streaming
+
+**Spark Structured Streaming is micro-batching, not true streaming.** Spark processes events in batches (seconds to minutes), which introduces latency. For **sub-second latency**, use Flink. Spark's batch model is cost-efficient for **hourly or daily streaming jobs**, but wasteful for real-time requirements.
+
+### Using dbt for Everything
+
+**dbt cannot access external systems.** dbt runs inside the warehouse and cannot read from Kafka, write to Elasticsearch, or call external APIs. Teams that force all logic into dbt end up building fragile webhook integrations or copying data unnecessarily. Use dbt for SQL transforms **inside the warehouse**, and orchestrate cross-system workflows with Airflow or Dagster.
+
+### Ignoring Operational Cost
+
+**Flink's always-on cost can exceed Spark's batch cost by 10x for infrequent workloads.** If your events arrive every hour (not continuously), Flink wastes 59 minutes of compute per hour. Use Spark's micro-batching for **infrequent streams**, and reserve Flink for **continuous high-volume streams**.
+
+**Warehouse per-query pricing can exceed Spark's per-job cost for multi-TB transforms.** BigQuery charges per TB scanned. Scanning 10 TB daily in dbt costs more than running a daily Spark job on ephemeral compute. Use dbt for **small to medium transforms**, and Spark for **large-scale batch ETL**.
+
+## Bridge to Module 6: Processed Data Lands in the Lakehouse
+
+Every processing engine in this framework writes to the same destination: **Apache Iceberg tables in the lakehouse**. Flink writes streaming results to Iceberg with exactly-once guarantees. Spark writes batch transforms to Iceberg partitions. dbt writes curated tables to warehouse-backed Iceberg catalogs. Ray writes embeddings and model scores to Iceberg.
+
+This **multi-engine, single-destination architecture** is the foundation of the modern data platform. Each engine handles its workload class, and all results land in Iceberg for unified querying, governance, and lineage. Module 6 explains how Iceberg provides schema evolution, time travel, and ACID transactions across all processing engines.
+
+## Summary
+
+Processing engine selection is workload-fit, not vendor preference. **Spark** is the right choice for TB-scale batch ETL. **Flink** is the right choice for stateful streaming. **dbt** is the right choice for SQL-based analytics engineering. **Ray** is the right choice for distributed Python ML workloads. None of these engines are substitutes for each other — they are complementary tools that handle different workload categories.
+
+The decision framework is: evaluate latency (batch hours vs streaming seconds vs real-time ms), data volume (GB vs TB vs PB), state requirements (stateless vs stateful), team skills (SQL vs Python vs JVM), operational complexity tolerance, and cost model (per-job vs always-on vs per-query). Map your workload to the criteria matrix, and select the engine that fits.
+
+For the recurring scenario (CDC events from Kafka, raw-to-curated transforms, feature computation, embedding generation), the pipeline uses **Flink or Spark for CDC ingestion** (depending on latency), **dbt or Spark for curated transforms** (depending on complexity), **Flink or Spark for feature computation** (depending on real-time requirements), and **Ray or Spark for embedding generation** (depending on Python libraries). All engines write to **Apache Iceberg tables** in the lakehouse.
+
+Module 6 explains how the lakehouse (Iceberg, catalogs, query engines) unifies these multi-engine outputs into a single queryable layer.
