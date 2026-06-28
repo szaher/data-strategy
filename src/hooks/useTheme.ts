@@ -18,12 +18,10 @@ function applyTheme(mode: ThemeMode) {
 }
 
 export function useTheme() {
-  const [mode, setMode] = useState<ThemeMode>("system");
-
-  useEffect(() => {
-    const stored = localStorage.getItem(storageKeys.theme) as ThemeMode | null;
-    if (stored) setMode(stored);
-  }, []);
+  const [mode, setMode] = useState<ThemeMode>(() => {
+    if (typeof localStorage === "undefined") return "system";
+    return (localStorage.getItem(storageKeys.theme) as ThemeMode | null) || "system";
+  });
 
   useEffect(() => {
     applyTheme(mode);
