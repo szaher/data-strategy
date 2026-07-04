@@ -19,7 +19,7 @@ quiz:
     options:
       - "Iceberg is faster for all query types"
       - "Iceberg supports more data formats"
-      - "Iceberg is fully engine-neutral with no vendor lock-in (correct)"
+      - "Iceberg is designed for multi-engine interoperability with minimal vendor coupling (correct)"
       - "Iceberg requires less storage space"
     correctIndex: 2
 ---
@@ -42,7 +42,7 @@ Traditional data lakes stored files in **Parquet** or **Avro** format with no me
 - **Partitioning mistakes:** Users wrote `WHERE date = '2024-01-15'` but forgot the partition column was `dt`, not `date`, causing full table scans.
 - **Time travel:** How do I query yesterday's data for debugging or reproducibility?
 
-Data warehouses solved these problems with **catalog services** and **transaction logs**, but lakehouses needed the same guarantees over object storage. **Apache Iceberg** introduced a metadata layer that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation — all while remaining **engine-neutral** (Spark, Trino, Flink, Dremio, and Athena all speak Iceberg natively).
+Data warehouses solved these problems with **catalog services** and **transaction logs**, but lakehouses needed the same guarantees over object storage. **Apache Iceberg** introduced a metadata layer that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation — all while being designed for **multi-engine interoperability** (Spark, Trino, Flink, Dremio, and Athena support Iceberg, though feature coverage, SQL dialect, and catalog behavior vary by engine and version).
 
 The second problem is **catalog selection**. The table format defines how data and metadata are structured on disk, but the **catalog** is the service that:
 
@@ -109,7 +109,7 @@ Iceberg's core innovation is a **layered metadata structure** that decouples sch
 
 ### Why This Layering Matters
 
-- **Query planning is fast:** Iceberg reads the metadata file (KB), scans the manifest list (MB), and uses column statistics to prune 90%+ of data files before touching object storage.
+- **Query planning is fast:** Iceberg reads the metadata file (KB), scans the manifest list (MB), and uses column statistics to prune a large fraction of data files before touching object storage. The pruning ratio depends on data distribution, partition strategy, and query predicates.
 - **Writes are atomic:** A new snapshot is committed by writing a new metadata file and atomically updating the catalog pointer. No partial writes are visible.
 - **Time travel is cheap:** Every snapshot is immutable. To query yesterday's data, the catalog returns `metadata/v42.json` instead of `v47.json`.
 
@@ -152,7 +152,11 @@ FROM
    FROM orders FOR SYSTEM_TIME AS OF CURRENT_DATE - INTERVAL '1' DAY) AS yesterday;
 `} language="sql" filename="time_travel.sql" />
 
-**Why this matters for AI/ML reproducibility:** If your training pipeline reads `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying `FOR SYSTEM_TIME AS OF '2024-06-19 09:00:00'`. This eliminates "data drift" between training and debugging.
+**Why this matters for AI/ML reproducibility:** If your training pipeline reads the `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying `FOR SYSTEM_TIME AS OF '2024-06-19 09:00:00'`. This reproduces the table snapshot used during training — though full reproducibility also depends on matching the code version, feature engineering logic, model configuration, and runtime environment.
+
+<VerifyClaim status="verify">
+Time travel SQL syntax (`FOR SYSTEM_VERSION AS OF`, `FOR SYSTEM_TIME AS OF`) varies by query engine. Spark, Trino, and Athena each use different syntax. Verify the time travel query syntax for your specific engine and Iceberg version.
+</VerifyClaim>
 
 ---
 
@@ -191,7 +195,7 @@ WHERE event_time >= '2024-06-15 08:00:00'
 
 -- Iceberg transforms this into:
 -- WHERE hour(event_time) = 498720 AND bucket(user_id, 16) = 7
-`} language="python" filename="iceberg_partitioning.py" />
+`} language="sql" filename="iceberg_partitioning.sql" />
 
 **Available transforms:**
 
@@ -391,9 +395,9 @@ Apache Iceberg is not the only open table format. **Delta Lake** (Databricks) an
 
 ### Apache Iceberg
 
-- **Strengths:** Engine-neutral (Spark, Trino, Flink, Dremio, Athena), hidden partitioning, catalog-agnostic, strongest multi-engine story.
+- **Strengths:** Designed for multi-engine interoperability (Spark, Trino, Flink, Dremio, Athena), hidden partitioning, catalog-agnostic. In practice, supported features, SQL syntax, and operational tooling vary by engine and version.
 - **Weaknesses:** Fewer vendor-managed features (no Databricks Liquid Clustering equivalent), requires separate catalog service.
-- **Use case:** Multi-engine environments, avoiding vendor lock-in, governance-heavy organizations.
+- **Use case:** Multi-engine environments, reducing vendor coupling, governance-heavy organizations.
 
 ---
 

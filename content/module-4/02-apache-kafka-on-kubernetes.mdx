@@ -26,7 +26,7 @@ quiz:
 
 ## Overview
 
-**Apache Kafka** is a distributed event streaming platform that has become the de facto standard for high-throughput messaging, event sourcing, and change data capture in modern data architectures. When deployed on **Kubernetes** using the **Strimzi operator**, Kafka becomes a declarative, cloud-native component of your data platform that integrates seamlessly with container orchestration, autoscaling, and GitOps workflows.
+**Apache Kafka** is a distributed event streaming platform widely adopted for high-throughput messaging, event sourcing, and change data capture in modern data architectures. When deployed on **Kubernetes** using the **Strimzi operator**, Kafka becomes a declarative, cloud-native component of your data platform that integrates seamlessly with container orchestration, autoscaling, and GitOps workflows.
 
 This lesson covers Kafka fundamentals (topics, partitions, consumer groups), delivery semantics (at-most-once, at-least-once, exactly-once), production operations (capacity planning, lag monitoring, rebalancing), and the Strimzi operator's role in making Kafka a first-class Kubernetes citizen. You'll learn the most common misconceptions—especially around ordering guarantees and exactly-once semantics—and how to build resilient event-driven systems that handle failures gracefully.
 
@@ -36,14 +36,16 @@ By the end of this lesson, you will understand how to deploy production-ready Ka
 
 ## The Problem: Messaging Without Guarantees
 
-In distributed systems, components need to communicate asynchronously. Traditional message queues (RabbitMQ, SQS, Redis Pub/Sub) provide basic publish-subscribe semantics, but they fall short in several critical areas:
+In distributed systems, components need to communicate asynchronously. Messaging systems make different trade-offs across retention, replay, delivery guarantees, ordering scope, routing model, throughput, and operational burden. Before choosing one, compare these dimensions for your workload:
 
-- **No durable replay** — once a message is consumed, it's gone. If a downstream system needs to reprocess historical events (e.g., to rebuild a materialized view or train an ML model), the data is lost.
-- **Limited ordering** — most queues guarantee FIFO delivery only within a single queue or topic, but not across partitions or consumers. This makes it hard to model real-world event streams where ordering matters (e.g., "user created" must come before "user updated").
-- **Weak fault tolerance** — if a consumer crashes mid-processing, the message is either lost (at-most-once) or redelivered indefinitely (at-least-once with no idempotency). There's no mechanism to track which messages have been fully processed.
-- **No scalability through partitioning** — most queues are single-leader systems. To scale reads, you need complex sharding or replication logic.
+- **Retention and replay** — some systems (RabbitMQ, SQS) delete messages after consumption; Kafka retains messages for configurable periods, enabling replay for rebuilding views or training ML models.
+- **Ordering scope** — most systems guarantee ordering within a single queue or partition, not globally. The ordering granularity differs by system.
+- **Delivery guarantees** — each system offers different trade-offs between at-most-once, at-least-once, and exactly-once semantics, with varying implementation complexity.
+- **Scalability model** — Kafka scales through partitioning; other systems use different approaches (competing consumers, sharding, fan-out).
 
-**Apache Kafka** solves these problems by modeling messages as a **distributed, append-only log**. Each message is written to a partition, assigned a monotonically increasing offset, and retained for a configurable period (days, weeks, or indefinitely). Consumers track their own offsets, enabling replay, parallel processing, and precise failure recovery.
+Kafka is well suited to durable event streams and replay, but it is not the default answer for every asynchronous workload. Managed services (SQS, Cloud Pub/Sub), purpose-built queues (RabbitMQ for routing, NATS for lightweight messaging), and alternatives like Pulsar each excel in different scenarios.
+
+**Apache Kafka** addresses the retention and replay gap by modeling messages as a **distributed, append-only log**. Each message is written to a partition, assigned a monotonically increasing offset, and retained for a configurable period (days, weeks, or indefinitely). Consumers track their own offsets, enabling replay, parallel processing, and precise failure recovery.
 
 > **Key Insight:** Kafka is not a traditional message queue. It's a **distributed commit log** that happens to support pub/sub semantics. This distinction is critical for understanding its behavior.
 
@@ -223,7 +225,7 @@ A production Kafka cluster on Kubernetes should have:
 
 ### Example: Kafka Cluster Manifest
 
-Here's a production-ready Strimzi `Kafka` manifest:
+The following is an illustrative Strimzi configuration, not a production-ready default. Validate the Strimzi API version, Kafka version, controller mode (KRaft vs ZooKeeper), listeners, authorization, storage class, topology, resource sizing, and observability settings for your environment:
 
 <CodeBlock code={`apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka
@@ -302,6 +304,10 @@ spec:
 - **`rack.topologyKey`** — spread brokers across availability zones (requires nodes to be labeled with `topology.kubernetes.io/zone`)
 - **`storage.class: fast-ssd`** — use high-IOPS storage for low-latency writes
 
+<VerifyClaim status="verify">
+Strimzi API versions, Kafka version compatibility, KRaft support status, and CRD schema evolve across releases. Verify the current Strimzi release notes and Apache Kafka documentation for your target versions before using this configuration.
+</VerifyClaim>
+
 ---
 
 ## Production Operations
@@ -310,11 +316,11 @@ spec:
 
 **Partitions:**
 - Start with **1 partition per expected concurrent consumer** (e.g., if you want to run 10 consumer instances, create 10 partitions).
-- **Avoid over-partitioning** — each partition has overhead (file handles, memory, replication lag). A common rule of thumb is **100-1000 partitions per broker**.
+- **Avoid over-partitioning** — each partition has overhead (file handles, memory, replication lag). Partition-per-broker limits depend on your Kafka version, hardware, and workload profile — consult the Kafka documentation and benchmark for your environment.
 - **Partition count is hard to change** — you can add partitions (breaks ordering for existing keys), but you cannot remove them. Plan ahead.
 
 **Throughput:**
-- A single partition can handle **10-100 MB/s** depending on message size and replication factor.
+- Partition throughput varies substantially by message size, replication factor, acks configuration, hardware, and network — benchmark for your workload rather than relying on generic estimates.
 - Measure your actual throughput under load. Use `kafka-producer-perf-test` and `kafka-consumer-perf-test` to benchmark.
 
 **Storage:**

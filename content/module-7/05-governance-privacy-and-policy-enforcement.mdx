@@ -58,7 +58,7 @@ Infrastructure IAM says "Alice can run queries against the lakehouse." Data-laye
 
 ### Row-Level Security
 
-**Row-level security (RLS)** filters query results based on user identity and attributes. In Trino, you define RLS rules as SQL predicates that are automatically injected into WHERE clauses.
+**Row-level security (RLS)** filters query results based on user identity and attributes. Row and column controls are implemented differently across query engines. The following examples illustrate policy intent — adapt the syntax and verify against the specific engine, version, connector, and access-control plugin documentation before deployment.
 
 <CodeBlock code={`-- Trino row filter for regional access control
 CREATE ROW FILTER orders_region_filter ON lakehouse.sales.orders
@@ -116,7 +116,11 @@ WHERE has_tag(column, 'pii')
 RETURNS 'REDACTED';
 `} language="sql" filename="tag-based-masking.sql" />
 
-This is **policy as code** — the masking rule is defined once and applies to all columns tagged `pii`, across all tables.
+This illustrates **policy as code** intent — the masking rule is defined once and applies to all columns tagged `pii`, across all tables.
+
+<VerifyClaim status="verify">
+The SQL syntax shown for row filters, column masks, and tag-based masking is illustrative. Trino's system access control plugin API, Ranger integration, and OPA integration each use different configuration mechanisms. Verify the Trino documentation for your version and access-control plugin.
+</VerifyClaim>
 
 ---
 
@@ -158,7 +162,7 @@ print(anonymized.text)
 # Output: "Contact <PERSON> at <EMAIL_ADDRESS> or <PHONE_NUMBER>"
 `} language="python" filename="pii-detection.py" />
 
-Run this as a **pre-ingestion step** — scan incoming data, tag columns that contain PII, and apply masking policies before data lands in the lakehouse.
+Run this as a **pre-ingestion step** — scan incoming data, tag columns likely to contain PII, and apply masking policies before data lands in the lakehouse. Note that automated PII detection is probabilistic: it produces both false positives and false negatives. Combine automated scanning with manual review for high-sensitivity datasets, and monitor detection accuracy over time.
 
 ### Dynamic Masking vs Static Masking
 
@@ -191,7 +195,7 @@ A privileged service can call the vault to detokenize, but analysts querying the
 
 ## Data Residency and Cross-Border Transfers
 
-**Data residency** means data must be stored in a specific geographic region. GDPR requires EU citizen data to remain in the EU unless adequate safeguards are in place. China's Personal Information Protection Law (PIPL) restricts cross-border transfers.
+**Data residency** means data must be stored in a specific geographic region. GDPR restricts transfers of EU personal data outside the EEA unless adequate safeguards are in place (such as Standard Contractual Clauses, adequacy decisions, or Binding Corporate Rules). China's Personal Information Protection Law (PIPL) imposes its own cross-border transfer requirements. Consult legal counsel for the specific transfer mechanisms applicable to your organization.
 
 ### Enforcement Points
 
@@ -232,7 +236,7 @@ Data flows through many systems:
 6. **Model training datasets:** Static snapshots used to train models
 7. **Cached query results:** Materialized views or BI dashboards
 
-A deletion request must propagate across all of these. If you delete from the lakehouse but not from embeddings, a user's data is still retrievable via vector search.
+A deletion request should be evaluated for propagation across all of these systems, subject to applicable legal bases, retention obligations, backup treatment, and technical feasibility. If you delete from the lakehouse but not from embeddings, a user's data may still be retrievable via vector search. Build a controller/process workflow that identifies all copies, applies the appropriate deletion or anonymization mechanism for each system, and documents any exceptions (e.g., backup retention windows, legal holds).
 
 ### Deletion Propagation Flowchart
 

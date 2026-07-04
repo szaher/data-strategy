@@ -79,13 +79,13 @@ If you count "clicks per minute" using **processing time**, this click is counte
 
 If you count using **event time**, the click always lands in the 10:00 bucket, regardless of when it arrived. Reprocess the stream a thousand times, and you get the same answer. **Deterministic**.
 
-Event time is the only correct choice for most analytics, but it introduces a new problem: **how do you know when you've seen all events for a given time period?** If you're computing the count for 10:00–10:01, how long do you wait before finalizing the result? Events can arrive out of order or late.
+Event time is the recommended default for most analytics because it produces deterministic results, but it introduces a new problem: **how do you know when you've seen all events for a given time period?** If you're computing the count for 10:00–10:01, how long do you wait before finalizing the result? Events can arrive out of order or late.
 
 This is where **watermarks** come in.
 
 Think of a watermark as a signal that says, "I've seen all events up to time T." It's like a teacher starting class: they wait for a few minutes after the bell rings to give latecomers a chance, then close the door. The door closing is the watermark — it marks the boundary between "on time" and "late."
 
-Flink generates watermarks based on the timestamps embedded in your events. A common strategy is **bounded-out-of-orderness watermarks**: "I assume events arrive no more than N seconds late." For example, if the latest event timestamp is 10:05:00 and your allowed lateness is 10 seconds, Flink emits a watermark for 10:04:50. This watermark tells downstream operators, "All events with timestamps ≤ 10:04:50 have arrived. You can finalize windows ending at 10:04:50."
+Flink generates watermarks based on the timestamps embedded in your events. A common strategy is **bounded-out-of-orderness watermarks**: "I assume events arrive no more than N seconds late." For example, if the latest event timestamp is 10:05:00 and your allowed lateness is 10 seconds, Flink emits a watermark for 10:04:50. Based on the configured lateness assumption, this watermark tells downstream operators that events with timestamps at or before 10:04:50 are unlikely to arrive. Later arrivals must follow the configured late-data policy (drop, side output, or allowed lateness).
 
 If an event with timestamp 10:04:45 arrives after the watermark for 10:04:50 has passed, it's **late data**. Flink can either drop it, process it separately (side outputs), or allow a grace period (**allowed lateness**) before finalizing the window.
 
@@ -99,7 +99,7 @@ Let's make watermarks concrete with an analogy. Imagine you're running a relay r
 
 Each baton has a label: "heat 1," "heat 2," etc. (this is the event timestamp). Runners arrive out of order — heat 1 batons might arrive mixed with heat 2. You wait until you're confident all heat 1 batons have arrived before declaring heat 1 complete. That confidence signal is the watermark.
 
-In Flink, a **watermark** is a special record that flows through the streaming pipeline. It carries a timestamp T and means: "No more events with timestamp ≤ T will arrive." Watermarks are generated at sources and propagate downstream through operators.
+In Flink, a **watermark** is a special record that flows through the streaming pipeline. It carries a timestamp T and signals the pipeline's estimate that events with timestamp ≤ T are unlikely to arrive — a heuristic based on configured lateness assumptions, not an absolute guarantee. Watermarks are generated at sources and propagate downstream through operators.
 
 Flink supports multiple watermark strategies:
 
@@ -193,9 +193,15 @@ Without TTL, a keyed state operator will accumulate state for every unique key i
 
 The checkpoint process is asynchronous and uses a technique called **Chandy-Lamport snapshots**. Flink injects special **barrier** markers into the stream. When an operator receives a barrier, it snapshots its state and forwards the barrier downstream. This ensures all operators snapshot a consistent global state without pausing event processing.
 
-Checkpoints are written to durable storage: S3, HDFS, or network-attached storage. If a TaskManager crashes, Flink restores the latest checkpoint and reprocesses events from the checkpointed source offsets. Because Flink replays from the exact same offsets and uses the same state snapshot, results are identical — **exactly-once semantics**.
+Checkpoints are written to durable storage: S3, HDFS, or network-attached storage. If a TaskManager crashes, Flink restores the latest checkpoint and reprocesses events from the checkpointed source offsets. Because Flink replays from the exact same offsets and uses the same state snapshot, internal state is recovered consistently — **exactly-once semantics for Flink's internal state**. End-to-end exactly-once guarantees additionally depend on source replay capabilities, sink transactional support, and the absence of external side effects.
 
-**Exactly-once vs at-least-once:** Flink defaults to exactly-once, but you can configure at-least-once for lower overhead. At-least-once is faster (less checkpointing I/O) but means duplicate processing on failures. For analytics and reporting, exactly-once is mandatory. For approximate monitoring, at-least-once may suffice.
+**Exactly-once vs at-least-once:** Flink's checkpoint mode defaults to exactly-once for internal state, but you can configure at-least-once (CHECKPOINT_MODE = AT_LEAST_ONCE) for lower overhead.
+
+<VerifyClaim status="verify">
+End-to-end exactly-once guarantees depend on source replay capabilities, sink transactional support (e.g., Kafka transactions, two-phase commit sinks), and the absence of external side effects. Verify the Flink fault-tolerance and connector documentation for your source/sink combination.
+</VerifyClaim>
+
+At-least-once is faster (less checkpointing I/O) but means duplicate processing on failures. For analytics and reporting, exactly-once is mandatory. For approximate monitoring, at-least-once may suffice.
 
 **Recovery time** depends on checkpoint interval and state size. Smaller intervals mean faster recovery but higher overhead. Larger intervals mean lower overhead but longer recovery. Typical production setting: 1–5 minute intervals, 30–60 second timeout.
 

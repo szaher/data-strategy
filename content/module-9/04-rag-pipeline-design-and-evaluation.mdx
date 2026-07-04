@@ -70,7 +70,11 @@ The retrieval layer answers: **given a query, did we surface the right documents
 
 **Precision@K** measures the fraction of retrieved documents that are actually relevant. If 10 documents are returned and 7 are relevant, precision@10 is 0.7. High precision reduces noise in the context window and keeps LLM costs down.
 
-**Ranking quality** measures whether the most relevant documents appear first. Metrics like NDCG (Normalized Discounted Cumulative Gain) penalize systems that bury the best documents at rank 9 when they should be at rank 1. Ranking matters because LLMs exhibit **lost-in-the-middle** behavior — they over-weight the first and last documents in the context window.
+**Ranking quality** measures whether the most relevant documents appear first. Metrics like NDCG (Normalized Discounted Cumulative Gain) penalize systems that bury the best documents at rank 9 when they should be at rank 1. Ranking matters because research suggests LLMs may exhibit **positional biases** in how they attend to documents in the context window — though the effect varies by model, context length, and task type.
+
+<VerifyClaim status="verify">
+The "lost-in-the-middle" phenomenon (LLMs over-weighting first and last documents) was described in Liu et al. (2023) for specific models and context lengths. Verify whether this behavior applies to the models and context sizes used in your pipeline.
+</VerifyClaim>
 
 **Index freshness** tracks the lag between document updates and index availability. If a product's price changes in the database but the vector index still surfaces the old price for 2 hours, freshness is degraded. Track the timestamp of the last indexed batch and alert when staleness exceeds SLA thresholds.
 
@@ -78,7 +82,7 @@ The retrieval layer answers: **given a query, did we surface the right documents
 
 The end-to-end layer answers: **given a query and retrieved documents, did the final response satisfy the user's need safely and correctly?**
 
-**Groundedness** measures whether the LLM's response is supported by the retrieved documents. A grounded response contains only claims that can be traced back to the context. Ungrounded responses hallucinate facts not present in the documents. Evaluate groundedness with an LLM-as-judge: pass the response and retrieved documents to a second LLM and ask "Is every claim in this response supported by the documents?"
+**Groundedness** measures whether the LLM's response is supported by the retrieved documents. A grounded response contains only claims that can be traced back to the context. Ungrounded responses hallucinate facts not present in the documents. Use an LLM judge as one signal, not as proof of groundedness. Define a rubric, require structured output with cited evidence spans, version the judge model and prompt, measure agreement against human labels, and route ambiguous or high-risk cases to human review.
 
 **Citation correctness** measures whether citations point to the correct documents and passages. If the response cites "Document 3, paragraph 2" but the claim actually appears in Document 5, the citation is incorrect. Incorrect citations erode user trust even when the answer is factually correct.
 
@@ -131,7 +135,7 @@ RAG evaluation requires **ground truth datasets** that specify:
 2. The set of relevant documents that should be retrieved
 3. An expected answer (or evaluation rubric)
 
-**Build evaluation datasets from real usage logs.** Sample queries from production traffic, have domain experts label which documents are relevant, and write reference answers. Start with 50-100 representative queries covering common patterns (fact lookup, multi-hop reasoning, summarization) and edge cases (ambiguous queries, no-answer queries, adversarial queries).
+**Build evaluation datasets from real usage logs.** Sample queries from production traffic, have domain experts label which documents are relevant, and write reference answers. Start with a representative sample covering common patterns (fact lookup, multi-hop reasoning, summarization) and edge cases (ambiguous queries, no-answer queries, adversarial queries). The required size depends on your domain's diversity and risk tolerance — a narrow-domain support bot may need fewer cases than a general-purpose research assistant.
 
 **Version evaluation datasets alongside model and index changes.** When you reindex documents with a new chunking strategy, re-evaluate the entire suite. When you switch embedding models, re-run retrieval metrics. Track metrics over time to detect regressions.
 
@@ -154,23 +158,29 @@ def evaluate_retrieval(
     k: int = 10
 ) -> Dict[str, float]:
     """Compute retrieval metrics for a single query."""
-    retrieved_set = set(retrieved_doc_ids[:k])
+    retrieved_at_k = retrieved_doc_ids[:k]
+    retrieved_set = set(retrieved_at_k)
     relevant_set = set(relevant_doc_ids)
-    
-    # Recall@K: fraction of relevant docs retrieved
-    recall_at_k = len(retrieved_set & relevant_set) / len(relevant_set) if relevant_set else 0.0
-    
-    # Precision@K: fraction of retrieved docs that are relevant
-    precision_at_k = len(retrieved_set & relevant_set) / k if k > 0 else 0.0
-    
-    # NDCG@K: ranking quality
+
+    if not relevant_set:
+        return {"recall@k": 0.0, "precision@k": 0.0, "ndcg@k": 0.0}
+
+    hits = len(retrieved_set & relevant_set)
+    recall_at_k = hits / len(relevant_set)
+    precision_at_k = hits / len(retrieved_at_k) if retrieved_at_k else 0.0
+
+    # NDCG@K using standard log2 discount (Burges et al.)
+    import math
     dcg = sum(
-        (1 if doc_id in relevant_set else 0) / (i + 2) ** 0.5
-        for i, doc_id in enumerate(retrieved_doc_ids[:k])
+        (1.0 if doc_id in relevant_set else 0.0) / math.log2(i + 2)
+        for i, doc_id in enumerate(retrieved_at_k)
     )
-    idcg = sum(1 / (i + 2) ** 0.5 for i in range(min(k, len(relevant_set))))
+    idcg = sum(
+        1.0 / math.log2(i + 2)
+        for i in range(min(len(retrieved_at_k), len(relevant_set)))
+    )
     ndcg_at_k = dcg / idcg if idcg > 0 else 0.0
-    
+
     return {
         "recall@k": recall_at_k,
         "precision@k": precision_at_k,
@@ -182,7 +192,7 @@ def evaluate_groundedness(
     retrieved_docs: List[str],
     llm_judge
 ) -> Tuple[bool, str]:
-    """Use LLM-as-judge to assess groundedness."""
+    """Use LLM-as-judge to assess groundedness with structured output."""
     prompt = f"""You are evaluating whether a response is grounded in the provided documents.
 
 DOCUMENTS:
@@ -191,10 +201,18 @@ DOCUMENTS:
 RESPONSE:
 {response}
 
-Is every claim in the response supported by the documents? Answer YES or NO, then explain.
+Evaluate each claim in the response. For each claim, cite the document number
+that supports it or mark it as unsupported.
+
+Respond in JSON:
+{{"grounded": true/false, "claims": [{{"claim": "...", "supported_by": "doc N" or null}}], "explanation": "..."}}
 """
     judgment = llm_judge.generate(prompt)
-    is_grounded = judgment.strip().upper().startswith("YES")
+    try:
+        result = json.loads(judgment)
+        is_grounded = result.get("grounded", False)
+    except json.JSONDecodeError:
+        is_grounded = False
     return is_grounded, judgment
 
 def evaluate_rag_pipeline(
@@ -228,10 +246,13 @@ def evaluate_rag_pipeline(
         groundedness_scores.append(1.0 if is_grounded else 0.0)
     
     # Aggregate metrics
-    avg_recall = sum(m["recall@k"] for m in retrieval_metrics) / len(retrieval_metrics)
-    avg_precision = sum(m["precision@k"] for m in retrieval_metrics) / len(retrieval_metrics)
-    avg_ndcg = sum(m["ndcg@k"] for m in retrieval_metrics) / len(retrieval_metrics)
-    avg_groundedness = sum(groundedness_scores) / len(groundedness_scores)
+    n = len(retrieval_metrics)
+    if n == 0:
+        return {"avg_recall@10": 0.0, "avg_precision@10": 0.0, "avg_ndcg@10": 0.0, "groundedness_rate": 0.0}
+    avg_recall = sum(m["recall@k"] for m in retrieval_metrics) / n
+    avg_precision = sum(m["precision@k"] for m in retrieval_metrics) / n
+    avg_ndcg = sum(m["ndcg@k"] for m in retrieval_metrics) / n
+    avg_groundedness = sum(groundedness_scores) / n
     
     return {
         "avg_recall@10": avg_recall,

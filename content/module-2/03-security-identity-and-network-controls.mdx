@@ -4,7 +4,7 @@ quiz:
   - question: "Why should data workloads use workload identity instead of shared credentials?"
     options:
       - "Workload identity is faster and reduces API latency"
-      - "It provides per-workload audit trails, enables least privilege, and eliminates credential rotation"
+      - "It gives workloads distinct identities, supports least-privilege access, improves auditability, and reduces reliance on long-lived shared credentials"
       - "Shared credentials are deprecated in all major cloud providers"
       - "Workload identity is required for compliance with GDPR"
     correctIndex: 1
@@ -49,7 +49,7 @@ In Kubernetes on GKE, a pod runs with a **Kubernetes service account** (KSA). Yo
 3. Pod receives a short-lived OAuth token scoped to the GSA's permissions
 4. Pod uses that token to authenticate to BigQuery
 
-At no point does the pod hold a static credential. The token expires in an hour. If the pod is compromised, the blast radius is limited to that pod's identity and the token's TTL.
+At no point does the pod hold a static credential. The token is short-lived (the default TTL is provider- and configuration-dependent). If the pod is compromised, the blast radius is limited to that pod's identity and the token's remaining validity.
 
 <MermaidDiagram chart={`graph TD
     A[Pod with KSA] -->|1. Request token| B[K8s Metadata Server]
@@ -73,7 +73,11 @@ Every major cloud has a workload identity mechanism:
 
 The pattern is universal: workloads authenticate as themselves, not as humans. The platform's identity provider is the source of truth. Credentials are short-lived and scoped.
 
-**Principle:** Every data workload — Spark job, Airflow task, streaming processor — must have its own identity. Shared service accounts are a failure mode, not a deployment shortcut.
+**Principle:** Every data workload — Spark job, Airflow task, streaming processor — should have its own identity. Shared service accounts are a failure mode, not a deployment shortcut.
+
+<VerifyClaim status="verify">
+Workload identity token lifetime, exchange behavior, and federation mechanisms are provider- and configuration-specific. Verify the current documentation for GKE Workload Identity Federation, AWS IRSA, and Azure AD Workload Identity for your deployment versions.
+</VerifyClaim>
 
 ## IAM for Data Platforms — Two Layers of Access Control
 
@@ -118,7 +122,7 @@ Every data platform has secrets: database passwords, API keys, OAuth tokens, enc
 
 Kubernetes Secrets are **base64-encoded, not encrypted**. They are stored in etcd, which is only encrypted at rest if you enable etcd encryption (not default). Secrets are visible to anyone with `kubectl get secret` access in the namespace.
 
-Kubernetes Secrets are fine for **non-sensitive configuration** (e.g., feature flags, service endpoints). They are **not** a secure secrets store for production credentials.
+Kubernetes Secrets are fine for **non-sensitive configuration** (e.g., feature flags, service endpoints). For production credentials, evaluate whether your cluster's etcd encryption, RBAC configuration, and audit logging meet your security requirements — if not, use a dedicated secrets manager.
 
 ### Secrets Management Options
 
@@ -148,7 +152,7 @@ Example workflow with GCP Secret Manager:
 
 The secret is decrypted in-flight. The workload never sees the raw secret value in its configuration.
 
-**Decision framework:** Use cloud-native secrets managers unless you have regulatory requirements (HIPAA, PCI-DSS) that demand self-hosted encryption. Vault is the right tool for those cases. Otherwise, GCP Secret Manager is simpler and cheaper.
+**Decision framework:** Choose a secrets-management approach through a documented threat model, operational-capability assessment, and compliance review. Managed services (GCP Secret Manager, AWS Secrets Manager) are often appropriate and simpler to operate, but regulatory obligations do not by themselves prescribe one implementation. If your threat model requires customer-controlled encryption or your compliance posture demands audit depth beyond what managed services provide, evaluate Vault or equivalent self-hosted solutions.
 
 ### Injection Patterns — How Secrets Reach Workloads
 
@@ -223,7 +227,7 @@ Kubernetes service meshes (Istio, Linkerd) automate mTLS:
 
 Without a service mesh, you must configure mTLS manually in each application (e.g., Kafka broker certificates, PostgreSQL SSL mode).
 
-**Best practice:** Use a service mesh for mTLS if you have more than a handful of services. The operational complexity of managing certificates manually exceeds the complexity of running Istio.
+**Best practice:** Consider a service mesh for mTLS when the operational cost of managing certificates manually across your services exceeds the cost of running a mesh control plane. Evaluate based on service count, security requirements, and team operational maturity rather than a fixed threshold.
 
 ### Key Management
 
@@ -331,7 +335,7 @@ Kubernetes NetworkPolicies operate at **Layer 4** (TCP/UDP port level). Service 
 
 Service meshes also provide **observability** — distributed tracing, request logs, and latency histograms for every service-to-service call.
 
-**Trade-off:** Service meshes add complexity (sidecar containers, control plane overhead, certificate rotation). Use them if you have **more than ~10 microservices** and need fine-grained traffic control. For simpler architectures, Kubernetes NetworkPolicies are sufficient.
+**Trade-off:** Service meshes add complexity (sidecar containers, control plane overhead, certificate rotation). They pay off when you need fine-grained traffic control, observability across many services, or consistent mTLS enforcement. For simpler architectures with fewer inter-service dependencies, Kubernetes NetworkPolicies are sufficient.
 
 <MermaidDiagram chart={`graph TD
     subgraph "Security Layers"
@@ -398,7 +402,7 @@ Security failures in data platforms follow predictable patterns:
 
 Security for data platforms is built on **zero trust**: workloads authenticate as themselves, secrets are managed externally, network traffic is encrypted and authorized, and access is granted at the finest granularity.
 
-**Workload identity** eliminates shared credentials and provides per-workload audit trails. **IAM** enforces least privilege, separating platform access from data access. **Secrets management** (Vault, cloud-native) injects credentials at runtime and rotates them automatically. **Encryption** (at rest, in transit) is table stakes — the question is who controls the keys. **Tenant isolation** (namespaces, network policies, data-level permissions) prevents one team from affecting another. **Network controls** (private endpoints, egress rules, service meshes) segment traffic and limit blast radius.
+**Workload identity** reduces reliance on long-lived shared credentials and provides per-workload audit trails. **IAM** enforces least privilege, separating platform access from data access. **Secrets management** (Vault, cloud-native) injects credentials at runtime and rotates them automatically. **Encryption** (at rest, in transit) is table stakes — the question is who controls the keys. **Tenant isolation** (namespaces, network policies, data-level permissions) prevents one team from affecting another. **Network controls** (private endpoints, egress rules, service meshes) segment traffic and limit blast radius.
 
 The shift from implicit trust to zero trust is the defining architectural change in modern data platforms. Infrastructure-level security (this lesson) is the foundation. Data-policy enforcement (Module 7) builds on top of it.
 

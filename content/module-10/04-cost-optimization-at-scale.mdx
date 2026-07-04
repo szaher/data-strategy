@@ -35,7 +35,11 @@ Why unit economics matter:
 | Cost per AI request           | LLM API cost divided by request count               | Monitor prompt efficiency, model selection          |
 | Cost per embedding generation | Embedding model cost divided by vectors generated   | Choose embedding models by cost/quality tradeoff    |
 
-**Example**: Your feature store processes 10 million feature retrievals per day. The infrastructure costs \$3,000/day. Unit cost: **\$0.0003 per retrieval**. If you add a caching layer that reduces retrievals by 30%, unit cost drops to \$0.00021 — a 30% savings that justifies the engineering investment in caching.
+**Example** (illustrative — actual costs depend on provider, region, and workload): Your feature store processes 10 million feature retrievals per day. The infrastructure costs \$3,000/day. Unit cost: **\$0.0003 per retrieval**. If you add a caching layer that reduces retrievals by 30%, unit cost drops to \$0.00021 — a 30% savings that justifies the engineering investment in caching.
+
+<VerifyClaim status="verify">
+All cost figures, savings percentages, and pricing examples in this lesson are illustrative and based on assumed workload profiles. Verify against current cloud provider pricing pages, your organization's negotiated rates, and actual usage patterns.
+</VerifyClaim>
 
 <MermaidDiagram chart={`graph TD
     A[Infrastructure Bill] --> B[Allocate to Services]

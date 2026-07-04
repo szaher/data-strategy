@@ -31,6 +31,15 @@ jobs:
 
       - run: pnpm install --frozen-lockfile=false
 
+      - name: Validate content
+        run: pnpm validate
+
+      - name: Run tests
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
       - name: Exclude API routes for static export
         run: mv src/app/api src/app/_api
 
