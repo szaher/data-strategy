@@ -23,6 +23,16 @@ function isQuizQuestion(value: unknown): value is RawQuizQuestion {
   );
 }
 
+export async function generateStaticParams() {
+  const curriculum = await getCurriculum();
+  return curriculum.modules.flatMap((mod) =>
+    mod.lessons.map((lesson) => ({
+      module: String(mod.id),
+      lesson: lesson.slug,
+    })),
+  );
+}
+
 export default async function LessonPage({ params }: LessonPageProps) {
   const { module: moduleStr, lesson: lessonSlug } = await params;
   const moduleId = parseInt(moduleStr, 10);

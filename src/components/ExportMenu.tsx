@@ -19,6 +19,8 @@ export default function ExportMenu() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
+  if (process.env.NEXT_PUBLIC_STATIC_EXPORT) return null;
+
   const handleExport = async (scope: "all" | number, format: string) => {
     setExporting(true);
     setStatus("Starting export...");

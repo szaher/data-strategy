@@ -154,6 +154,17 @@ export default function ChatInterface({ initialContext }: ChatInterfaceProps) {
     }
   };
 
+  if (process.env.NEXT_PUBLIC_STATIC_EXPORT) {
+    return (
+      <div className="flex items-center justify-center h-full text-[var(--text-secondary)]">
+        <div className="text-center px-6">
+          <p className="text-lg mb-2">AI Chat Tutor</p>
+          <p className="text-sm">The AI chat tutor requires a server deployment and is not available in this static build.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto px-6 py-4">

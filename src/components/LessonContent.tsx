@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { LessonMeta, ModuleMeta, QuizQuestion } from "@/types";
 import { markLessonComplete } from "@/lib/progress";
@@ -265,15 +266,17 @@ export default function LessonContent({
             )}
           </div>
 
-          <div className="mt-8 p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)]">
-            <a
-              href={`/chat?context=${mod.id}:${lesson.slug}`}
-              className="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
-            >
-              <span>💬</span>
-              <span>Ask about this lesson...</span>
-            </a>
-          </div>
+          {!process.env.NEXT_PUBLIC_STATIC_EXPORT && (
+            <div className="mt-8 p-4 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)]">
+              <Link
+                href={`/chat?context=${mod.id}:${lesson.slug}`}
+                className="flex items-center gap-2 text-sm text-[var(--text-secondary)] hover:text-[var(--accent-blue)] transition-colors"
+              >
+                <span>💬</span>
+                <span>Ask about this lesson...</span>
+              </Link>
+            </div>
+          )}
         </div>
       </div>
 
