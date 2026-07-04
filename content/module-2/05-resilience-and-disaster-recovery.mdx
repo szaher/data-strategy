@@ -38,7 +38,7 @@ Every infrastructure component exists within a **failure domain** — a boundary
 
 **Availability zones (AZs)** are the fundamental failure domain for cloud infrastructure. A zone is a physically isolated data center within a region, with independent power, cooling, and networking. Zone failures are rare but not hypothetical — they happen due to power grid faults, network partitions, and cooling system breakdowns. A data platform deployed entirely within a single AZ has a blast radius equal to the entire platform: if the zone fails, everything fails.
 
-**Regions** are collections of zones within a geographic area. Multi-region deployments protect against zone failures and regional disasters (hurricanes, earthquakes, regulatory shutdowns), but they introduce latency, data sovereignty constraints, and significantly higher replication costs. Most platforms tolerate multi-AZ single-region risk because cross-region DR is reserved for Tier 1 services with <15-minute RTO requirements.
+**Regions** are collections of zones within a geographic area. Multi-region deployments protect against zone failures and regional disasters (hurricanes, earthquakes, regulatory shutdowns), but they introduce latency, data sovereignty constraints, and significantly higher replication costs. Most platforms tolerate multi-AZ single-region risk because cross-region DR is reserved for Tier 1 services with &lt;15-minute RTO requirements.
 
 **Clusters and services** introduce logical failure domains orthogonal to physical zones. A misconfigured Kubernetes control plane can render an entire cluster unavailable even if all zones are healthy. A runaway query in a shared analytics cluster can starve other workloads of resources. Understanding these layered failure domains is essential: you cannot design recovery procedures until you know what can fail together.
 
@@ -113,7 +113,7 @@ Stateful services (databases, message brokers, metadata stores) must distribute 
 Leader-based replication introduces a tradeoff: writes go to a single leader (strong consistency), but leader failover causes a brief unavailability window. The speed of failover depends on failure detection and quorum re-election time:
 
 - **Kafka:** Leader election completes in 10-30 seconds under normal conditions, but can take minutes if ISR replicas are out of sync or if Zookeeper itself is degraded.
-- **Etcd:** Leader election typically completes in <5 seconds for a healthy cluster with low-latency inter-zone networking.
+- **Etcd:** Leader election typically completes in &lt;5 seconds for a healthy cluster with low-latency inter-zone networking.
 - **Databases (Postgres, MySQL):** Automatic failover with tools like Patroni (Postgres) or Orchestrator (MySQL) takes 15-60 seconds, depending on replication lag and health check configuration.
 
 > **Warning:** Leader election is not instantaneous. Clients must retry writes during failover windows. Applications that assume zero downtime without retry logic will experience user-visible errors during zone failures.
@@ -190,23 +190,23 @@ Lower RPO and RTO require more expensive infrastructure (cross-region replicatio
 
 ### Service-Tiered RPO/RTO
 
-Not every data product requires the same recovery guarantees. A real-time fraud detection pipeline and a monthly analytics dashboard have radically different criticality, and the cost of maintaining <1-minute RPO for non-critical workloads is unjustifiable.
+Not every data product requires the same recovery guarantees. A real-time fraud detection pipeline and a monthly analytics dashboard have radically different criticality, and the cost of maintaining &lt;1-minute RPO for non-critical workloads is unjustifiable.
 
 **Tier 1 — Business-Critical Real-Time**
-- RPO: <1 minute
-- RTO: <15 minutes
+- RPO: &lt;1 minute
+- RTO: &lt;15 minutes
 - Examples: Fraud detection, payment processing, real-time recommendations
 - DR Strategy: Active-active cross-region with automated failover, continuous replication, tested runbooks
 
 **Tier 2 — Important Batch Analytics**
-- RPO: <1 hour
-- RTO: <4 hours
+- RPO: &lt;1 hour
+- RTO: &lt;4 hours
 - Examples: Daily revenue dashboards, hourly model retraining, operational reports
 - DR Strategy: Active-passive with hourly backups, manual failover with runbooks, tested restore procedures
 
 **Tier 3 — Historical/Archive**
-- RPO: <24 hours
-- RTO: <24 hours
+- RPO: &lt;24 hours
+- RTO: &lt;24 hours
 - Examples: Compliance logs, historical data warehouse, archived model artifacts
 - DR Strategy: Periodic backups (daily or weekly), restore-from-backup only, infrequent restore tests
 
@@ -217,7 +217,7 @@ Not every data product requires the same recovery guarantees. A real-time fraud 
 **Active-Active (Multi-Region Writes)**
 - Both regions accept writes simultaneously
 - Requires conflict resolution (last-write-wins, CRDTs, manual merge)
-- Lowest RTO (<1 minute automatic failover) but highest complexity and cost
+- Lowest RTO (&lt;1 minute automatic failover) but highest complexity and cost
 - Used for globally distributed services (Google Spanner, DynamoDB Global Tables)
 
 **Active-Passive (Primary-Secondary)**
@@ -315,7 +315,7 @@ Let's revisit the recurring integration scenario (source database → Kafka → 
 **Failure mode:** Feature store (Feast, Tecton, or custom Redis/DynamoDB cache) loses data or becomes unavailable.
 
 **HA response:**
-- Multi-AZ Redis or DynamoDB with automatic failover (<30 seconds)
+- Multi-AZ Redis or DynamoDB with automatic failover (&lt;30 seconds)
 - No data loss for committed writes
 
 **DR response:**
@@ -336,6 +336,6 @@ High availability and disaster recovery are consequences of storage architecture
 
 Resilience is not replication, and disaster recovery is not backups. High availability prevents downtime during normal failures through multi-AZ deployment, leader election, and stateless scaling. Disaster recovery restores service after catastrophic events with tested procedures, known data loss (RPO), and bounded downtime (RTO).
 
-Data platforms must assign service-tiered recovery targets based on business criticality. Tier 1 real-time pipelines justify active-active cross-region replication and <15-minute RTO. Tier 3 archival data tolerates 24-hour RPO/RTO and backup-restore strategies. The failure mode that kills DR plans is untested recovery — backups that have never been restored, runbooks that have never been executed, and consistency assumptions that break under failover.
+Data platforms must assign service-tiered recovery targets based on business criticality. Tier 1 real-time pipelines justify active-active cross-region replication and &lt;15-minute RTO. Tier 3 archival data tolerates 24-hour RPO/RTO and backup-restore strategies. The failure mode that kills DR plans is untested recovery — backups that have never been restored, runbooks that have never been executed, and consistency assumptions that break under failover.
 
 In Module 3, you will see how storage architecture decisions (S3 durability classes, Delta Lake snapshots, Iceberg time-travel) enable or constrain the resilience patterns introduced here. Resilience begins at the storage layer, not the compute layer.

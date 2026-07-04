@@ -268,12 +268,12 @@ for team in team_costs['team'].unique():
     team_data = team_costs[team_costs['team'] == team]
     total_cost = team_data['cost_usd'].sum()
     print(f"\n--- {team.upper()} Monthly Bill ---")
-    print(f"Total Cost: ${total_cost:,.2f}\n")
+    print(f"Total Cost: \${total_cost:,.2f}\n")
     print(team_data[['resource_type', 'resource_count', 'cost_usd']].to_string(index=False))
     print("\nUnit Cost Benchmarks:")
-    print(f"  Pipeline run: ${unit_costs['pipeline_run']:.4f}")
-    print(f"  TB stored: ${unit_costs['tb_stored']:.2f}")
-    print(f"  Query served: ${unit_costs['query']:.4f}")
+    print(f"  Pipeline run: \${unit_costs['pipeline_run']:.4f}")
+    print(f"  TB stored: \${unit_costs['tb_stored']:.2f}")
+    print(f"  Query served: \${unit_costs['query']:.4f}")
     print(f"\nOptimization opportunities: Review high-cost resources and compare to benchmarks.")
 `} language="python" filename="chargeback_allocation.py" />
 

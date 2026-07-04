@@ -326,7 +326,7 @@ The cost of reranking 100 documents is negligible compared to the cost of search
 
 **When to skip reranking:**
 - Your initial retrieval precision is already >90% (rare)
-- Latency budget is <50ms and you can't afford the reranker
+- Latency budget is &lt;50ms and you can't afford the reranker
 - You're building a broad exploration interface, not a single-answer system
 
 For production RAG (chatbots, Q&A systems, knowledge retrieval), reranking is standard.
