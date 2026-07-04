@@ -1,4 +1,4 @@
-# Modern Data & AI Platform Academy
+# Modern Data & AI Platform
 
 A 10-module interactive curriculum covering cloud-native data strategy, platform engineering, and AI data infrastructure — from foundations to production. Built on the [learn-template](https://github.com/szaher/learn-template) Next.js platform.
 
