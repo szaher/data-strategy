@@ -20,20 +20,19 @@ export default function Quiz({ questions, onComplete }: QuizProps) {
   const handleSubmit = () => {
     if (selected === null) return;
     const isCorrect = selected === q.correctIndex;
-    const newScore = score + (isCorrect ? 1 : 0);
-    setScore(newScore);
+    setScore(score + (isCorrect ? 1 : 0));
     setSubmitted(true);
-
-    if (currentIndex === questions.length - 1) {
-      setFinished(true);
-      onComplete(newScore);
-    }
   };
 
   const handleNext = () => {
     setCurrentIndex((i) => i + 1);
     setSelected(null);
     setSubmitted(false);
+  };
+
+  const handleFinish = () => {
+    setFinished(true);
+    onComplete(score);
   };
 
   if (finished) {
@@ -133,7 +132,14 @@ export default function Quiz({ questions, onComplete }: QuizProps) {
           >
             Next
           </button>
-        ) : null}
+        ) : (
+          <button
+            onClick={handleFinish}
+            className="px-4 py-2 text-sm rounded-lg bg-[var(--accent-blue)] text-white hover:opacity-90 transition-opacity"
+          >
+            Finish
+          </button>
+        )}
       </div>
     </div>
   );

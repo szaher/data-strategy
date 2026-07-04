@@ -1,6 +1,6 @@
-# AI Tutorial Template
+# Modern Data & AI Platform Academy
 
-A production-grade Next.js template for AI-generated, end-to-end educational tutorials. It combines typed tutorial specifications, structured prompt contracts, reusable MDX learning components, deterministic quality gates, and human-review checkpoints.
+A 10-module interactive curriculum covering cloud-native data strategy, platform engineering, and AI data infrastructure — from foundations to production. Built on the [learn-template](https://github.com/szaher/learn-template) Next.js platform.
 
 ## Quick Start
 
@@ -12,28 +12,34 @@ pnpm test
 pnpm dev
 ```
 
-## What This Provides
+## What This Covers
 
-- Typed tutorial specification in `src/types/tutorial.ts`.
-- Runtime schema and cross-reference validation in `src/lib/tutorialSpec.ts`.
-- Staged generation pipeline in `src/lib/generationPipeline.ts`.
-- JSON-first prompt templates in `prompts/`.
-- MDX learning components for objectives, prerequisites, terms, callouts, diagrams, flashcards, quizzes, worked examples, exercises, citations, source labels, verification states, narration hooks, mind maps, infographics, and slide embeds.
-- Deterministic checks for tutorial-spec structure, MDX compilation, local links, declared citation identifiers, selected accessibility attributes, duplicate paragraphs, and heuristic risky-claim wording. These checks do not establish factual accuracy, legal compliance, pedagogical quality, or complete accessibility conformance.
-- GitHub Actions CI in `.github/workflows/ci.yml`.
+- **Module 1** — Data strategy, operating model, reference architecture
+- **Module 2** — Platform foundations: cloud, Kubernetes, security, FinOps
+- **Module 3** — Storage, persistence, and table design
+- **Module 4** — Ingestion, events, and change data capture
+- **Module 5** — Processing and data transformation
+- **Module 6** — Lakehouse, query serving, and data products
+- **Module 7** — Trust plane: quality, lineage, catalog, governance
+- **Module 8** — ML data infrastructure
+- **Module 9** — LLM and agent data infrastructure
+- **Module 10** — Production architecture and platform evolution
+
+50 lessons with interactive quizzes, Mermaid diagrams, worked examples, and code blocks.
 
 ## Project Structure
 
 ```text
 content/
-  module-1/                 # Sample rendered lessons
-  tutorials/                # TutorialSpec JSON fixtures
-docs/                       # Architecture and authoring flow
-prompts/                    # JSON-first generation and repair prompts
-prompts/schemas/            # JSON Schema contracts
-scripts/validate.mjs        # Local quality gates
-src/components/learning.tsx # Reusable MDX education components
-src/lib/                    # Curriculum, MDX, validation, pipeline helpers
+  module-1/  … module-10/     # Rendered lesson content (MDX)
+  tutorials/                   # TutorialSpec JSON files, when used
+docs/                          # Architecture and authoring flow
+presentations/                 # Marp slide decks
+prompts/                       # JSON-first generation and repair prompts
+prompts/schemas/               # JSON Schema contracts
+scripts/validate.mjs           # Local quality gates
+src/components/learning.tsx    # Reusable MDX education components
+src/lib/                       # Curriculum, MDX, validation, pipeline helpers
 ```
 
 ## Commands
@@ -42,50 +48,15 @@ src/lib/                    # Curriculum, MDX, validation, pipeline helpers
 | --- | --- |
 | `pnpm dev` | Start the Next.js dev server |
 | `pnpm preview` | Alias for local preview |
-| `pnpm update:template` | Sync template changes into another instance |
+| `pnpm update:template` | Sync platform changes from learn-template |
 | `pnpm validate` | Run deterministic content quality gates |
 | `pnpm test` | Run Vitest tests |
 | `pnpm lint` | Run ESLint |
 | `pnpm build` | Build the app |
 
-## Updating From The Template
+## Quality Gates
 
-From an academy instance, call the script in your template checkout:
-
-```bash
-/path/to/learn-template/scripts/update-template.sh
-```
-
-Or run it from the template checkout and pass the instance path:
-
-```bash
-scripts/update-template.sh --target /path/to/my-academy
-```
-
-The script syncs template-owned files into the target while preserving
-academy-owned files by default:
-
-- `.env*`
-- `academy.config.ts`
-- `content/`
-- `presentations/`
-- `docker-compose.yml`
-- build output and dependency directories
-
-It also preserves the target `package.json` `name` field while still allowing
-dependency and script updates from the template.
-
-Preview changes without writing files:
-
-```bash
-scripts/update-template.sh --target /path/to/my-academy --dry-run
-```
-
-If you call the copied script from inside an instance, pass the template source:
-
-```bash
-pnpm update:template -- --source /path/to/learn-template
-```
+Deterministic checks for tutorial-spec structure, MDX compilation, local links, declared citation identifiers, selected accessibility attributes (including Diagram and MermaidDiagram fallback text), duplicate paragraphs, and heuristic risky-claim wording. These checks do not establish factual accuracy, legal compliance, pedagogical quality, or complete accessibility conformance.
 
 ## Authoring Flow
 

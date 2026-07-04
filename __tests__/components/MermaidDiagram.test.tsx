@@ -33,4 +33,18 @@ describe("MermaidDiagram", () => {
     expect(imgContainer).toBeDefined();
     expect(imgContainer.getAttribute("aria-label")).toBe(fallback);
   });
+
+  it("keeps sr-only fallback text after SVG renders", async () => {
+    const chart = "graph TD; A-->B;";
+    const fallback = "A flows to B.";
+    render(<MermaidDiagram chart={chart} fallback={fallback} />);
+
+    await screen.findByText("mock");
+
+    const allFallback = screen.getAllByText(fallback);
+    const srOnly = allFallback.find(
+      (el) => el.tagName === "P" && el.className.includes("sr-only"),
+    );
+    expect(srOnly).toBeDefined();
+  });
 });

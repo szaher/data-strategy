@@ -128,9 +128,9 @@ When a `multimediaPlan` is provided, integrate its recommendations:
 When the tutorial spec includes scaffolding configuration:
 
 - Add differentiated `Callout` boxes for different skill levels:
-  - `type="tip"` for beginner hints.
-  - `type="info"` for intermediate context.
-  - `type="warning"` for advanced considerations.
+  - `tone="info"` for beginner hints.
+  - `tone="warning"` for intermediate context.
+  - `tone="danger"` for advanced considerations.
 - Use graduated complexity: start with the simplest form, add complexity progressively.
 - Include hint levels where exercises appear: level 1 (direction), level 2 (approach), level 3 (partial solution).
 
@@ -139,7 +139,7 @@ When the tutorial spec includes scaffolding configuration:
 When the tutorial spec includes metacognition strategies:
 
 - Insert self-assessment prompts at section boundaries: "Before continuing, can you explain [concept] in your own words?"
-- Add reflection prompts at lesson end using `Callout type="info"`: "What was the most surprising thing you learned? What question do you still have?"
+- Add reflection prompts at lesson end using `Callout tone="info"`: "What was the most surprising thing you learned? What question do you still have?"
 - Include a `Flashcards` component for key concepts to enable self-testing.
 
 ## Gamification Integration
@@ -148,7 +148,7 @@ When `gamificationContext.enabled` is true:
 
 - Annotate exercises with point values from `pointRulesActive`.
 - Add achievement callouts when an exercise or section completion corresponds to a badge.
-- Use `Callout type="tip"` for gamification notes (e.g., "Complete this exercise to earn the 'Validation Expert' badge.").
+- Use `Callout tone="success"` for gamification notes (e.g., "Complete this exercise to earn the 'Validation Expert' badge.").
 
 ## Spaced Repetition
 
