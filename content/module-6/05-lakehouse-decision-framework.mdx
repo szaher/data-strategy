@@ -103,7 +103,7 @@ Three common patterns emerge in real deployments:
     style Catalog fill:#f0fff4,stroke:#38a169
     style Query fill:#fffbeb,stroke:#d69e2e
     style BI fill:#fef5e7,stroke:#e67e22
-`} />
+`} fallback="Diagram showing Pattern A (Lakehouse-Primary): Iceberg Tables in Object Storage connect to Unity Catalog metadata, which serves three primary query engines (Trino for interactive SQL, Spark for batch ETL, Flink for streaming). A limited BI layer runs Snowflake for executive dashboards, fed by Trino." />
 
 ### Pattern B: Warehouse-Primary
 
@@ -150,7 +150,7 @@ Three common patterns emerge in real deployments:
     style Storage fill:#f0fff4,stroke:#38a169
     style Catalog fill:#fffbeb,stroke:#d69e2e
     style ML fill:#fef5e7,stroke:#e67e22
-`} />
+`} fallback="Diagram showing Pattern B (Warehouse-Primary): BigQuery serves as the primary warehouse for all BI data, with data flowing to Iceberg Tables in Object Storage for ML features. Unity Catalog manages ML table metadata, serving Spark for feature engineering and PyTorch for model training." />
 
 ### Pattern C: True Hybrid
 
@@ -200,7 +200,7 @@ Three common patterns emerge in real deployments:
     style Storage fill:#f0fff4,stroke:#38a169
     style Catalog fill:#fffbeb,stroke:#d69e2e
     style Query fill:#fef5e7,stroke:#e67e22
-`} />
+`} fallback="Diagram showing Pattern C (True Hybrid): Snowflake serves as the warehouse for BI tables while Iceberg Tables in Object Storage serve ML and engineering workloads. Unity Catalog federates both systems by managing warehouse and lakehouse metadata together, serving Trino for lakehouse SQL and Spark for ETL, with bidirectional data flow between Snowflake and Iceberg." />
 
 ## Catalog-Driven Table Management
 
@@ -275,7 +275,7 @@ Use this matrix to evaluate lakehouse vs warehouse vs hybrid:
     style HYB1 fill:#fffbeb,stroke:#d69e2e
     style HYB2 fill:#fffbeb,stroke:#d69e2e
     style CATALOG fill:#fef5e7,stroke:#e67e22
-`} />
+`} fallback="Decision tree for choosing a data platform architecture: starts by evaluating ML/AI workloads and multi-engine access needs (leading to Lakehouse-Primary), high-concurrency interactive SQL (leading to Warehouse-Primary), cost sensitivity and existing warehouse investment (leading to Hybrid). All paths converge on the requirement for a unified catalog." />
 
 **Anti-pattern detection:**
 - **All-in on lakehouse** when your organization is 80% BI analysts → operational burden will overwhelm your small engineering team

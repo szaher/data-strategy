@@ -52,7 +52,7 @@ If you have a single model, batch predictions, or features that are simple SQL q
     style Online fill:#fbd38d,stroke:#d69e2e
     style Offline fill:#fbd38d,stroke:#d69e2e
     style Full fill:#fc8181,stroke:#c53030
-`} />
+`} fallback="Decision tree for choosing a feature store tier. Starting with whether multiple models share features: if no, check for real-time predictions — if no, use direct DB queries; if yes, check feature complexity — simple SQL leads to query plus cache, complex transforms lead to an online-only feature store. If multiple models do share features, check for low-latency requirements — if no, use an offline-only store; if yes, use a full feature platform with online and offline stores." />
 
 ### Feature Store Tiers
 
@@ -116,7 +116,7 @@ This is what **full feature platforms** enforce. Feast's `materialize` command w
     style S2 fill:#90cdf4,stroke:#2c5282
     style T3 fill:#c6f6d5,stroke:#2f855a
     style S3 fill:#fed7d7,stroke:#c53030
-`} />
+`} fallback="Model-data consistency pattern showing training and serving pipelines both importing the same feature transform code from a shared feature_definitions directory. A central feature pipeline writes versioned features (v3) to both an offline store (for training) and an online store (for serving), ensuring identical feature logic and values across both environments." />
 
 ### Why Consistency is Hard
 
@@ -301,7 +301,7 @@ You are now equipped to design a **feature store architecture** and **training-d
     style T2 fill:#ebf8ff,stroke:#3182ce
     style T3 fill:#ebf8ff,stroke:#3182ce
     style T4 fill:#ebf8ff,stroke:#3182ce
-`} />
+`} fallback="Full feature platform architecture: data sources (Postgres, Snowflake, MongoDB) feed feature definitions (Python and YAML), which are registered via Feast Apply and materialized hourly. Features flow to a BigQuery offline store for batch training and a Redis online store for real-time serving. The trust plane integrates feature ownership, lineage graph, data quality checks, and access control across the platform." />
 
 ## Key Takeaways
 

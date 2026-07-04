@@ -83,7 +83,7 @@ Here's the fundamental decision tree:
     style Document fill:#fff4e6,stroke:#ff9900
     style Search fill:#fff4e6,stroke:#ff9900
     style Vector fill:#fff4e6,stroke:#ff9900
-`} />
+`} fallback="Two-level decision tree for storage selection. The first question is access pattern, branching into four options: Random Reads/Writes with single process leads to Block Storage (EBS, persistent disk) for VM disks, database storage, and high-IOPS apps. Random Reads/Writes with multiple processes leads to File Storage (NFS, EFS) for shared workspaces and legacy apps. Write Once Read Many leads to Object Storage (S3, GCS) for data lake, backups, and unstructured data. Structured Queries with transactions leads to Database, which branches into a second-level question on data structure: Relational with ACID leads to PostgreSQL, Semi-Structured with flexible schema leads to MongoDB, Full-Text Search leads to Elasticsearch, and Embeddings with semantic search leads to Vector Database (pgvector, Milvus)." />
 
 ### Block Storage: High-IOPS, Single-Attach Workloads
 
@@ -246,7 +246,7 @@ This matrix is based on the **recurring scenario** from Module 1: an e-commerce 
     style Storage9 fill:#fef0f0,stroke:#cc0000
     style Storage10 fill:#fef0f0,stroke:#cc0000
     style Storage11 fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Storage decision matrix mapping data types across four platform layers to specific storage systems. Operational Layer: transactional data (orders, customers, inventory) maps to PostgreSQL/Cloud SQL; CDC event stream maps to Kafka Topics then Object Storage. Analytics Layer: raw event data maps to Object Storage (Parquet); processed analytics maps to Lakehouse (Object Storage plus Catalog); real-time metrics maps to Redis/Time-Series DB. ML Layer: features map to Feature Store (Redis plus Object Storage); model artifacts map to versioned Object Storage buckets; embeddings map to pgvector. AI Layer: raw documents map to Object Storage; vector embeddings map to pgvector or Milvus; search index maps to Elasticsearch or OpenSearch." />
 
 **Matrix Rationale:**
 

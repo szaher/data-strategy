@@ -153,7 +153,7 @@ The key principle is **treat federated queries as a privilege, not a default**. 
     style C fill:#e0f0ff,stroke:#0066cc
     style D fill:#fff4e6,stroke:#ff9800
     style E fill:#f3e5f5,stroke:#9c27b0
-`} />
+`} fallback="Diagram showing query engine routing: a query request is routed based on workload type — distributed analytical queries go to a Trino Cluster (which reads from Iceberg tables, PostgreSQL read replicas, and Kafka topics), embedded or local queries go to DuckDB in-process (which reads Iceberg tables and local Parquet files), and managed BI queries go to a Cloud Warehouse like BigQuery or Snowflake." />
 
 ## Engine Placement Decisions
 
@@ -285,7 +285,7 @@ The tradeoff is **cost vs convenience**. Warehouse engines charge per query or p
     style C fill:#fff4e6,stroke:#ff9800
     style E fill:#e0f0ff,stroke:#0066cc
     style F fill:#f3e5f5,stroke:#9c27b0
-`} />
+`} fallback="Decision flowchart for query engine selection based on workload characteristics: data under 100 GB on a single node routes to DuckDB Embedded; data over 100 GB routes to a concurrency check — high concurrency with federated needs routes to Trino on Kubernetes, moderate concurrency with managed preference routes to BigQuery or Snowflake. Each engine lists its key strengths." />
 
 ## Workload Management and Guardrails
 

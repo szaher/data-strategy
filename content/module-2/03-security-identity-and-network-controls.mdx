@@ -61,7 +61,7 @@ At no point does the pod hold a static credential. The token is short-lived (the
     style A fill:#e0f0ff,stroke:#0066cc
     style C fill:#fff4e0,stroke:#cc8800
     style E fill:#e0ffe0,stroke:#00cc00
-`} />
+`} fallback="Workload identity token exchange flow with five steps: a Pod with a Kubernetes Service Account requests a token from the K8s Metadata Server, which validates the KSA with GKE Workload Identity. GKE exchanges it for a Google Cloud IAM service account token, which issues a short-lived OAuth token back to the pod. The pod then authenticates with that token to the BigQuery API." />
 
 ### Cloud Provider Patterns
 
@@ -362,7 +362,7 @@ Service meshes also provide **observability** — distributed tracing, request l
     style E fill:#ffe0e0,stroke:#cc0000
     style F fill:#fff4e0,stroke:#cc8800
     style I fill:#e0ffe0,stroke:#00cc00
-`} />
+`} fallback="Security layers diagram showing five stacked layers: Workload Identity at top, flowing to IAM Policies, then Network Policies, Encryption in Transit, and Data Access Policies at the bottom. IAM Policies branches into two parallel tracks: Platform IAM (deploy infrastructure, modify K8s manifests, change network rules) and Data IAM (read tables, write datasets, column-level access)." />
 
 ## Failure Modes — What Goes Wrong
 

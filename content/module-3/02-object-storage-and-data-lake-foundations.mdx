@@ -244,7 +244,7 @@ Avoid over-partitioning. Too many small files harm performance. Aim for file siz
     style Bronze fill:#f2e6d9,stroke:#cc6600
     style Silver fill:#e6f2f2,stroke:#0066cc
     style Gold fill:#e6ffe6,stroke:#00cc00
-`} />
+`} fallback="Left-to-right flow showing the medallion architecture for data lake organization. Raw Data Sources flow into the Landing Zone (raw, ephemeral), then to the Bronze Layer (raw persistent, validated), then to the Silver Layer (curated, normalized, Parquet), then to the Gold Layer (business-ready, aggregated), and finally to BI Tools and ML Pipelines as consumers." />
 
 Each layer serves a distinct purpose. Landing is ephemeral. Bronze is the source of truth. Silver is optimized for analytics. Gold is tailored for specific business questions.
 
@@ -342,7 +342,7 @@ A 10TB bronze layer stored in S3 Standard costs $230/month. After 90 days, trans
     style G fill:#e6f2ff,stroke:#0066cc
     style I fill:#fef0f0,stroke:#cc0000
     style J fill:#f2f2f2,stroke:#666666
-`} />
+`} fallback="Lifecycle policy decision flowchart. When an object is created, if age is under 90 days it stays in S3 Standard (hot). If age is 90-365 days, it transitions to S3 Infrequent Access (warm). If age is 365 days to 5 years, it moves to S3 Glacier (cold). Beyond 5 years, if an expiration policy exists the object is deleted; otherwise it moves to S3 Glacier Deep Archive." />
 
 Lifecycle policies are set-and-forget. Define them once, let the cloud provider enforce them automatically.
 

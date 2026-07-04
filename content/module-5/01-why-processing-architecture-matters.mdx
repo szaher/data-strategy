@@ -190,7 +190,7 @@ The following diagram illustrates the modern approach: choose the right engine f
     style Batch fill:#fefcbf,stroke:#d69e2e
     style Stream fill:#fed7d7,stroke:#e53e3e
     style Output fill:#c6f6d5,stroke:#38a169
-`} />
+`} fallback="Diagram showing unified processing architecture: data sources (Kafka Events, Object Storage, Databases) feed into a batch path (Spark, dbt) and a stream path (Flink), both writing to a unified output layer of Iceberg Tables." />
 
 ## Choosing a Processing Pattern
 
@@ -213,7 +213,7 @@ Use the following decision framework to select the right pattern based on your f
     style G fill:#fefcbf,stroke:#d69e2e
     style I fill:#fed7d7,stroke:#e53e3e
     style J fill:#fed7d7,stroke:#e53e3e
-`} />
+`} fallback="Decision flowchart for choosing a processing pattern: starts with latency requirement, branches to event-driven projection for sub-second needs, materialized view for daily or slower needs, and for minutes-to-hours latency evaluates complexity to choose between dbt/ELT for simple SQL or Spark for complex transforms. Event-driven projections further branch by state requirement to Flink stateful or stateless processing." />
 
 ## When to Share vs Separate Processing Pipelines
 

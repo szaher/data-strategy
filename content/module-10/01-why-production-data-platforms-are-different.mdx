@@ -105,7 +105,7 @@ Why? Because **production reveals integration failures that component testing ca
     style Storage fill:#f0fff4,stroke:#38a169
     style Compute fill:#e6fffa,stroke:#319795
     style Serving fill:#ebf8ff,stroke:#3182ce
-`} />
+`} fallback="Integration failure surface diagram showing six platform layers — data sources, ingestion, orchestration, storage, compute, and serving — connected by arrows labeled with their failure modes: rate limits and schema drift on source connections, backpressure and late-arriving data on ingestion, concurrency limits and query timeouts on orchestration, cost per scan and slot contention on compute, and cache invalidation and index refresh lag on serving." />
 
 Each arrow in this diagram is a failure point. The vendor API hits rate limits during peak hours. The database connection pool saturates under load. The event stream delivers messages out of order. The data lake hits storage quotas. The warehouse query times out. The Spark job runs out of memory. The cache invalidation logic has a race condition. The vector index refresh lags behind real-time queries.
 

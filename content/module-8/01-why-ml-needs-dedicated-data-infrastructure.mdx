@@ -57,7 +57,7 @@ Training-serving skew happens when the feature computation logic diverges betwee
     style Serving fill:#fef0f0,stroke:#c53030
     style C1 fill:#fff5f5,stroke:#c53030
     style C2 fill:#fff5f5,stroke:#c53030
-`} />
+`} fallback="Side-by-side comparison of training and serving environments. The training environment computes user_engagement_score as 0.87 from the historical data warehouse via a batch feature job. The serving environment computes the same feature as 0.62 from a real-time database via a feature API, illustrating training-serving skew." />
 
 Common causes of training-serving skew:
 
@@ -120,7 +120,7 @@ In production:
     style F fill:#fef0f0,stroke:#c53030
     style E fill:#f0fff4,stroke:#38a169
     style H fill:#f0fff4,stroke:#38a169
-`} />
+`} fallback="Flowchart showing notebook feature engineering leading to four production serving options: reimplementing in an API causes training-serving skew, a batch feature store causes stale features, no feature store leads to manual feature code — all three result in model degradation. Only a real-time feature store path leads to consistent features." />
 
 Bridging this gap requires **ML data infrastructure** — a layer between raw data and model predictions that handles:
 
@@ -324,7 +324,7 @@ ML data infrastructure sits between your general-purpose data platform and your 
     style Platform fill:#ebf8ff,stroke:#3182ce
     style MLInfra fill:#f0fff4,stroke:#38a169
     style ML fill:#fef5e7,stroke:#d69e2e
-`} />
+`} fallback="Three-layer architecture: data sources (application database, event stream, external APIs) feed a general data platform (warehouse, lake, real-time pipeline), which feeds ML data infrastructure (feature definitions, computation, offline and online stores, point-in-time joins), which in turn serves ML systems (training, serving, monitoring)." />
 
 In the next lessons, we'll build this infrastructure: feature definitions, offline and online stores, point-in-time joins, and monitoring for drift and skew. The goal is not to add complexity — it's to make ML production systems as reliable as the rest of your data platform.
 

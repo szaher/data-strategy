@@ -346,7 +346,7 @@ In production, you'd write results to a sink (database, Kafka, S3) instead of pr
     note right of StateWritten: RocksDB state backend used for large state
     note right of RestoreLatestCheckpoint: Exactly-once: replay produces identical results
     note left of CheckpointComplete: Old checkpoints deleted after new one succeeds
-`} />
+`} fallback="State diagram showing Flink's checkpoint and recovery cycle: from Running state, periodic checkpoints inject barriers into sources, operators snapshot state, state is written to durable storage (S3 or HDFS), and processing resumes. On failure, Flink triggers recovery by restoring the latest checkpoint and replaying from saved source offsets to resume processing with exactly-once guarantees." />
 
 This diagram shows Flink's checkpoint-recovery cycle. The key guarantee: after recovery, Flink resumes from the exact source offsets and state snapshot, ensuring deterministic replay.
 
@@ -396,7 +396,7 @@ This diagram shows Flink's checkpoint-recovery cycle. The key guarantee: after r
     Note over Window: Allowed lateness=30 sec<br/>Window still open, recompute and emit update
 
     Window-->>Operator: Updated result: count=3 (events A, B, E)
-`} />
+`} fallback="Sequence diagram showing how Flink processes events with event-time semantics: events arrive with timestamps, are assigned to windows, watermarks advance based on observed timestamps, and windows fire when watermarks pass the window end time. A late-arriving event triggers a window update within the allowed lateness period, updating the count from 2 to 3." />
 
 This sequence shows how watermarks advance based on observed event times, windows fire when watermarks pass their end time, and late events can trigger result updates within the allowed-lateness period.
 

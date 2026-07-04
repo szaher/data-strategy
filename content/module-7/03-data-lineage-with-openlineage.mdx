@@ -97,7 +97,7 @@ OpenLineage is **producer-agnostic**. Spark jobs, Airflow tasks, dbt models, Fli
     style Core fill:#fff4e6,stroke:#cc6600
     style Backend fill:#e6ffe6,stroke:#00cc66
     style Consumers fill:#ffe6f3,stroke:#cc0066
-`} />
+`} fallback="Architecture showing OpenLineage producers (Spark, Airflow, dbt, Flink, Custom) sending RunEvents through the OpenLineage HTTP API to a Marquez backend that builds a lineage graph. Consumers include the Marquez UI, data catalog, impact analysis, and compliance audit." />
 
 **Marquez** is the reference implementation of an OpenLineage backend. It receives RunEvents via HTTP, builds a lineage graph, and exposes APIs and a UI for querying lineage. You can run Marquez yourself or use managed lineage services that implement the OpenLineage API.
 
@@ -310,7 +310,7 @@ This is the difference between "this change might affect 23 downstream jobs" and
     class RawEvents changed
     
     classDef changed stroke-width:4px,stroke-dasharray: 5 5
-`} />
+`} fallback="Impact analysis graph showing raw.user_events as the changed source, feeding three transformation jobs (aggregate_sessions, enrich_events, filter_conversions) that write to three analytics tables (session_aggregates, enriched_events, conversions), which are consumed by a marketing dashboard, product analytics dashboard, and churn model training." />
 
 In this example, changing `raw.user_events` impacts 3 jobs, 3 analytics tables, and 3 serving-layer consumers. The lineage graph makes the blast radius explicit.
 

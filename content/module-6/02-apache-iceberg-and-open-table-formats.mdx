@@ -82,7 +82,7 @@ Iceberg's core innovation is a **layered metadata structure** that decouples sch
     style ManifestList fill:#e8f5e9,stroke:#4caf50
     style Manifest1 fill:#e8f5e9,stroke:#4caf50
     style Manifest2 fill:#e8f5e9,stroke:#4caf50
-`} />
+`} fallback="Diagram showing Iceberg's five-layer metadata architecture: a Catalog Service points to a Metadata File, which references a Manifest List, which lists individual Manifest Files, which track the actual Parquet Data Files. This layered structure enables fast query planning, atomic writes, and cheap time travel." />
 
 ### Five-Layer Hierarchy
 
@@ -303,7 +303,7 @@ The table format (Iceberg, Delta, Hudi) defines how data is stored. The **catalo
     style REST fill:#e8f5e9,stroke:#4caf50
     style Polaris fill:#fef0f0,stroke:#e74c3c
     style Unity fill:#f3e5f5,stroke:#9c27b0
-`} />
+`} fallback="Diagram showing five Iceberg catalog options: Hive Metastore (legacy, widely supported), Nessie (git-like versioning with branching and isolation), REST Catalog (engine-neutral standard API), Polaris (Snowflake-backed integration), and Unity Catalog (Databricks integration), all feeding into the catalog choice decision." />
 
 #### Hive Metastore (Legacy)
 
@@ -379,7 +379,7 @@ Apache Iceberg is not the only open table format. **Delta Lake** (Databricks) an
     style Iceberg fill:#ebf8ff,stroke:#3182ce
     style Delta fill:#fef5e7,stroke:#f39c12
     style Hudi fill:#e8f5e9,stroke:#4caf50
-`} />
+`} fallback="Comparison diagram of three open table formats: Apache Iceberg (engine-neutral, hidden partitioning, catalog-agnostic, snapshot isolation), Delta Lake (Databricks-optimized, transaction log, MERGE/UPDATE/DELETE, Spark-centric), and Apache Hudi (record-level upserts, incremental processing, copy-on-write plus merge-on-read, streaming-first)." />
 
 ### Delta Lake
 
@@ -461,7 +461,7 @@ Apache Iceberg is not the only open table format. **Delta Lake** (Databricks) an
     style Spark fill:#e8f5e9,stroke:#4caf50
     style Flink fill:#e8f5e9,stroke:#4caf50
     style Trino fill:#fef0f0,stroke:#e74c3c
-`} />
+`} fallback="Reference architecture diagram showing Iceberg with a REST Catalog: Spark (batch writes) and Flink (streaming writes) write Iceberg tables to object storage and register snapshots with the REST Catalog. Trino fetches metadata from the catalog and queries Iceberg tables in object storage. Apache Superset reads via Trino for dashboards." />
 
 **Workflow:**
 

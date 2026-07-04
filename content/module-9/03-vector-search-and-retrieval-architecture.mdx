@@ -117,7 +117,7 @@ The power of pgvector is that you can combine vector search with relational filt
     
     style Storage fill:#f0f9ff,stroke:#0369a1
     style VectorDB fill:#dbeafe,stroke:#0369a1
-`} />
+`} fallback="Vector database storage architecture: a user query is embedded and sent to the vector database, which maintains a vector index (HNSW, IVF, or DiskANN) distributed across multiple shards of 10M vectors each. The database returns top-K results, which are hydrated with full document content from a metadata store." />
 
 **Comparison:**
 
@@ -202,7 +202,7 @@ Filter the fused results by structured metadata (category, date range, access co
     
     style Fusion fill:#fef3c7,stroke:#d97706
     style Filtered fill:#dbeafe,stroke:#0369a1
-`} />
+`} fallback="Hybrid search architecture: a user query runs three parallel retrieval paths — dense vector search (embedding similarity), sparse BM25 keyword search, and metadata filters (category, date, ACL). Dense and sparse results are combined via Reciprocal Rank Fusion, then metadata filters are applied, producing the final top-K results." />
 
 **Why hybrid search beats pure vector search:**
 
@@ -311,7 +311,7 @@ Embedding models optimize for **speed** — they encode documents in a single fo
     
     style Stage1Details fill:#f0fdf4,stroke:#16a34a
     style Stage2Details fill:#fef3c7,stroke:#d97706
-`} />
+`} fallback="Two-stage retrieval pipeline: Stage 1 (fast recall, millisecond latency) runs dense vector search and sparse BM25 in parallel, merges results via RRF fusion, and produces the top 100 candidates. Stage 2 (precise reranking, 100ms latency) applies a cross-encoder model that jointly scores each query-document pair, rescoring the top 100 to produce the final top 10 results." />
 
 **Why this works:**
 

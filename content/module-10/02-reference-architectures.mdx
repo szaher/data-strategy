@@ -198,7 +198,7 @@ Let's trace a **single event** through the full stack, showing how every compone
     style ML fill:#fce7f3,stroke:#ec4899
     style Serving fill:#fce7f3,stroke:#ec4899
     style Observability fill:#f3f4f6,stroke:#6b7280
-`} />
+`} fallback="End-to-end hybrid blueprint: a PostgreSQL patient database emits row changes via Debezium CDC to Confluent Cloud Kafka (with Private Link). A Flink job on Kubernetes performs PII masking and enrichment, writing processed events to Apache Iceberg tables on S3 with customer-managed encryption keys. Trino provides row-level-secure queries. A Spark feature pipeline writes to Feast (offline BigQuery store, online Redis store), which serves features to a KServe readmission prediction model accessed via a REST API with mTLS and JWT. Prometheus, Grafana, Jaeger, and audit logs provide observability across all components." />
 
 ### Step-by-Step Flow
 
@@ -338,7 +338,7 @@ A typical migration sequence:
     style Managed fill:#dbeafe,stroke:#3b82f6
     style K8s fill:#fce7f3,stroke:#ec4899
     style Hybrid fill:#e0e7ff,stroke:#6366f1
-`} />
+`} fallback="Three blueprint comparison: managed-cloud-first (BigQuery/Redshift, Confluent Cloud/MSK, Cloud Composer/MWAA, Vertex AI/SageMaker, Cloud Logging/CloudWatch), Kubernetes-centric (Trino, Strimzi Kafka, Argo Workflows, Feast + KServe, Prometheus + Grafana), and hybrid/regulated (managed Kafka + self-hosted Flink, managed Airflow + self-hosted Spark, Iceberg with CMEK, self-hosted Trino + managed ML, hybrid observability). Migration paths connect managed components to their Kubernetes-centric equivalents, with partial migration paths to the hybrid blueprint." />
 
 | Dimension | Managed-Cloud-First | Kubernetes-Centric | Hybrid/Regulated |
 |-----------|---------------------|-------------------|------------------|

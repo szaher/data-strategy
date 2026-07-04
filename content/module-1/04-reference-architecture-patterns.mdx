@@ -234,7 +234,7 @@ The decision rule: **use managed services for components that don't differentiat
     style IAM fill:#dbeafe,stroke:#3b82f6
     style DataCat fill:#dbeafe,stroke:#3b82f6
     style Composer fill:#dbeafe,stroke:#3b82f6
-`} />
+`} fallback="Hybrid enterprise reference architecture showing data flowing from sources (SaaS APIs, transactional databases, event streams) through a hybrid ingestion layer (managed Kinesis/Pub/Sub for simple streams, self-hosted Airbyte for complex CDC) into managed storage (S3/GCS and BigQuery/Snowflake). Processing is hybrid: managed Dataproc Serverless for standard Spark and self-hosted Spark Operator for GPU/custom workloads. Serving is hybrid: managed BigQuery and Vertex AI alongside self-hosted Trino and custom model serving. The trust plane combines managed Cloud IAM and Data Catalog with self-hosted DataHub for lineage. Cloud Composer orchestrates all pipelines. Self-hosted components are highlighted in amber, managed components in blue." />
 
 ### When to Use
 
@@ -301,7 +301,7 @@ The key is to **make explicit decisions** for each layer. If your ingestion laye
     style Managed fill:#dbeafe,stroke:#3b82f6
     style K8s fill:#fef3c7,stroke:#f59e0b
     style Hybrid fill:#d1fae5,stroke:#10b981
-`} />
+`} fallback="Comparison of three architecture archetypes side by side. Managed-Cloud-First offers fast time-to-value and minimal ops but has vendor lock-in and higher cost at scale; best for teams without infra expertise. Kubernetes-Centric provides multi-cloud portability and full control but has high ops complexity and requires a platform team; best for multi-cloud and sovereignty needs. Hybrid/Regulated Enterprise balances ops complexity with flexible optimization and exit strategy but requires judgment calls; recommended for most organizations." />
 
 ### Decision Framework
 

@@ -83,7 +83,7 @@ This is the most common source of bugs in Kafka-based systems. If your use case 
     style Producer fill:#daf2f2,stroke:#0066cc
     style CG1 fill:#fef0f0,stroke:#cc0066
     style CG2 fill:#fef0f0,stroke:#cc0066
-`} />
+`} fallback="Diagram showing a Kafka topic named user-events with three partitions, each containing ordered offsets of user events. A producer with partition key user_id routes events to partitions, and two consumers in a consumer group each read from assigned partitions." />
 
 ### Producers, Consumers, and Consumer Groups
 
@@ -221,7 +221,7 @@ A production Kafka cluster on Kubernetes should have:
     style PV2 fill:#fef0f0,stroke:#cc0066
     style CG1 fill:#fff4e6,stroke:#cc6600
     style CG2 fill:#fff4e6,stroke:#cc6600
-`} />
+`} fallback="Diagram of a Strimzi-managed Kafka cluster on Kubernetes: the Strimzi Controller watches Kafka CRDs and reconciles three broker pods, each with SSD-backed persistent volumes and ZooKeeper or KRaft for metadata. Two consumer groups (analytics and CDC sink) stream from the brokers." />
 
 ### Example: Kafka Cluster Manifest
 
@@ -479,7 +479,7 @@ The **in-sync replica (ISR)** set contains all replicas that are fully caught up
     OffsetStore-->>Consumer: ack
 
     Note over Consumer,OffsetStore: If consumer crashes here,<br/>it will resume from offset 43<br/>(at-least-once delivery)
-`} />
+`} fallback="Sequence diagram showing Kafka message flow: a producer sends a keyed message to a broker, which appends it to a partition at offset 42 and acknowledges. A consumer polls the partition, receives the message, processes it, then commits offset 43 to the consumer_offsets topic, enabling at-least-once delivery on crash recovery." />
 
 **Key steps:**
 1. Producer writes a message to a partition (Kafka assigns offset 42).

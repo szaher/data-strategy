@@ -120,7 +120,7 @@ The result: **degraded operational performance**. Your checkout page slows down.
     style Conflict fill:#fee,stroke:#c33
     style OLTP fill:#e8f5e9,stroke:#4caf50
     style OLAP fill:#fff3e0,stroke:#ff9800
-`} />
+`} fallback="Diagram showing resource contention when OLTP and OLAP workloads share a PostgreSQL database. Three small OLTP transactions (INSERT order, UPDATE inventory, SELECT user profile) and one large OLAP analytics query (SUM revenue by region scanning 10 million rows) all hit the same PostgreSQL database simultaneously, resulting in resource contention, lock conflicts, and degraded latency." />
 
 ### The Correct Pattern: CDC to Lakehouse
 
@@ -175,7 +175,7 @@ For data platform workloads, **transaction pooling** is ideal. Most ETL and appl
     PGB --> PG
     style PGB fill:#e3f2fd,stroke:#1976d2
     style PG fill:#f3e5f5,stroke:#7b1fa2
-`} />
+`} fallback="Connection pooling architecture with PgBouncer. Four client connection sources (App Server 1 with 20 connections, App Server 2 with 20 connections, Airflow with 10 connections, and dbt with 5 connections) all connect to PgBouncer, which maintains 1000 client connections but multiplexes them down to only 50 backend connections to PostgreSQL (configured with max_connections of 100). PgBouncer uses transaction pooling mode." />
 
 ### Pool Sizing: Right-Sizing Backend Connections
 
@@ -252,7 +252,7 @@ You'll create replication slots for each CDC pipeline to track its position in t
     style Primary fill:#e8f5e9,stroke:#4caf50
     style Lake fill:#fff3e0,stroke:#ff9800
     style CDC fill:#e3f2fd,stroke:#1976d2
-`} />
+`} fallback="PostgreSQL replication topology showing a primary database handling OLTP workload. The primary streams WAL asynchronously to two standby replicas: Standby Replica 1 for high availability failover and Standby Replica 2 as a read replica for temporary reporting queries. The primary also sends row-level changes via logical replication to a CDC Pipeline, which feeds data into a Lakehouse for OLAP analytics workloads." />
 
 ## Backup, Restore, and Disaster Recovery
 

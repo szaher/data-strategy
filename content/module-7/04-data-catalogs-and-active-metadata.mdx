@@ -42,7 +42,7 @@ This lesson covers DataHub as the reference catalog architecture, compares it to
     style S2 fill:#efe,stroke:#3c3
     style U fill:#efe,stroke:#3c3
     style V fill:#efe,stroke:#3c3
-`} />
+`} fallback="Diagram contrasting the metadata silo problem — where quality monitors, lineage graphs, data contracts, and access policies are scattered, forcing analysts to hunt across systems — with the data catalog solution that unifies all metadata into a single trust index providing freshness metrics, owner contacts, and lineage graphs in one interface." />
 
 ## DataHub as Reference Architecture
 
@@ -95,7 +95,7 @@ This graph model lets you answer questions like "show me all datasets owned by t
     style GMS fill:#e0f0ff,stroke:#0066cc
     style UI fill:#e0f0ff,stroke:#0066cc
     style ACT fill:#fff4e6,stroke:#cc8800
-`} />
+`} fallback="DataHub architecture showing metadata sources (Snowflake, Airflow, Looker, dbt) feeding through connectors into the ingestion framework, which writes to the Metadata Service (GraphQL and REST API). The service stores data in MySQL/Postgres and indexes in Elasticsearch, serves the React frontend UI, and emits events to the Actions Framework for Slack alerts and auto-tagging." />
 
 ## Catalog Capabilities
 
@@ -164,7 +164,7 @@ This is the **trust index** in action — the analyst sees quality results from 
     
     style D fill:#e0f0ff,stroke:#0066cc
     style TR fill:#fff4e6,stroke:#cc8800
-`} />
+`} fallback="Trust index diagram showing trust plane components (Great Expectations quality results, Marquez lineage edges, data contracts, IAM policies, query log usage stats) feeding into a dataset detail page that displays freshness, quality check status, lineage graph, schema with PII tags, contract conformance, usage stats, and owner info. The user makes a trust decision to proceed with the query or contact the owner first." />
 
 ## Critical Distinction: Visibility vs Enforcement
 
@@ -371,7 +371,7 @@ Most teams that start with AWS Glue or Google Data Catalog eventually migrate to
     style DH fill:#e0f0ff,stroke:#0066cc
     style OM fill:#e0f0ff,stroke:#0066cc
     style DH2 fill:#e0f0ff,stroke:#0066cc
-`} />
+`} fallback="Decision tree for choosing a data catalog. Small teams under 10 engineers are directed to managed options (AWS Glue, Google Data Catalog, or Atlan/Alation for multi-cloud). Larger teams needing active metadata actions choose DataHub if they need 100+ connectors, or OpenMetadata for column-level lineage out of the box." />
 
 ## Failure Modes
 

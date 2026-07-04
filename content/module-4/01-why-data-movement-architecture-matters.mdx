@@ -74,7 +74,7 @@ Without architecture, teams build **point-to-point integrations**. The PostgreSQ
     
     style Sources fill:#fff5f5,stroke:#e53e3e
     style Destinations fill:#f0fff4,stroke:#38a169
-`} />
+`} fallback="Diagram showing the N times M integration problem: four source systems (PostgreSQL, MongoDB, External API, File Uploads) each connected via individual point-to-point integrations to five destination systems (Data Warehouse, Elasticsearch, Data Lake, Vector Store, Redis Cache), illustrating the fragile web of custom integrations." />
 
 Each dotted line represents a custom integration — different code, different retry logic, different monitoring, different failure modes. When a new destination is added, every source needs a new integration. When a source schema changes, every integration breaks.
 
@@ -209,7 +209,7 @@ Data stays in the source system. Consumers query it **in-place** using a query e
     style Command fill:#fff7e6,stroke:#fa8c16
     style Batch fill:#fff1f0,stroke:#f5222d
     style Federation fill:#f9f0ff,stroke:#722ed1
-`} />
+`} fallback="Decision flowchart for choosing an integration mechanism: starts with whether real-time response is needed, then branches through questions about source availability, number of consumers, state change versus task dispatch, and ability to query in-place, leading to recommendations of API, events, commands, query federation, or batch extract." />
 
 ## Push vs Pull Ingestion
 
@@ -376,7 +376,7 @@ The **event backbone** is a common pattern for reducing the N×M problem. Instea
     style Backbone fill:#f0f9ff,stroke:#0369a1
     style Sources fill:#fff5f5,stroke:#e53e3e
     style Destinations fill:#f0fff4,stroke:#38a169
-`} />
+`} fallback="Diagram showing the event backbone architecture: four source systems publish to named Kafka or Pub/Sub topics (customers, products, orders, files), and five destination systems subscribe to the topics they need, reducing integration complexity from N times M to N plus M." />
 
 Now, adding a new destination requires subscribing to topics — no changes to sources. Adding a new source requires publishing to topics — no changes to destinations. The integration complexity is **N + M** instead of **N × M**.
 

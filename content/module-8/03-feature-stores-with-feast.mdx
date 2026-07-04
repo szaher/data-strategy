@@ -82,7 +82,7 @@ A **materialization pipeline** keeps the online store in sync with the offline s
     style Sources fill:#f9f9f9,stroke:#999
     style Feast fill:#e3f2fd,stroke:#1976d2
     style Consumers fill:#fff3e0,stroke:#f57c00
-`} />
+`} fallback="Feast architecture: data sources (BigQuery, PostgreSQL, S3/Parquet) feed into Feast core components — a feature registry storing definitions, an offline store (BigQuery/Snowflake/Spark) for batch training reads, and an online store (Redis/DynamoDB/Firestore) for low-latency inference. A materialization engine syncs features from offline to online. Training pipelines read from the offline store; inference services read from the online store." />
 
 **Components:**
 
@@ -164,7 +164,7 @@ This updates the feature registry and configures the offline/online stores to re
     InferenceService->>OnlineStore: get_online_features(user_id=12345)
     OnlineStore-->>InferenceService: {total_purchases: 42, avg_session_duration: 18.5}
     InferenceService->>InferenceService: Run model inference
-`} />
+`} fallback="Sequence diagram showing three data paths: (1) the training pipeline requests historical features from the offline store with point-in-time correct joins, (2) a materialization job queries the offline store for latest values and writes them to the online store, and (3) the inference service reads precomputed features from the online store with sub-millisecond latency for real-time model predictions." />
 
 **Offline retrieval (training):**
 

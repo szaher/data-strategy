@@ -50,7 +50,7 @@ The common thread is **silent data corruption** — failures that do not produce
     style D fill:#fee,stroke:#c33
     style E fill:#fee,stroke:#c33
     style G fill:#ffe,stroke:#c93
-`} />
+`} fallback="Flow showing how a silent pipeline break cascades through stale dashboards, an executive decision based on wrong data, a product launched in the wrong market, revenue shortfall discovery, root cause investigation, and eventual pipeline fix after the damage is done." />
 
 The cascade from pipeline failure to business impact can take weeks or months. By the time the error is discovered, the decision has already been executed. **Trust failures have a blast radius that extends far beyond the engineering team.**
 
@@ -107,7 +107,7 @@ This approach extends the **data mesh principle of data as a product** into a pl
     style G fill:#e0ffe0,stroke:#0a0
     style H fill:#fee,stroke:#c33
     style F fill:#ffe,stroke:#c93
-`} />
+`} fallback="Flow diagram showing a dataset owner declaring a contract, the platform validating schema, enforcing quality checks, tracking lineage, and monitoring freshness SLAs. If the contract is satisfied, data becomes available to consumers; if not, the write is rejected and the owner is alerted to fix the issue." />
 
 Contracts shift the trust conversation from **"Is this data trustworthy?"** to **"What guarantees does this dataset promise, and is the platform enforcing them?"** The first question is subjective and unanswerable at scale. The second question is objective and automatable.
 
@@ -149,7 +149,7 @@ These four capabilities are **not independent systems** — they are tightly int
     style L fill:#ffe0e0,stroke:#c00
     style C fill:#ffe0ff,stroke:#90c
     style G fill:#ffe,stroke:#c93
-`} />
+`} fallback="Architecture diagram showing the trust plane as four integrated capabilities — Quality, Lineage, Catalog, and Governance — with bidirectional dependencies between them, cutting across all data platform layers including Ingestion, Transformation, Storage, and Serving." />
 
 The trust plane is **horizontal infrastructure** that sits alongside the vertical layers of the data platform (ingestion, transformation, storage, serving). It is not owned by any single layer — it is a shared capability that all layers depend on. This is the architectural pattern we introduced in Module 1 as the white line in the layer cake. Module 7 is where we build it.
 

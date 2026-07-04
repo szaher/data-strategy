@@ -120,7 +120,7 @@ Different workloads demand different storage characteristics. The most important
     
     style AccessPatterns fill:#e0f0ff,stroke:#0066cc
     style StorageChoices fill:#f0ffe0,stroke:#66cc00
-`} />
+`} fallback="Mapping of five access patterns to their recommended storage types. Random Reads/Writes maps to OLTP Databases (PostgreSQL, MySQL). Sequential Scans maps to Columnar/Object Storage (Parquet, ORC, S3). Append-Heavy maps to Log/Event Stores (Kafka, Kinesis). Unstructured/Multimodal maps to Object Storage (S3-Compatible). Low-Latency Key-Value maps to In-Memory/KV Stores (Redis, DynamoDB)." />
 
 ### Random Reads/Writes → OLTP Databases
 

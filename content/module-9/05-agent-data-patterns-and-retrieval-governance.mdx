@@ -48,7 +48,7 @@ Not all agent state should live in the same place. A robust agent architecture s
     style Ephemeral fill:#fef5e7,stroke:#f39c12
     style Durable fill:#ebf5fb,stroke:#3498db
     style Shared fill:#e8f8f5,stroke:#1abc9c
-`} />
+`} fallback="Three-layer agent memory architecture: ephemeral memory (conversation context, current task state, recent tool results) is cleared at session end; durable memory (user preferences, past decisions, long-term facts) is persisted in a user database; shared memory (team knowledge, org policies, collective learnings) is synced to a team knowledge store. The agent process accesses all three layers with different durability and scope." />
 
 ### Ephemeral Memory
 
@@ -137,7 +137,7 @@ Even if the agent retrieves a document, it must check action-level permissions b
     
     style RetrievalGate fill:#d5f4e6,stroke:#27ae60
     style ActionGate fill:#fadbd8,stroke:#e74c3c
-`} />
+`} fallback="Sequence diagram showing separation of retrieval and action authorization: a user asks the agent to fix a payroll discrepancy. The retrieval gate checks read permissions and allows the agent to fetch the payroll document from the vector store. The action gate then checks write permissions and denies the UPDATE_PAYROLL tool call. The agent informs the user it found the discrepancy but cannot modify payroll records due to insufficient permissions." />
 
 ### Implementing Retrieval vs Action Separation
 

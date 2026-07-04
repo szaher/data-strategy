@@ -267,7 +267,7 @@ A deletion request should be evaluated for propagation across all of these syste
     
     style A fill:#fef0f0,stroke:#cc0000
     style H fill:#e0f0e0,stroke:#00cc00
-`} />
+`} fallback="Flowchart showing deletion request propagation: identify the user ID, query the lineage graph to find all systems containing the data (lakehouse tables, event streams, feature store, vector indexes, cached results), execute system-specific deletion commands for each, log all deletions in an audit trail, and mark the request as complete." />
 
 **Key steps:**
 
@@ -315,7 +315,7 @@ Run a **retention enforcement job** (e.g., Airflow DAG) that:
     style C fill:#ebf8ff,stroke:#3182ce
     style D fill:#fef0f0,stroke:#cc0000
     style G fill:#fef9e0,stroke:#cc9900
-`} />
+`} fallback="OPA architecture showing an API request passing through authorization middleware to the OPA policy engine, which evaluates Rego policy files, user attributes from LDAP, and data tags from the catalog. The engine returns an allow or deny decision, either executing the request or returning 403 Forbidden." />
 
 ### Example Rego Policy
 

@@ -65,7 +65,7 @@ All cost figures, savings percentages, and pricing examples in this lesson are i
     style D2 fill:#ebf8ff,stroke:#3182ce
     style E2 fill:#ebf8ff,stroke:#3182ce
     style F2 fill:#ebf8ff,stroke:#3182ce
-`} />
+`} fallback="Unit economics breakdown: the total infrastructure bill is allocated to four services — data pipelines ($5k/mo), query engine ($8k/mo), feature store ($3k/mo), and AI/ML inference ($4k/mo). Each service is divided by its volume (120k pipeline runs, 2M queries, 300M feature retrievals, 500k AI requests) to calculate unit costs ($0.042 per run, $0.004 per query, $0.00001 per retrieval, $0.008 per request)." />
 
 Unit economics surfaces **cost regressions** before they compound. If cost per query doubles from one week to the next but query volume is stable, you investigate immediately — maybe someone deployed an inefficient join, or the query planner regressed, or a table grew large without re-clustering. Without unit economics, you notice the problem when the end-of-month bill arrives and forensics are harder.
 
@@ -204,7 +204,7 @@ User-facing services with **variable load** (dashboards with morning spike, ML i
     style D fill:#bee3f8,stroke:#3182ce
     style E fill:#feebc8,stroke:#dd6b20
     style F fill:#e6fffa,stroke:#319795
-`} />
+`} fallback="Compute right-sizing decision tree: workload analysis branches into three types. Batch ETL and training jobs use spot/preemptible instances (50-80% savings, fault-tolerant orchestration, checkpoint long jobs). Steady-state 24/7 query engines and APIs use reserved instances (30-50% savings, commit to baseline, review quarterly). Bursty dashboards and inference use autoscaling on-demand (provision for average, scale for peak, aggressive scale-down). All three paths feed into a unified cost optimization decision." />
 
 **Example**: A machine learning platform runs 100 training jobs per day (batch), serves 50 models via API (steady-state), and handles inference spikes during product launches (bursty). Right-sized compute strategy:
 
@@ -339,7 +339,7 @@ The managed service costs \$3,000/month more in infrastructure but **saves \$4,3
     style E fill:#c6f6d5,stroke:#38a169
     style G fill:#bee3f8,stroke:#3182ce
     style I fill:#e6fffa,stroke:#319795
-`} />
+`} fallback="TCO comparison flowchart: for a self-host vs. managed service decision, calculate infrastructure cost ($5k/mo self-hosted vs. $8k/mo managed) and operational cost ($5k/mo self-hosted engineering time vs. $625/mo managed). Self-hosted TCO totals $10k/mo; managed TCO totals $8,625/mo. If managed TCO is lower, choose the managed service and redirect engineering time to product features. If self-hosted TCO is lower, choose self-hosting but ensure deep operational expertise." />
 
 **TCO-based decision framework**:
 

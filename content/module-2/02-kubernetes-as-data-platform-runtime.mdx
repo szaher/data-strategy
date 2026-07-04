@@ -241,7 +241,7 @@ Recall the three platform archetypes from Module 1 Lesson 4: **Centralized Platf
     style B fill:#ebf8ff,stroke:#3182ce
     style C fill:#f0fff4,stroke:#38a169
     style D fill:#fef5e7,stroke:#d97706
-`} />
+`} fallback="Decision tree showing three platform archetypes branching from a central node. Centralized Platform uses K8s for control plus managed for speed: core infra (Kafka, Airflow, Spark) on K8s, data stores managed (BigQuery, S3, RDS). Embedded Services defaults to all managed services with quick onboarding and no shared K8s. Federated Mesh uses a hybrid approach where teams choose: shared K8s clusters are optional, and teams run their own services on shared infrastructure." />
 
 ### Centralized Platform — K8s for Control, Managed for Speed
 
@@ -323,7 +323,7 @@ Here's what a modern, Kubernetes-based data platform looks like:
     style TeamA fill:#ecfccb,stroke:#84cc16
     style TeamB fill:#fef3c7,stroke:#f59e0b
     style Managed fill:#fce7f3,stroke:#ec4899
-`} />
+`} fallback="Architecture diagram of a Kubernetes-based data platform. Inside the K8s cluster, a data-infra namespace contains shared services: Kafka (Strimzi Operator), Airflow (Helm with KubernetesExecutor), Spark Operator, and Prometheus plus Grafana. Team-a namespace runs SparkApplication CRs for data processing and Airflow DAG pods. Team-b namespace runs SparkApplication CRs for ML training and Flink jobs. Outside the cluster, managed cloud services provide object storage (S3/GCS), data warehouse (BigQuery/Snowflake), and databases (RDS/Cloud SQL). Teams connect to Kafka, Spark jobs write to object storage, Airflow orchestrates Spark and BigQuery, and monitoring observes all workloads." />
 
 **Key design choices:**
 
@@ -369,7 +369,7 @@ Use this flowchart to guide workload placement for any component:
     style Managed fill:#d1fae5,stroke:#10b981
     style K8s fill:#dbeafe,stroke:#3b82f6
     style VM fill:#fef3c7,stroke:#f59e0b
-`} />
+`} fallback="Decision flowchart for workload placement. Starting with a new workload, it asks: is there a mature managed service? If yes, is the team small or lacking K8s expertise? If yes, use managed service. If no, is multi-cloud or data sovereignty required? If yes, self-host on K8s. If no, is cost at scale a concern? If yes, self-host on K8s; if no, use managed service. If no mature managed service exists, are there specific performance needs like GPU or high IOPS? If yes, use VM or bare-metal. If no, does the team have K8s expertise? If yes, self-host on K8s; if no, use managed service." />
 
 ---
 

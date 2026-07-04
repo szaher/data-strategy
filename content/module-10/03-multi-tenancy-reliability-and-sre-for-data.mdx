@@ -72,7 +72,7 @@ Before defining reliability targets, you need to understand your **isolation bou
     style Namespace fill:#e0f0ff,stroke:#0066cc
     style Cluster fill:#daf2f2,stroke:#009999
     style Logical fill:#fff0e0,stroke:#cc6600
-`} />
+`} fallback="Three multi-tenancy isolation patterns side by side: namespace isolation shows tenants A, B, and C in separate namespaces sharing a single cluster; cluster isolation shows each tenant with a dedicated independent cluster; logical isolation shows tenants separated by tenant_id rows within a shared database, with all rows in the same tables." />
 
 **1. Namespace Isolation (Shared Cluster, Logical Boundaries)**
 
@@ -304,7 +304,7 @@ index_freshness_sli = count(is_fresh) / count(checks)
     style Quality fill:#d4edda,stroke:#28a745
     style Pipeline fill:#fff3cd,stroke:#ffc107
     style Budget fill:#fff3cd,stroke:#ffc107
-`} />
+`} fallback="Data SLI dashboard showing four panels: freshness SLI (last update 45 min ago, target under 60 min, 99.8% passing), completeness SLI (1.198M of 1.2M expected records, 99.83%), data quality SLI (1.195M passed, 3K failed, 99.75%), and pipeline success SLI (23 of 24 runs succeeded, 95.8% with warning). All four feed into an error budget status panel showing 38 minutes remaining this month with a 2.1x burn rate warning." />
 
 This dashboard shows **data-specific SLIs** rather than CPU or memory. Each panel answers a user-facing question:
 - Is my data fresh?

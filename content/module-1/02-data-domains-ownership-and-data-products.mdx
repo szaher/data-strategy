@@ -152,7 +152,7 @@ This is the **most successful model** in practice. It balances autonomy (domain 
     style Domain1 fill:#f0ffe0,stroke:#66cc00
     style Domain2 fill:#f0ffe0,stroke:#66cc00
     style Governance fill:#fff0e0,stroke:#cc9900
-`} />
+`} fallback="Hybrid ownership model showing a Central Platform Team providing infrastructure, standards, and shared services to domain teams. Customer Domain Team owns Customer Profile and Customer Events data products. Order Domain Team owns Order History and Order Analytics data products. Shared Governance applies access, retention, and compliance policies across both the platform team and domain teams." />
 
 ## What Makes a Data Product
 
@@ -260,7 +260,7 @@ A deployed model needs **inference-time features** — the same transformations 
     style Analytics fill:#e0f0ff,stroke:#0066cc
     style RAG fill:#e0f0ff,stroke:#0066cc
     style Inference fill:#e0f0ff,stroke:#0066cc
-`} />
+`} fallback="Flow diagram showing how domain data products feed downstream consumers. Customer Profile and Order History data products each flow to Analytics Dashboards, Feature Store, and RAG Retrieval. An Embedding Corpus data product feeds RAG Retrieval. The Feature Store feeds both a Training Dataset and Real-Time Inference. The Training Dataset feeds ML Model Training. Domains are grouped as Customer, Order, Knowledge, and ML." />
 
 ## Recurring Scenario: Customer Profile Data Product
 

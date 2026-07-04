@@ -117,7 +117,7 @@ The **lakehouse** merges the best of both worlds:
     style Catalog fill:#fff4e6,stroke:#ff9900
     style TableFormat fill:#e6ffe6,stroke:#00cc66
     style ObjectStorage fill:#f0f0f0,stroke:#666666
-`} />
+`} fallback="Diagram showing the four-layer lakehouse stack: Query Engines (Spark, Trino, DuckDB) at the top connect to a Catalog (Hive, Glue, Unity) and a Table Format layer (Delta, Iceberg, Hudi), which sits on top of Object Storage (S3, GCS, ADLS). The catalog references the table format metadata." />
 
 **What changed:**
 - **ACID on object storage** — the table format tracks writes in a transaction log. Readers see isolated snapshots. No partial writes.
@@ -302,7 +302,7 @@ Lakehouse tables integrate with **ML experiment tracking** (MLflow, Weights & Bi
     style Exp1 fill:#fff4e6,stroke:#ff9900
     style Exp2 fill:#fff4e6,stroke:#ff9900
     style Exp3 fill:#fff4e6,stroke:#ff9900
-`} />
+`} fallback="Flowchart showing lakehouse reproducibility for ML: Raw Data flows through a Table Format (Delta Lake log) to create three immutable versions (V1, V2, V3), each pinned to a specific date. Three ML experiments each reference a specific version, ensuring reproducible training data snapshots." />
 
 ---
 

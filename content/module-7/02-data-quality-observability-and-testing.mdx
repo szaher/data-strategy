@@ -101,7 +101,7 @@ The architecture looks like this:
     
     style Gate fill:#fef5e7,stroke:#f39c12
     style Monitoring fill:#ebf8ff,stroke:#3182ce
-`} />
+`} fallback="Architecture showing data flowing from source through an ingestion pipeline to a quality gate. Passing data goes to a staging table and then through a schema check to production. Failing data routes to a dead letter queue. Schema drift triggers alerts. All outputs feed into a quality observability dashboard." />
 
 The **Quality Gate** is the critical component. It runs **before** data reaches production. If expectations fail, the pipeline halts and routes bad data to a **Dead Letter Queue** for debugging. This prevents silent corruption — you cannot accidentally promote bad data.
 
@@ -379,7 +379,7 @@ This gives a **system-wide health snapshot** at a glance. You can drill into red
     
     style Monitoring fill:#ebf8ff,stroke:#3182ce
     style Alerting fill:#fef5e7,stroke:#f39c12
-`} />
+`} fallback="Dashboard concept showing staging tables flowing through a quality gate to production or a dead letter queue. The observability dashboard tracks expectation pass rate, freshness SLA adherence, schema drift incidents, MTTD/MTTR, and asset health traffic lights (green, yellow, red). Alerts route to pass rate, SLA breach, and schema change notifications." />
 
 This architecture ensures that quality problems are **visible immediately** and **actionable**. You do not wait for users to report wrong numbers — the observability layer detects failures and routes alerts to the right team.
 

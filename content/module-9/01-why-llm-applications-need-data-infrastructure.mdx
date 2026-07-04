@@ -58,7 +58,7 @@ The model acts as a **language interface** to your knowledge base, not as the kn
     
     classDef updateFlow stroke-dasharray: 5 5
     class Update updateFlow
-`} />
+`} fallback="RAG architecture: a user question feeds both a retrieval system and the foundation model. The retrieval system searches a vector index of current documents and returns relevant context, which augments the LLM prompt. The model generates a grounded response. Document updates continuously sync to the vector index to keep knowledge fresh." />
 
 Knowledge freshness is a **data infrastructure problem**, not a modeling problem. The challenge is: how do you keep the retrieval index synchronized with the source data? How do you propagate updates from the data platform to the vector index in seconds or minutes, not hours or days?
 
@@ -152,7 +152,7 @@ The difference is in the **serving layer**. Traditional ML serves features via a
     
     classDef governance stroke-dasharray: 5 5
     class Catalog,Lineage,ACL governance
-`} />
+`} fallback="Architecture showing raw data sources flowing through the data platform into two parallel data products: customer features served via a feature store to ML model inference, and a document corpus served via a vector index to a RAG system. Both paths share the same governance infrastructure — data catalog, lineage graph, and access control — applied uniformly across traditional ML and LLM serving layers." />
 
 This architectural view has critical implications:
 

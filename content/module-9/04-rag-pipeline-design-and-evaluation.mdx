@@ -60,7 +60,7 @@ RAG pipelines have **two distinct failure surfaces** that require separate evalu
     style K fill:#f0f9ff,stroke:#0066cc
     style E fill:#fff7ed,stroke:#ea580c
     style I fill:#f0fdf4,stroke:#16a34a
-`} />
+`} fallback="RAG pipeline with evaluation layers: a user query flows through embedding, vector search, reranking, prompt augmentation, LLM generation, citation extraction, and final response. Retrieved documents are measured by retrieval metrics (Recall@K, Precision@K, ranking quality, index freshness). The final response is measured by end-to-end metrics (groundedness, citation correctness, answer correctness, safety, authorization leakage, task success, latency, cost)." />
 
 ### Retrieval Layer Evaluation
 
@@ -123,7 +123,7 @@ The end-to-end layer answers: **given a query and retrieved documents, did the f
     style H fill:#fff7ed,stroke:#ea580c
     style J fill:#f0f9ff,stroke:#0066cc
     style L fill:#f0fdf4,stroke:#16a34a
-`} />
+`} fallback="RAG evaluation framework: an evaluation dataset with ground truth Q&A pairs (expected retrieved docs and expected answers) is compared against the RAG pipeline's actual retrieved docs and actual answers. Retrieval metrics (Recall@K, Precision@K, NDCG) and end-to-end metrics (groundedness, citation correctness, answer correctness, safety) feed into a regression suite that alerts on degradation." />
 
 ---
 

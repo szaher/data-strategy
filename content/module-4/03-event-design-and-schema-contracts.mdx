@@ -53,7 +53,7 @@ This lesson separates **schema compatibility** (can the bytes be deserialized?),
     style B fill:#dbeafe,stroke:#2563eb
     style C fill:#dcfce7,stroke:#16a34a
     style D fill:#fce7f3,stroke:#db2777
-`} />
+`} fallback="Diagram showing three layers of event evolution concerns: Schema Compatibility (structural rules, serialization format, read compatibility), Semantic Compatibility (field meaning, business behavior, timing and ordering), and Data Contracts (ownership and SLAs, quality guarantees, deprecation policy)." />
 
 ## The Problem: Schema Breaks in Production
 
@@ -139,7 +139,7 @@ Breaking changes:
     style Accept fill:#dcfce7,stroke:#16a34a
     style Reject fill:#fee2e2,stroke:#dc2626
     style Full1 fill:#dbeafe,stroke:#2563eb
-`} />
+`} fallback="Flowchart showing schema registry compatibility checking: when a producer registers a new schema, the registry evaluates it against the configured compatibility mode (backward, forward, full, or none), accepts or rejects the schema based on whether old and new schemas can read each other's data, and stores accepted schemas in the registry." />
 
 ### Evolution Rules and Defaults
 

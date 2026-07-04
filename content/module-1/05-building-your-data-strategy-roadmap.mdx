@@ -155,7 +155,7 @@ Visualize the critical path:
     style F fill:#dbeafe,stroke:#3b82f6
     style H fill:#fce7f3,stroke:#ec4899
     style J fill:#fce7f3,stroke:#ec4899
-`} />
+`} fallback="Flowchart showing a phased roadmap with quality gates. Maturity Assessment leads to Gap Analysis, then Prioritization. Phase 1 (Foundations) feeds into a success metrics check: if met, proceed to Phase 2 (Analytics); if not, diagnose and fix then retry Phase 1. Phase 2 similarly checks metrics before proceeding to Phase 3 (AI/ML). A Trust Plane workstream runs in parallel across all three phases via dotted connections." />
 
 The **trust plane** (governance, security, observability) is not a phase — it's a parallel workstream that starts in Phase 1 and continues through all phases. Deferred trust is the most common roadmap failure mode.
 
@@ -316,7 +316,7 @@ Let's apply the strategy canvas to our recurring scenario (e-commerce company, 2
     Vector DB + RAG               :p3b, after p2e, 45d
     Production SRE                :p3c, after p2a, 120d
     Multi-Tenancy                 :p3d, after p3c, 30d
-`} />
+`} fallback="Gantt chart showing a 12-month data platform roadmap divided into three phases. Phase 1 covers platform team hiring, K8s and object storage setup, CDC pipeline, and governance foundations running in the first three months. Phase 2 covers Kafka cluster, Spark on K8s, Iceberg lakehouse, DataHub catalog, and dbt models in months three through six. Phase 3 covers feature store, vector DB and RAG, production SRE, and multi-tenancy in months six through twelve. Dependencies are shown: CDC depends on K8s, Iceberg depends on Spark, and feature store depends on dbt models." />
 
 The diagram shows the critical path: CDC depends on K8s, Iceberg depends on Spark, and the feature store depends on dbt models (structured data). Governance runs in parallel from Phase 1 onward.
 

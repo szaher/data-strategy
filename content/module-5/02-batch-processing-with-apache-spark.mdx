@@ -71,7 +71,7 @@ The architecture consists of two primary components:
     style Exec3 fill:#dbeafe,stroke:#3b82f6
     style Storage fill:#e0e7ff,stroke:#6366f1
     style Iceberg fill:#d1fae5,stroke:#10b981
-`} />
+`} fallback="Diagram of Spark architecture on Kubernetes: a Driver Pod coordinates three Executor Pods (each with 4 CPU and 16 GB memory) that read from Object Storage (S3/MinIO), perform shuffle exchanges between each other, and write results to Iceberg Tables in the lakehouse." />
 
 This separation allows Spark to scale elastically: you can add more executors during peak load and release them afterward. The driver remains lightweight (it only orchestrates; it doesn't process data), while executors handle the compute-intensive transformations.
 
@@ -393,7 +393,7 @@ Common causes:
     style TwoStage fill:#d1fae5,stroke:#10b981
     style Repartition fill:#d1fae5,stroke:#10b981
     style Validate fill:#dbeafe,stroke:#3b82f6
-`} />
+`} fallback="Flowchart for diagnosing and fixing data skew in Spark: detect skew via Spark UI task duration variance, identify skewed keys by computing key frequencies, then choose a fix based on skew type — salted joins for join skew, two-stage aggregation for group-by skew, or repartitioning by composite key for partition skew — and validate by checking task duration distribution." />
 
 Mitigation strategies:
 

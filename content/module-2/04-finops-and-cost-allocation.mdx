@@ -211,7 +211,7 @@ Recall Lesson 2's workload placement decision: **build vs. rent** for data infra
     style Managed fill:#e6f7ff,stroke:#1890ff
     style SelfHosted fill:#fff7e6,stroke:#fa8c16
     style Decision fill:#f0f0f0,stroke:#595959
-`} />
+`} fallback="Cost comparison between managed Kafka service (no ops overhead, pay per GB ingested and stored, auto-scaling, fixed per-partition cost) and self-hosted Kafka on Kubernetes (ops and maintenance cost, pay for VMs and storage, manual scaling, cost scales with cluster size). Both converge at a break-even decision point: below 100 GB/day managed is cheaper, above 1 TB/day self-hosted is cheaper, and between 100 GB and 1 TB/day the answer depends on ops capacity." />
 
 **Example cost breakdown** for a Kafka workload processing **500 GB/day**:
 

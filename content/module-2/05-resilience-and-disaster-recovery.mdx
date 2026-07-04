@@ -85,7 +85,7 @@ The blast radius question for each layer: what stops working if this component f
     
     classDef failureDomain fill:#ebf8ff,stroke:#3182ce
     class Zone1,Zone2,Zone3 failureDomain
-`} />
+`} fallback="Multi-AZ deployment diagram within a single region (US-East-1). Zone 1 contains Kafka Broker 1 (leader for Topic A), a Spark Executor Pool, and a Persistent Volume for Flink Checkpoints, highlighted in red to indicate failure risk. Zone 2 contains Kafka Broker 2 (ISR replica), a Spark Executor Pool, and the active Hive Metastore leader. Zone 3 contains Kafka Broker 3 (ISR replica), a Spark Executor Pool, and a standby Hive Metastore replica. Kafka brokers replicate across zones. All Spark pools write to zone-redundant Object Storage (S3 Standard) shown in green, which survives any single zone failure." />
 
 In this deployment, **Zone 1 failure** would:
 1. Trigger Kafka leader election to Zone 2 or Zone 3 (10-30s production pause)
@@ -173,7 +173,7 @@ Spark executors, Flink TaskManagers, and Kubernetes pods should be stateless and
     DB-->>Zone2: Response
     Zone2-->>LB: 200 OK
     LB-->>Client: Success (no retry needed)
-`} />
+`} fallback="Sequence diagram showing high availability failover. A client sends Request 1 to a load balancer, which routes to an API Pod in Zone 1 that queries a multi-AZ database and returns success. Then Zone 1 fails. The client sends Request 2; the load balancer routes to Zone 1, which times out. The load balancer retries to an API Pod in Zone 2, which succeeds. The load balancer marks Zone 1 unhealthy. For Request 3, the load balancer routes directly to Zone 2 with no retry needed, demonstrating transparent failover." />
 
 This is HA in action: the load balancer detects zone failure, retries to a healthy zone, and marks the failed zone unhealthy. Requests continue with slightly elevated latency during failover (one retry), but no requests are lost.
 

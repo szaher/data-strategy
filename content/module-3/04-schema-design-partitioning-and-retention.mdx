@@ -99,7 +99,7 @@ Different stages of the pipeline optimize for different properties:
     style B fill:#dbeafe,stroke:#2563eb
     style C fill:#d1fae5,stroke:#059669
     style D fill:#e0e7ff,stroke:#4f46e5
-`} />
+`} fallback="Left-to-right data format pipeline showing Event Logs in JSON flowing to Kafka Topics in Avro format, then to the Data Lake in Parquet format, and finally to Analytics Queries. This illustrates the progression from human-readable flexible formats at ingestion to compact columnar formats optimized for analytical queries." />
 
 ## Indexing Strategies
 
@@ -197,7 +197,7 @@ How finely you partition depends on data volume and query patterns.
     style D fill:#d1fae5,stroke:#059669
     style G fill:#fef3c7,stroke:#d97706
     style I fill:#e0e7ff,stroke:#4f46e5
-`} />
+`} fallback="Decision flowchart for choosing partition granularity. Starting with data volume per day: if under 100 MB/day, use monthly partitions (for low-volume datasets with queries spanning months). If 100 MB to 10 GB/day, use daily partitions (the default, balancing granularity and manageability). If over 10 GB/day, check query patterns: if queries filter by day, use daily partitions; if queries filter by hour, use hourly partitions (with a warning to monitor partition count for metadata overhead risk)." />
 
 ### Example: PostgreSQL Partitioned Table
 

@@ -154,7 +154,7 @@ Debezium even has a built-in **outbox transformation** (a Single Message Transfo
     Deb->>Kafka: Publish OrderPlaced event
     Kafka-->>Consumer: OrderPlaced event
     Consumer->>Consumer: Update search index / cache / analytics
-`} />
+`} fallback="Sequence diagram showing the outbox plus CDC pattern: the application writes business data and an outbox record in a single database transaction, Debezium reads the outbox insert from the PostgreSQL WAL via a replication slot, applies the Outbox SMT to extract the domain event payload, and publishes the OrderPlaced event to Kafka for downstream consumers." />
 
 In this flow, the application never talks to Kafka. It only writes to the database. Debezium bridges the gap by reading the outbox table and publishing to Kafka. This decouples the application from Kafka's availability and operational complexity.
 
@@ -208,7 +208,7 @@ Debezium provides **source connectors** for PostgreSQL, MySQL, MongoDB, SQL Serv
     style KafkaCluster fill:#daf2f2,stroke:#0066cc
     style Databases fill:#fff4e0,stroke:#ff9900
     style Consumers fill:#f0e0ff,stroke:#9900cc
-`} />
+`} fallback="Architecture diagram showing Debezium CDC: PostgreSQL and MySQL source databases stream changes via WAL replication slot and binlog to Debezium connectors running in a Kafka Connect cluster. Connectors publish Avro events to Kafka brokers and register schemas with a Schema Registry. Downstream systems (Elasticsearch, Data Warehouse, Vector Database) consume the events." />
 
 ### Key Components
 

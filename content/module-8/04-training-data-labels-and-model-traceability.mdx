@@ -65,7 +65,7 @@ The canonical pattern for ML dataset versioning:
     style B fill:#ebf8ff,stroke:#3182ce
     style E fill:#fef5e7,stroke:#f39c12
     style F fill:#e8f5e9,stroke:#66bb6a
-`} />
+`} fallback="Dataset versioning flow: raw events go through an ETL pipeline into an Iceberg feature table. Each training run reads a specific snapshot (identified by ID and timestamp). The training job logs the snapshot ID to the model registry, which links the deployed model to its exact training data. Reproduction queries the same snapshot to regenerate the identical dataset." />
 
 ### Implementation: Snapshot Tracking in MLflow
 
@@ -181,7 +181,7 @@ For human-annotated datasets (e.g., image classification, content moderation):
     style B fill:#ebf8ff,stroke:#3182ce
     style D fill:#e8f5e9,stroke:#66bb6a
     style Quality fill:#fef5e7,stroke:#f39c12
-`} />
+`} fallback="Annotation workflow: unlabeled data samples are sent to a labeling UI, then pass through a quality check (including inter-rater agreement). Passing examples go to a labeled Iceberg dataset for training. Failing examples go to a review queue and cycle back through annotation until they pass quality assurance." />
 
 **Inter-rater agreement** measures consistency: if three annotators label the same image, do they agree? Track Cohen's kappa or Fleiss' kappa. If agreement is low (&lt;0.6), your labeling instructions are ambiguous or the task is too subjective.
 
@@ -336,7 +336,7 @@ The final piece: **lineage from raw data → features → training dataset → m
     style C fill:#ebf8ff,stroke:#3182ce
     style E fill:#fef5e7,stroke:#f39c12
     style F fill:#e8f5e9,stroke:#66bb6a
-`} />
+`} fallback="End-to-end lineage chain: raw event log flows through a feature pipeline (Spark job) to an Iceberg feature table (with snapshot ID), then to a training job, model registry (MLflow), deployed model in production serving, and finally a prediction request. A lineage query path traces back from the prediction through the model registry and data catalog to the original feature table and raw events." />
 
 ### Lineage Metadata to Track
 

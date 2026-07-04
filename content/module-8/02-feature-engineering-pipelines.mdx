@@ -62,7 +62,7 @@ Batch feature pipelines typically follow this structure:
     style A fill:#daf2f2,stroke:#0066cc
     style C fill:#daf2f2,stroke:#0066cc
     style F fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Batch feature pipeline: raw events from the warehouse flow through a Spark feature computation job (driven by Python/SQL feature logic) into a feature store, which serves both training data and online serving via point-in-time joins." />
 
 The key components:
 
@@ -183,7 +183,7 @@ Streaming feature pipelines typically use Flink (from Module 5) or similar strea
     style A fill:#daf2f2,stroke:#0066cc
     style C fill:#daf2f2,stroke:#0066cc
     style E fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Streaming feature pipeline: events from Kafka or Pub/Sub flow through a Flink windowed aggregation job (driven by Java/Python feature logic) into a feature cache (Redis or Bigtable), which serves low-latency online reads for real-time inference." />
 
 The critical difference from batch: streaming features are written to a **low-latency cache** (Redis, Bigtable, DynamoDB) rather than a warehouse, because serving latency must be sub-100ms.
 
@@ -308,7 +308,7 @@ Here's how point-in-time joins work in a feature store:
     F-->>T: Return features computed as of 08:00 (2.5 hours before prediction)
     
     Note over T,W: Feature store ensures we use the LATEST features<br/>available BEFORE the prediction time, never after
-`} />
+`} fallback="Sequence diagram showing a training job requesting features for a specific transaction and timestamp from the feature store, which queries the data warehouse for the latest feature row with a timestamp before the prediction time, returning features computed hours earlier to ensure point-in-time correctness." />
 
 The feature store maintains versioned feature values partitioned by `feature_timestamp`. When training, we query for the latest version before the prediction timestamp.
 
@@ -338,7 +338,7 @@ You need to backfill when:
     
     style C fill:#fef0f0,stroke:#cc0000
     style F fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Backfill workflow: a feature logic change triggers a check whether it affects historical data. If yes, determine the backfill date range, run a batch job for each historical date, write versioned features, validate consistency, and update feature metadata. If no, deploy directly to production." />
 
 **Backfill example**:
 
@@ -395,7 +395,7 @@ Feature dependencies form a **directed acyclic graph (DAG)**:
     
     style A fill:#daf2f2,stroke:#0066cc
     style G fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Feature dependency DAG showing raw events feeding base features (user_total_purchases, user_total_revenue, user_login_count), which feed derived features (user_avg_purchase_value, user_avg_session_duration), which combine into a final user_engagement_score." />
 
 In this example:
 

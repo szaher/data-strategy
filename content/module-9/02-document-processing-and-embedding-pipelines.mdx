@@ -358,7 +358,7 @@ df_with_embeddings.write.parquet("s3://my-bucket/embeddings_v1/")
     Note over Docs,Query: Phase 3: Cutover to v2
     Query->>V2: Query only v2 index
     V1->>V1: Archive v1 index
-`} />
+`} fallback="Sequence diagram showing a three-phase embedding migration: Phase 1 writes new documents to both v1 and v2 indexes simultaneously while queries merge results from both. Phase 2 backfills old documents from the CDC log into the v2 index. Phase 3 cuts over queries exclusively to the v2 index and archives v1." />
 
 ---
 
@@ -473,7 +473,7 @@ A production document processing pipeline combines parsing, normalization, chunk
     style A fill:#ebf8ff,stroke:#3182ce
     style L fill:#c6f6d5,stroke:#38a169
     style P fill:#fed7d7,stroke:#e53e3e
-`} />
+`} fallback="Multi-stage document processing pipeline: raw documents (PDF, HTML, Word) pass through format detection and parser selection, specialized parsers, normalization, and a chunking strategy selector (fixed-size for structured docs, semantic for narrative, hierarchical for long-form). Chunked documents feed into distributed embedding generation, producing versioned embeddings stored in a vector database. A CDC stream triggers incremental re-embedding for document updates, and parsing failures route to a dead-letter queue for manual review." />
 
 **Key design principles:**
 

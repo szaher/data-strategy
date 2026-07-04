@@ -93,7 +93,7 @@ dbt auto-generates documentation from your `schema.yml` files and model queries.
     style Marts fill:#e0f8e0,stroke:#00aa00
     style Dim fill:#e0f8e0,stroke:#00aa00
     style Reporting fill:#e0f0ff,stroke:#0066cc
-`} />
+`} fallback="Diagram showing dbt model dependency layers: Raw Data feeds into a Staging Layer (stg_orders), which feeds into both a Marts Layer (fct_order_metrics) and Dimension Tables (dim_products), both of which feed into a Reporting layer (rpt_daily_revenue)." />
 
 ## Airflow as Orchestrator
 
@@ -182,7 +182,7 @@ Airflow is not a transformation engine. It does not execute SQL queries directly
     style T2 fill:#e0f8e0,stroke:#00aa00
     style T3 fill:#e0f8e0,stroke:#00aa00
     style Warehouse fill:#fef0f0,stroke:#cc0000
-`} />
+`} fallback="Diagram showing Airflow orchestration: the Airflow Scheduler manages a DAG (daily_metrics) containing three tasks — extract_orders (KubernetesPodOperator launching a K8s Pod), run_dbt (BashOperator triggering dbt run), and validate (PythonOperator running a validation script) — all writing to or reading from the Data Warehouse." />
 
 ## dbt + Airflow Together
 

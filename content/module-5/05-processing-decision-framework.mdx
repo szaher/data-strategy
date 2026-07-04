@@ -127,7 +127,7 @@ Ray provides **Ray Train** (distributed training), **Ray Tune** (hyperparameter 
     style Flink fill:#fff3e0,stroke:#f57c00
     style dbt fill:#f3e5f5,stroke:#7b1fa2
     style Ray fill:#e8f5e9,stroke:#388e3c
-`} />
+`} fallback="Diagram mapping four workload categories to their best-fit processing engines: Batch ETL (TB-scale transforms) maps to Apache Spark, Streaming Analytics (real-time state) maps to Apache Flink, SQL Analytics (warehouse transforms) maps to dbt, and ML/AI Compute (distributed Python) maps to Ray. Decision criteria include latency, volume, state requirements, and team skills." />
 
 ## The Language and Runtime Dimension
 
@@ -265,7 +265,7 @@ Let's map our **recurring scenario** (CDC events from Kafka, raw-to-curated tran
     style Spark4 fill:#e3f2fd,stroke:#1976d2
     style dbt1 fill:#f3e5f5,stroke:#7b1fa2
     style Ray1 fill:#e8f5e9,stroke:#388e3c
-`} />
+`} fallback="Diagram mapping the recurring scenario to processing engines: CDC events from Kafka route to Flink (real-time) or Spark (batch) based on latency; raw data transforms route to dbt (SQL-only) or Spark (Python/TB-scale); feature computation routes to Flink (real-time per event) or Spark (batch daily); embedding generation routes to Ray (Python ML with GPU) or Spark (TB-scale simple model)." />
 
 ## Failure Modes and Anti-Patterns
 
