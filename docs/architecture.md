@@ -7,9 +7,10 @@ This template separates generated educational content from deterministic validat
 - `src/types/tutorial.ts` defines the production tutorial specification contract.
 - `src/lib/tutorialSpec.ts` validates required fields and cross-references for model-produced JSON.
 - `prompts/schemas/tutorial-spec.schema.json` gives prompt authors and external tools a JSON Schema contract.
-- `content/tutorials/sample-tutorial.json` is the canonical v1.0.0 fixture for end-to-end validation.
-- `content/tutorials/sample-enhanced-tutorial.json` is the v1.1.0 fixture demonstrating enhancement fields.
-- Optional enhancement contracts (v1.1.0): `ContentStyle`, `GamificationConfig`, `AdaptivePath`, `SpacedRepetitionConfig`, `MicrolearningConfig`, `ProjectCapstone`, `UDLFramework`, `CollaborativeConfig`, `MultimediaPlan`, `ArtifactDescriptor`.
+- The `learn-template` repository ships `content/tutorials/sample-tutorial.json` as the canonical v1.0.0 fixture for end-to-end validation.
+- The `learn-template` repository ships `content/tutorials/sample-enhanced-tutorial.json` as the v1.1.0 fixture demonstrating enhancement fields.
+- Academy instances replace these fixtures with their own TutorialSpec files when they use the structured authoring flow.
+- Optional enhancement contracts (v1.1.0): `ContentStyle`, `GamificationConfig`, `AdaptivePath`, `SpacedRepetitionConfig`, `MicrolearningConfig`, `UDLFramework`, `CollaborativeConfig`, `MultimediaPlan`, `ArtifactDescriptor`.
 - Schema versioning: `1.0.0` specs are always valid; `1.1.0` specs may include enhancement fields. The validator accepts both.
 
 ## Generation Pipeline

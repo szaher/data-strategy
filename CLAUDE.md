@@ -69,12 +69,22 @@ Use `prompts/07-repair-invalid-output.md` when model output fails schema, MDX, c
 ```text
 academy.config.ts              # Academy display and tutor configuration
 content/
-  module-1/
+  module-1/                    # Data strategy, operating model, reference architecture
+  module-2/                    # Platform foundations: cloud, Kubernetes, security, FinOps
+  module-3/                    # Storage, persistence, and table design
+  module-4/                    # Ingestion, events, and change data capture
+  module-5/                    # Processing and data transformation
+  module-6/                    # Lakehouse, query serving, and data products
+  module-7/                    # Trust plane: quality, lineage, catalog, governance
+  module-8/                    # ML data infrastructure
+  module-9/                    # LLM and agent data infrastructure
+  module-10/                   # Production architecture and platform evolution
     meta.json                  # Module metadata and lesson manifest
-    01-sample-lesson.mdx       # Rendered lesson content
+    NN-descriptive-slug.mdx    # Rendered lesson content
   tutorials/
-    sample-tutorial.json       # TutorialSpec 1.0.0 fixture
-    sample-enhanced-tutorial.json  # TutorialSpec 1.1.0 fixture with enhancements
+    *.json                     # Instance-authored TutorialSpec files, when used
+presentations/
+  00-sample-deck.md            # Layout-only placeholder deck; not instructional content
 docs/
   architecture.md              # System architecture
   authoring-flow.md            # End-to-end authoring workflow

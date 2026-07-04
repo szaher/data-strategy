@@ -1,5 +1,5 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import MermaidDiagram from "@/components/MermaidDiagram";
 
 vi.mock("mermaid", () => ({
@@ -11,11 +11,26 @@ vi.mock("mermaid", () => ({
 }));
 
 describe("MermaidDiagram", () => {
-  it("renders a container with the chart code", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("provides an accessible label and text alternative", async () => {
     const chart = "graph TD; A-->B;";
-    render(<MermaidDiagram chart={chart} />);
-    const container = document.querySelector(".mermaid");
-    expect(container).toBeDefined();
-    expect(container?.textContent).toContain("graph TD");
+    const fallback = "A flows to B.";
+    render(<MermaidDiagram chart={chart} fallback={fallback} />);
+
+    expect(screen.getByRole("img", { name: fallback })).toBeDefined();
+    expect(await screen.findByText(fallback)).toBeDefined();
+  });
+
+  it("renders with an accessible role and aria-label", () => {
+    const chart = "graph TD; A-->B;";
+    const fallback = "A flows to B.";
+    render(<MermaidDiagram chart={chart} fallback={fallback} />);
+
+    const imgContainer = screen.getByRole("img", { name: fallback });
+    expect(imgContainer).toBeDefined();
+    expect(imgContainer.getAttribute("aria-label")).toBe(fallback);
   });
 });

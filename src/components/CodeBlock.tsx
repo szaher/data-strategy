@@ -47,7 +47,14 @@ export default function CodeBlock({ code, language = "python", filename, childre
   };
 
   return (
-    <div className="my-4 rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--bg-tertiary)]">
+    <div
+      role="region"
+      aria-label={filename ? `Code example: ${filename}` : `Code example in ${language}`}
+      className="my-4 rounded-xl border border-[var(--border)] overflow-hidden bg-[var(--bg-tertiary)]"
+    >
+      <span className="sr-only" aria-live="polite">
+        {copied ? "Code copied to clipboard." : ""}
+      </span>
       <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)]">
         <span className="text-xs text-[var(--text-secondary)]">
           {filename || language}
@@ -77,6 +84,7 @@ export default function CodeBlock({ code, language = "python", filename, childre
           hideCursorInOverviewRuler: true,
           overviewRulerBorder: false,
           scrollbar: { vertical: "hidden", horizontal: "auto" },
+          accessibilitySupport: "on",
         }}
       />
     </div>

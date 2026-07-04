@@ -111,20 +111,29 @@ export default function MermaidDiagram({ chart, fallback, children }: MermaidDia
   }, [chartText, id, theme]);
 
   return (
-    <div className="my-6 p-4 bg-[var(--bg-tertiary)] rounded-xl border border-[var(--border)] overflow-x-auto">
-      {svgHtml ? (
-        <div className="mermaid flex justify-center" dangerouslySetInnerHTML={{ __html: svgHtml }} />
-      ) : failed ? (
-        <pre className="mermaid whitespace-pre-wrap text-sm text-[var(--text-secondary)]">
-          {fallback || chartText}
-        </pre>
-      ) : (
-        <div className="mermaid flex justify-center">
-          <pre className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">
-            {fallback || chartText || "Loading diagram..."}
+    <>
+      <div
+        role="img"
+        aria-label={fallback || "Diagram"}
+        className="my-6 p-4 bg-[var(--bg-tertiary)] rounded-xl border border-[var(--border)] overflow-x-auto"
+      >
+        {svgHtml ? (
+          <div className="mermaid flex justify-center" dangerouslySetInnerHTML={{ __html: svgHtml }} />
+        ) : failed ? (
+          <pre className="mermaid whitespace-pre-wrap text-sm text-[var(--text-secondary)]">
+            {fallback || chartText}
           </pre>
-        </div>
+        ) : (
+          <div className="mermaid flex justify-center" aria-live="polite">
+            <pre className="whitespace-pre-wrap text-sm text-[var(--text-secondary)]">
+              {fallback || chartText || "Loading diagram..."}
+            </pre>
+          </div>
+        )}
+      </div>
+      {svgHtml && (
+        <p className="sr-only">{fallback || "Diagram"}</p>
       )}
-    </div>
+    </>
   );
 }
