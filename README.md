@@ -19,7 +19,7 @@ pnpm dev
 - Staged generation pipeline in `src/lib/generationPipeline.ts`.
 - JSON-first prompt templates in `prompts/`.
 - MDX learning components for objectives, prerequisites, terms, callouts, diagrams, flashcards, quizzes, worked examples, exercises, citations, source labels, verification states, narration hooks, mind maps, infographics, and slide embeds.
-- Automated gates for schema validation, MDX compilation, links, citations, accessibility basics, duplicate content, and unsupported-claim signals.
+- Deterministic checks for tutorial-spec structure, MDX compilation, local links, declared citation identifiers, selected accessibility attributes, duplicate paragraphs, and heuristic risky-claim wording. These checks do not establish factual accuracy, legal compliance, pedagogical quality, or complete accessibility conformance.
 - GitHub Actions CI in `.github/workflows/ci.yml`.
 
 ## Project Structure

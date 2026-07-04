@@ -38,7 +38,10 @@ export default function Quiz({ questions, onComplete }: QuizProps) {
 
   if (finished) {
     return (
-      <div className="my-6 p-6 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)]">
+      <div
+        role="alert"
+        className="my-6 p-6 rounded-xl bg-[var(--bg-secondary)] border border-[var(--border)]"
+      >
         <h3 className="text-lg font-semibold mb-2">Quiz Complete</h3>
         <p className="text-[var(--text-secondary)]">
           You got {score} out of {questions.length} correct.
@@ -52,36 +55,66 @@ export default function Quiz({ questions, onComplete }: QuizProps) {
       <div className="text-xs text-[var(--text-secondary)] mb-3">
         Question {currentIndex + 1} of {questions.length}
       </div>
-      <h3 className="text-base font-medium mb-4">{q.question}</h3>
 
-      <div className="space-y-2 mb-4">
-        {q.options.map((opt, i) => {
-          let style = "border-[var(--border)] hover:border-[var(--border-hover)]";
-          if (submitted && i === q.correctIndex) {
-            style = "border-[var(--accent-green)] bg-[var(--accent-green)]/10";
-          } else if (submitted && i === selected && i !== q.correctIndex) {
-            style = "border-[var(--accent-red)] bg-[var(--accent-red)]/10";
-          } else if (!submitted && i === selected) {
-            style = "border-[var(--accent-blue)] bg-[var(--accent-blue)]/10";
-          }
+      <fieldset className="mb-4">
+        <legend className="text-base font-medium mb-4">{q.question}</legend>
+        <div className="space-y-2">
+          {q.options.map((opt, i) => {
+            let style = "border-[var(--border)] hover:border-[var(--border-hover)]";
+            if (submitted && i === q.correctIndex) {
+              style = "border-[var(--accent-green)] bg-[var(--accent-green)]/10";
+            } else if (submitted && i === selected && i !== q.correctIndex) {
+              style = "border-[var(--accent-red)] bg-[var(--accent-red)]/10";
+            } else if (!submitted && i === selected) {
+              style = "border-[var(--accent-blue)] bg-[var(--accent-blue)]/10";
+            }
 
-          return (
-            <button
-              key={i}
-              onClick={() => !submitted && setSelected(i)}
-              className={`w-full text-left px-4 py-2.5 rounded-lg border text-sm transition-colors ${style}`}
-              disabled={submitted}
-            >
-              {opt}
-            </button>
-          );
-        })}
-      </div>
+            const feedback =
+              submitted && i === q.correctIndex
+                ? "Correct"
+                : submitted && i === selected
+                  ? "Incorrect"
+                  : null;
+
+            return (
+              <label
+                key={i}
+                className={`block w-full cursor-pointer px-4 py-2.5 rounded-lg border text-sm transition-colors ${style} ${
+                  submitted ? "cursor-default" : ""
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={`quiz-question-${currentIndex}`}
+                  value={i}
+                  checked={selected === i}
+                  onChange={() => setSelected(i)}
+                  disabled={submitted}
+                  className="sr-only"
+                />
+                <span>{opt}</span>
+                {feedback && (
+                  <span className="ml-2 font-semibold">({feedback})</span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
 
       {submitted && (
-        <p className="text-sm text-[var(--text-secondary)] mb-4 p-3 rounded-lg bg-[var(--bg-tertiary)]">
-          {q.explanation}
-        </p>
+        <>
+          <p
+            aria-live="polite"
+            className="sr-only"
+          >
+            {selected === q.correctIndex ? "Correct." : "Incorrect."} {q.explanation}
+          </p>
+          <p className="text-sm text-[var(--text-secondary)] mb-4 p-3 rounded-lg bg-[var(--bg-tertiary)]">
+            <strong>{selected === q.correctIndex ? "Correct." : "Incorrect."}</strong>{" "}
+            {q.explanation}
+          </p>
+        </>
       )}
 
       <div className="flex justify-end">

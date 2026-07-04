@@ -1,3 +1,9 @@
+<!--
+  LAYOUT-ONLY PLACEHOLDER: This deck demonstrates Marp layouts and component patterns.
+  It is not instructional, operational, legal, security, or technical guidance.
+  Replace all content, examples, commands, and claims before public use.
+-->
+
 ---
 marp: true
 theme: academy
@@ -23,6 +29,22 @@ mermaid.initialize({ startOnLoad: true, theme: "base", themeVariables: { primary
 Presenter Name | Date
 
 <!-- This is the title slide using the lead class. Dark background, centered text. -->
+
+---
+
+<!-- _class: lead -->
+<!-- _header: '' -->
+<!-- _footer: '' -->
+
+# Placeholder Deck Notice
+
+This deck is for layout and presentation-pattern testing only.
+
+- It does not provide validated technical guidance.
+- Commands, configurations, metrics, and examples are placeholders.
+- Replace the content and complete fact, accessibility, and rights review before publication.
+
+---
 
 ---
 
