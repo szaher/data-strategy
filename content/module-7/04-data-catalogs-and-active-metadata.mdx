@@ -124,7 +124,7 @@ An analyst searches for "customer churn". The search returns `analytics.customer
 - **Description** — "Monthly customer cohorts with churn labels, used for retention modeling"
 - **Owner** — Technical owner: data-platform@company.com, Business owner: product-analytics@company.com
 - **Freshness** — Last updated 2 hours ago (green checkmark), updated daily at 6am UTC
-- **Quality metrics** — 3 quality checks passing (null check on customer_id, uniqueness check, row count within expected range), 1 check warning (engagement_score has 5% nulls, expected <2%)
+- **Quality metrics** — 3 quality checks passing (null check on customer_id, uniqueness check, row count within expected range), 1 check warning (engagement_score has 5% nulls, expected &lt;2%)
 - **Lineage** — Upstream: `raw.events`, `raw.subscriptions`, `raw.accounts`. Downstream: `dashboards.retention_dashboard`, `ml_features.churn_prediction_v2`
 - **Schema** — 12 columns, including `customer_id` (tagged `PII`), `churn_label` (tagged `ML_TARGET`), `engagement_score` (tagged `DERIVED`)
 - **Contract status** — Conforms to `customer_cohorts_v1.contract.yaml` (linked)
@@ -335,11 +335,11 @@ You have three architectural paths:
 
 - **Pro:** No infrastructure overhead, enterprise support, pre-built integrations with BI tools, collaboration features (discussions, approval workflows), compliance certifications (SOC2, HIPAA)
 - **Con:** Vendor lock-in, limited extensibility (you can't add custom metadata fields or connectors), pricing scales with dataset count, active metadata actions are basic (alerts only, no custom triggers)
-- **When to choose:** You have <10 data engineers and don't want to run infrastructure, you need enterprise support, or you're already committed to a cloud vendor (AWS Glue if you're all-in on AWS, Google Data Catalog if you're all-in on GCP)
+- **When to choose:** You have &lt;10 data engineers and don't want to run infrastructure, you need enterprise support, or you're already committed to a cloud vendor (AWS Glue if you're all-in on AWS, Google Data Catalog if you're all-in on GCP)
 
 **Decision framework:**
 
-- Start with **managed catalogs** if you're a small team (<10 data engineers) with no platform capacity to run infrastructure. AWS Glue or Google Data Catalog are fine for basic discovery and tagging.
+- Start with **managed catalogs** if you're a small team (&lt;10 data engineers) with no platform capacity to run infrastructure. AWS Glue or Google Data Catalog are fine for basic discovery and tagging.
 - Move to **OpenMetadata** if you need column-level lineage, modern UI, and built-in quality integration, and you're willing to run Docker Compose but don't need DataHub's connector breadth.
 - Move to **DataHub** if you need active metadata actions, 100+ connectors, flexible metadata model, or you're at scale (>100k datasets) and need mature lineage and usage analytics.
 

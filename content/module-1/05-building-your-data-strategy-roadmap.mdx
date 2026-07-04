@@ -26,7 +26,7 @@ The roadmap answers four questions the architecture cannot:
 
 3. **Who owns what, and when?** The operating model (Lesson 2) described **hybrid ownership**: platform teams provide self-service tooling, domain teams own their data products. The roadmap makes this concrete — Phase 1 establishes the platform team and their first deliverables (object storage, CDC pipelines), Phase 2 onboards the first domain team (marketing analytics), Phase 3 scales to additional domains (fraud detection, personalization).
 
-4. **How do you know if you're succeeding?** Every phase needs success metrics — not vague aspirations like "improve data quality," but measurable outcomes like "reduce pipeline failures from 15% to <5%," "ship first data product in 6 weeks," "achieve <10s query latency for 95th percentile dashboard loads." Without metrics, you can't tell the difference between progress and motion.
+4. **How do you know if you're succeeding?** Every phase needs success metrics — not vague aspirations like "improve data quality," but measurable outcomes like "reduce pipeline failures from 15% to &lt;5%," "ship first data product in 6 weeks," "achieve &lt;10s query latency for 95th percentile dashboard loads." Without metrics, you can't tell the difference between progress and motion.
 
 The architecture diagram is the map. The roadmap is the route, the fuel stops, and the arrival checkpoints.
 
@@ -101,7 +101,7 @@ Split the roadmap into three phases, each 3–6 months:
 **Phase 2 (3–6 months):** Analytics + Governance
 - Budget: $200K (1 additional platform engineer, Kafka, Spark, catalog license)
 - Deliverables: Kafka cluster, Spark on K8s, Iceberg lakehouse, DataHub catalog, first dbt models
-- Outcome: Marketing analytics dashboard live, <10s query latency, governance policies enforced
+- Outcome: Marketing analytics dashboard live, &lt;10s query latency, governance policies enforced
 
 **Phase 3 (6–12 months):** AI/ML + Scale
 - Budget: $250K (ML engineer, feature store, vector DB, fine-tuning costs)
@@ -114,11 +114,11 @@ Each phase is independently fundable. If Phase 1 fails to deliver, you can halt 
 
 Every phase has **three types of metrics**:
 
-- **Technical SLOs:** Pipeline uptime >99%, query latency <10s p95, data freshness <15 min
+- **Technical SLOs:** Pipeline uptime >99%, query latency &lt;10s p95, data freshness &lt;15 min
 - **Adoption metrics:** 3 domain teams onboarded, 10 data products published, 50 analysts using the catalog
 - **Business outcomes:** $500K ARR from fraud detection model, 20% reduction in support tickets via chatbot
 
-Measure at the end of each phase. If you hit <70% of targets, pause and diagnose before moving to the next phase.
+Measure at the end of each phase. If you hit &lt;70% of targets, pause and diagnose before moving to the next phase.
 
 ### 7. Dependencies Between Phases
 
@@ -226,7 +226,7 @@ Let's apply the strategy canvas to our recurring scenario (e-commerce company, 2
 
 **Success Metrics:**
 - K8s cluster uptime >99.5%
-- CDC pipeline latency <15 minutes from Postgres commit to object storage write
+- CDC pipeline latency &lt;15 minutes from Postgres commit to object storage write
 - Marketing team runs 10+ queries per week on `customer_events` table
 - Zero security incidents (no unauthorized bucket access)
 
@@ -251,14 +251,14 @@ Let's apply the strategy canvas to our recurring scenario (e-commerce company, 2
 6. **Governance policies** enforced — PII masking in non-production environments, access requests via catalog UI
 
 **Quick Win:**
-- Marketing dashboard live with <10s query latency for 95th percentile loads
+- Marketing dashboard live with &lt;10s query latency for 95th percentile loads
 - First governed data product: `customer_segments` table with documented schema, lineage, and SLOs
 
 **Success Metrics:**
 - 3 data products published in the catalog (customer events, segments, churn scores)
 - 20 analysts onboarded, 100+ queries per week
 - Pipeline uptime >99%
-- <5% of queries fail due to schema changes (lineage tracking catches breaking changes)
+- &lt;5% of queries fail due to schema changes (lineage tracking catches breaking changes)
 
 **Cost:** $200K
 
@@ -281,15 +281,15 @@ Let's apply the strategy canvas to our recurring scenario (e-commerce company, 2
 6. **Cost optimization** — spot instances for Spark, lifecycle policies for cold data, query result caching
 
 **Quick Wins:**
-- Fraud detection model in production, blocking 5% of transactions with <1% false positive rate
+- Fraud detection model in production, blocking 5% of transactions with &lt;1% false positive rate
 - RAG chatbot answering 30% of support queries, reducing ticket volume by 20%
 
 **Success Metrics:**
 - 5 domain teams onboarded, 20+ data products published
 - Fraud model achieves $500K annual savings (prevented fraud)
 - RAG chatbot handles 1,000 queries per week with 80% answer accuracy
-- Platform cost per data product <$5K/month
-- P95 query latency <10s for all dashboards
+- Platform cost per data product &lt;$5K/month
+- P95 query latency &lt;10s for all dashboards
 
 **Cost:** $250K
 
