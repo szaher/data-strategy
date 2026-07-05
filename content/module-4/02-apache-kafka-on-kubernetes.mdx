@@ -225,7 +225,7 @@ A production Kafka cluster on Kubernetes should have:
 
 ### Example: Kafka Cluster Manifest
 
-The following is an illustrative Strimzi configuration, not a production-ready default. Validate the Strimzi API version, Kafka version, controller mode (KRaft vs ZooKeeper), listeners, authorization, storage class, topology, resource sizing, and observability settings for your environment:
+The following is a **legacy Strimzi example pinned to Strimzi `v1beta2` API and Kafka 3.6.0 with ZooKeeper**. Current Strimzi releases (0.46+) use `kafka.strimzi.io/v1` with KRaft-only clusters and `KafkaNodePool` resources; ZooKeeper support has been removed. Do not use this manifest as-is — rewrite it for your target Strimzi and Kafka versions:
 
 <CodeBlock code={`apiVersion: kafka.strimzi.io/v1beta2
 kind: Kafka

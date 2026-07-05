@@ -49,7 +49,7 @@ In Kubernetes on GKE, a pod runs with a **Kubernetes service account** (KSA). Yo
 3. Pod receives a short-lived OAuth token scoped to the GSA's permissions
 4. Pod uses that token to authenticate to BigQuery
 
-At no point does the pod hold a static credential. The token is short-lived (the default TTL is provider- and configuration-dependent). If the pod is compromised, the blast radius is limited to that pod's identity and the token's remaining validity.
+At no point does the pod hold a static credential. Token exchange and credential lifetime vary by cloud provider, workload-identity configuration, SDK behavior, and organization policy. If the pod is compromised, the blast radius is limited to that pod's identity and the token's remaining validity.
 
 <MermaidDiagram chart={`graph TD
     A[Pod with KSA] -->|1. Request token| B[K8s Metadata Server]

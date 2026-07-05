@@ -135,27 +135,26 @@ Each snapshot has:
 
 ### Time Travel Queries
 
-<CodeBlock code={`-- Query the table as it existed at snapshot 12345
-SELECT * FROM orders FOR SYSTEM_VERSION AS OF 12345
-WHERE order_status = 'shipped';
+Time travel syntax is **engine-specific** — do not assume one engine's syntax works on another:
 
--- Query the table as it existed at a specific timestamp
-SELECT * FROM orders FOR SYSTEM_TIME AS OF '2024-06-15 08:00:00'
-WHERE region = 'us-east-1';
+<CodeBlock code={`-- Spark SQL (Iceberg)
+SELECT * FROM orders VERSION AS OF 12345;
+SELECT * FROM orders TIMESTAMP AS OF '2024-06-15 08:00:00';
 
--- Compare today's revenue vs. yesterday's
-SELECT
-  current.total_revenue - yesterday.total_revenue AS revenue_change
-FROM
-  (SELECT SUM(amount) AS total_revenue FROM orders) AS current,
-  (SELECT SUM(amount) AS total_revenue 
-   FROM orders FOR SYSTEM_TIME AS OF CURRENT_DATE - INTERVAL '1' DAY) AS yesterday;
-`} language="sql" filename="time_travel.sql" />
+-- Trino (Iceberg connector)
+SELECT * FROM orders FOR VERSION AS OF 12345;
+SELECT * FROM orders FOR TIMESTAMP AS OF TIMESTAMP '2024-06-15 08:00:00';
 
-**Why this matters for AI/ML reproducibility:** If your training pipeline reads the `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying `FOR SYSTEM_TIME AS OF '2024-06-19 09:00:00'`. This reproduces the table snapshot used during training — though full reproducibility also depends on matching the code version, feature engineering logic, model configuration, and runtime environment.
+-- Athena engine v3 (Iceberg)
+SELECT * FROM orders FOR VERSION AS OF 12345;
+SELECT * FROM orders FOR TIMESTAMP AS OF TIMESTAMP '2024-06-15 08:00:00';
+-- Note: Athena's older FOR SYSTEM_* syntax has been replaced.
+`} language="sql" filename="time_travel_by_engine.sql" />
+
+**Why this matters for AI/ML reproducibility:** If your training pipeline reads the `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying the table at that timestamp (using your engine's syntax). This reproduces the table snapshot used during training — though full reproducibility also depends on matching the code version, feature engineering logic, model configuration, and runtime environment.
 
 <VerifyClaim status="verify">
-Time travel SQL syntax (`FOR SYSTEM_VERSION AS OF`, `FOR SYSTEM_TIME AS OF`) varies by query engine. Spark, Trino, and Athena each use different syntax. Verify the time travel query syntax for your specific engine and <Citation id="iceberg-time-travel-m6-l2" href="https://iceberg.apache.org/docs/latest/spark-queries/#time-travel" quality="official-docs">Iceberg</Citation> version.
+Time travel syntax differs across engines and versions. The examples above reflect Spark, Trino, and Athena syntax as of their respective documentation at time of writing. Always verify against the <Citation id="iceberg-time-travel-m6-l2" href="https://iceberg.apache.org/docs/latest/spark-queries/#time-travel" quality="official-docs">Iceberg documentation</Citation> and your engine's release notes.
 </VerifyClaim>
 
 ---

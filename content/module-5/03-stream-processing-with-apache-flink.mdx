@@ -193,7 +193,7 @@ Without TTL, a keyed state operator will accumulate state for every unique key i
 
 The checkpoint process is asynchronous and uses a technique called **Chandy-Lamport snapshots**. Flink injects special **barrier** markers into the stream. When an operator receives a barrier, it snapshots its state and forwards the barrier downstream. This ensures all operators snapshot a consistent global state without pausing event processing.
 
-Checkpoints are written to durable storage: S3, HDFS, or network-attached storage. If a TaskManager crashes, Flink restores the latest checkpoint and reprocesses events from the checkpointed source offsets. Because Flink replays from the exact same offsets and uses the same state snapshot, internal state is recovered consistently — **exactly-once semantics for Flink's internal state**. End-to-end exactly-once guarantees additionally depend on source replay capabilities, sink transactional support, and the absence of external side effects.
+Checkpoints are written to durable storage: S3, HDFS, or network-attached storage. If a TaskManager crashes, Flink restores the latest checkpoint and reprocesses events from the checkpointed source offsets. Because Flink replays from the exact same offsets and uses the same state snapshot, internal state is recovered consistently — **exactly-once semantics for Flink's internal state**. Exactly-once end-to-end requires replayable sources plus transactional or idempotent sinks; verify the guarantees of every connector in your pipeline.
 
 **Exactly-once vs at-least-once:** Flink's checkpoint mode defaults to exactly-once for internal state, but you can configure at-least-once (CHECKPOINT_MODE = AT_LEAST_ONCE) for lower overhead.
 

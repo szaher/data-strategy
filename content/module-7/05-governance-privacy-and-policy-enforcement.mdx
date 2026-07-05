@@ -58,20 +58,21 @@ Infrastructure IAM says "Alice can run queries against the lakehouse." Data-laye
 
 ### Row-Level Security
 
-**Row-level security (RLS)** filters query results based on user identity and attributes. Row and column controls are implemented differently across query engines. The following examples illustrate policy intent — adapt the syntax and verify against the specific engine, version, connector, and access-control plugin documentation before deployment.
+**Row-level security (RLS)** filters query results based on user identity and attributes. Row and column controls are implemented differently across query engines. The following examples are **pseudocode illustrating policy intent** — they are not runnable Trino DDL. Trino's built-in file access control uses JSON rules; Ranger and OPA integrations use their own configuration formats. Adapt the intent and verify against the specific engine, version, and access-control plugin documentation before deployment.
 
-<CodeBlock code={`-- Trino row filter for regional access control
-CREATE ROW FILTER orders_region_filter ON lakehouse.sales.orders
+<CodeBlock code={`-- Pseudocode: row filter intent for regional access control
+-- (Not native Trino DDL — implement via file-based rules, Ranger, or OPA)
+POLICY orders_region_filter ON lakehouse.sales.orders
 FOR analyst_role
-AS region = current_user_region();
+FILTER region = current_user_region();
 
--- When an analyst queries:
+-- Effect: when an analyst queries:
 SELECT * FROM lakehouse.sales.orders;
 
--- Trino rewrites it as:
+-- The engine rewrites it as:
 SELECT * FROM lakehouse.sales.orders
 WHERE region = current_user_region();
-`} language="sql" filename="trino-rls.sql" />
+`} language="sql" filename="rls-pseudocode.sql" />
 
 The `current_user_region()` function reads from a user attributes table or LDAP metadata. Every query is automatically scoped to the user's region — no need to remember to add the filter.
 
@@ -79,15 +80,16 @@ The `current_user_region()` function reads from a user attributes table or LDAP 
 
 **Column-level security** hides specific columns based on role. A data scientist sees `order_id, product_id, quantity`, but not `customer_email, customer_phone`.
 
-<CodeBlock code={`-- Trino column mask for PII fields
-CREATE COLUMN MASK pii_mask ON lakehouse.sales.orders.customer_email
+<CodeBlock code={`-- Pseudocode: column mask intent for PII fields
+-- (Not native Trino DDL — implement via file-based rules, Ranger, or OPA)
+POLICY pii_mask ON lakehouse.sales.orders.customer_email
 FOR analyst_role
-RETURNS 'REDACTED';
+MASK WITH 'REDACTED';
 
-CREATE COLUMN MASK phone_mask ON lakehouse.sales.orders.customer_phone
+POLICY phone_mask ON lakehouse.sales.orders.customer_phone
 FOR analyst_role
-RETURNS NULL;
-`} language="sql" filename="trino-column-mask.sql" />
+MASK WITH NULL;
+`} language="sql" filename="column-mask-pseudocode.sql" />
 
 When an analyst queries `SELECT * FROM orders`, the result includes `customer_email` as `'REDACTED'` and `customer_phone` as `NULL`. The schema is visible, but the data is not.
 
@@ -105,21 +107,23 @@ Tags propagate through lineage. If a derived table is created from a column tagg
 
 **Tag enforcement in Trino:**
 
-<CodeBlock code={`-- Tag column as PII in Hive Metastore or Iceberg
-ALTER TABLE lakehouse.sales.orders
-SET COLUMN customer_email TAGS ('pii');
+<CodeBlock code={`-- Pseudocode: tag-based masking intent
+-- (Not native Trino DDL — implement via catalog metadata + access-control plugin)
 
--- Policy: mask PII for analysts
-CREATE COLUMN MASK auto_pii_mask ON *
+-- Step 1: Tag column as PII in catalog (Hive Metastore, Iceberg, or DataHub)
+TAG lakehouse.sales.orders.customer_email AS 'pii';
+
+-- Step 2: Policy masks all PII-tagged columns for analysts
+POLICY auto_pii_mask
 FOR analyst_role
-WHERE has_tag(column, 'pii')
-RETURNS 'REDACTED';
-`} language="sql" filename="tag-based-masking.sql" />
+WHEN column HAS TAG 'pii'
+MASK WITH 'REDACTED';
+`} language="sql" filename="tag-masking-pseudocode.sql" />
 
 This illustrates **policy as code** intent — the masking rule is defined once and applies to all columns tagged `pii`, across all tables. See the <Citation id="trino-m7-l5" href="https://trino.io/docs/current/security/built-in-system-access-control.html" quality="official-docs">Trino security documentation</Citation> for configuration details specific to your version and access-control plugin.
 
 <VerifyClaim status="verify">
-The SQL syntax shown for row filters, column masks, and tag-based masking is illustrative. Trino's system access control plugin API, Ranger integration, and OPA integration each use different configuration mechanisms. Verify the Trino documentation for your version and access-control plugin.
+The examples above are pseudocode expressing policy intent, not runnable DDL. Trino's built-in file access control uses JSON rule files; Ranger and OPA integrations each use their own configuration formats. To implement these policies, consult the <Citation id="trino-access-control-m7-l5" href="https://trino.io/docs/current/security/built-in-system-access-control.html" quality="official-docs">Trino access control documentation</Citation> for your version and plugin.
 </VerifyClaim>
 
 ---
