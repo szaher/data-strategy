@@ -72,7 +72,7 @@ There is no single "best" data platform architecture. The right choice depends o
 - **Lakehouse:** Apache Iceberg with S3/GCS/ADLS object storage
 - **Query engine:** Trino on Kubernetes
 - **Feature store:** Feast (Kubernetes-native)
-- **Observability:** Prometheus + Grafana + OpenTelemetry
+- **Observability:** <Citation id="prometheus-m10-l2" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation> + <Citation id="grafana-m10-l2" href="https://grafana.com/docs/grafana/latest/" quality="official-docs">Grafana</Citation> + OpenTelemetry
 
 **When to choose this blueprint:**
 - Organizations with existing Kubernetes expertise
@@ -247,7 +247,7 @@ A readmission risk model is deployed on KServe. When a clinician opens a patient
 Throughout the pipeline:
 - **Metrics:** Flink, Trino, and KServe emit Prometheus metrics (latency, throughput, error rates) scraped by a Prometheus server running on Kubernetes. Grafana dashboards visualize SLIs (Service Level Indicators) for each component.
 - **Traces:** OpenTelemetry instrumentation in Flink, Trino, and KServe sends traces to Jaeger, allowing engineers to trace a single prescription event from ingestion to inference.
-- **Audit logs:** Every database access, Flink transformation, Trino query, and model prediction is logged to Cloud Logging/CloudWatch with structured metadata (user ID, timestamp, action, resource). Logs are retained for 7 years to meet HIPAA requirements.
+- **Audit logs:** Every database access, Flink transformation, Trino query, and model prediction is logged to Cloud Logging/CloudWatch with structured metadata (user ID, timestamp, action, resource). Logs are retained for 7 years to meet <Citation id="hipaa-m10-l2" href="https://www.hhs.gov/hipaa/index.html" quality="primary">HIPAA</Citation> requirements.
 
 This end-to-end flow demonstrates how the hybrid blueprint **composes managed services** (Confluent Cloud for Kafka, Cloud Logging for audit trails) with **self-hosted components** (Flink, Trino, KServe) to meet regulatory requirements while minimizing operational overhead for commodity infrastructure.
 

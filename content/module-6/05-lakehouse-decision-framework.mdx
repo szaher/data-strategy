@@ -46,7 +46,7 @@ Many organizations frame data platform decisions as **either lakehouse or wareho
 - **Open data** — vendor-neutral formats (Parquet, Iceberg) prevent lock-in, enable multi-cloud portability
 - **Multi-engine access** — same table read by Spark (batch), Trino (SQL), Flink (streaming), PyTorch (ML)
 - **Large-scale processing** — elastic compute for petabyte-scale ETL, model training, feature engineering
-- **Reproducible datasets** — table versioning (Iceberg snapshots) enables time-travel queries, rollback, A/B testing
+- **Reproducible datasets** — table versioning (<Citation id="iceberg-m6-l5" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation> snapshots) enables time-travel queries, rollback, A/B testing
 - **Interoperability** — catalog APIs expose metadata to external systems (data catalogs, lineage tools, governance platforms)
 - **Cost at scale** — object storage pricing (pennies per GB-month) vs warehouse compute-storage coupling
 
@@ -69,7 +69,7 @@ Three common patterns emerge in real deployments:
 
 **Trade-offs:**
 - Higher operational burden (manage Trino clusters, Spark jobs, catalog infrastructure)
-- Weaker high-concurrency SQL performance (Trino supports thousands of queries/hour, but not tens of thousands)
+- Weaker high-concurrency SQL performance (<Citation id="trino-m6-l5" href="https://trino.io/docs/current/" quality="official-docs">Trino</Citation> supports thousands of queries/hour, but not tens of thousands)
 - Need custom integrations for some BI tools (Tableau/Looker prefer native warehouse connectors)
 
 **Example:** A fintech startup with 30 data engineers, 5 BI analysts. Iceberg + Trino for all data, Snowflake for executive dashboards.

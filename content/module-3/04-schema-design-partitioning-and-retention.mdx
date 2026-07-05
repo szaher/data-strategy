@@ -10,7 +10,7 @@ This lesson covers the design principles that turn raw storage into a structured
 
 By the end of this lesson, you'll understand the default choices that work for most systems (normalized OLTP, Parquet analytics, daily partitioning, automated retention), the decision framework for when to deviate, and the failure modes to avoid.
 
-**Boundary note:** This lesson covers relational and file-level schema design. Event-schema compatibility (Avro schema evolution, Protobuf backward compatibility) is covered in Module 4. Table-format schema evolution (Apache Iceberg schema changes) is covered in Module 6.
+**Boundary note:** This lesson covers relational and file-level schema design. Event-schema compatibility (Avro schema evolution, Protobuf backward compatibility) is covered in Module 4. Table-format schema evolution (<Citation id="iceberg-m3-l4" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Apache Iceberg</Citation> schema changes) is covered in Module 6.
 
 ## Relational Schema Design Principles
 
@@ -70,7 +70,7 @@ File formats embed schema information in different ways. Choosing the right form
 
 ### Parquet as the Default Columnar Format
 
-**Parquet** is the default file format for analytics. It stores data in columns (not rows), which enables two key optimizations:
+**<Citation id="parquet-m3-l4" href="https://parquet.apache.org/documentation/" quality="official-docs">Parquet</Citation>** is the default file format for analytics. It stores data in columns (not rows), which enables two key optimizations:
 
 1. **Column pruning:** If a query only reads 3 of 50 columns, Parquet skips the other 47 entirely. Row-based formats (CSV, JSON) must read the entire row to extract any column.
 2. **Predicate pushdown:** Parquet files store min/max statistics for each column chunk. If you filter `WHERE date >= '2024-01-01'`, the query engine skips chunks where `max(date) < '2024-01-01'`.
@@ -86,7 +86,7 @@ Parquet also compresses better than row-based formats because similar values clu
 Different stages of the pipeline optimize for different properties:
 
 - **JSON:** Human-readable, schema-on-read (no upfront schema required), easy to debug. High storage overhead (field names repeated in every record). Use for event logging, API responses, early-stage exploration.
-- **Avro:** Row-based binary format with embedded schema. Compact, fast to write, supports schema evolution (add/remove fields without breaking readers). Use for event streams (Kafka topics), ETL intermediate stages, any workload that writes one record at a time.
+- **<Citation id="avro-m3-l4" href="https://avro.apache.org/docs/" quality="official-docs">Avro</Citation>:** Row-based binary format with embedded schema. Compact, fast to write, supports schema evolution (add/remove fields without breaking readers). Use for event streams (Kafka topics), ETL intermediate stages, any workload that writes one record at a time.
 - **Parquet:** Columnar binary format optimized for analytics. Slowest to write (must buffer rows to build columns), best for read-heavy workloads. Use for final analytics storage (data lakes, data warehouses).
 
 **Default pattern:** Ingest events as JSON or Avro, transform to Parquet for analytics. JSON is flexible but expensive to query at scale. Avro is compact and evolution-friendly but row-based (inefficient for wide tables). Parquet is the end state for analytics.
@@ -286,7 +286,7 @@ Most systems implement holds via metadata: a `legal_hold` flag on partitions or 
 
 ### Retention as Governance
 
-Retention isn't just cost optimization — it's governance. Storing data indefinitely creates privacy risk (stale PII), compliance risk (GDPR "right to be forgotten"), and operational risk (old data pollutes analytics).
+Retention isn't just cost optimization — it's governance. Storing data indefinitely creates privacy risk (stale PII), compliance risk (<Citation id="gdpr-m3-l4" href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" quality="primary">GDPR</Citation> "right to be forgotten"), and operational risk (old data pollutes analytics).
 
 Module 7 (Data Governance) covers this in depth. The key takeaway: retention policies are a forcing function for data hygiene. Define them early, automate them, and enforce exceptions carefully.
 

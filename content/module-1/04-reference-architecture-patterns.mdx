@@ -96,7 +96,7 @@ When a Vertex AI model consumes a data product, that consumption is recorded as 
 
 ## Archetype B: Kubernetes-Centric
 
-The **Kubernetes-Centric** archetype runs data platform components as containerized workloads on Kubernetes. Kafka is deployed with **Strimzi** (a Kubernetes operator). Spark runs via the **Spark Operator**. Airflow is installed with the **official Helm chart**. Object storage (S3, GCS) and identity services (IAM) are still cloud-managed, but differentiated components run on K8s.
+The **Kubernetes-Centric** archetype runs data platform components as containerized workloads on Kubernetes. <Citation id="kafka-m1-l4" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation> is deployed with <Citation id="strimzi-m1-l4" href="https://strimzi.io/documentation/" quality="official-docs">**Strimzi**</Citation> (a Kubernetes operator). <Citation id="spark-m1-l4" href="https://spark.apache.org/docs/latest/" quality="official-docs">Spark</Citation> runs via the **Spark Operator**. <Citation id="airflow-m1-l4" href="https://airflow.apache.org/docs/" quality="official-docs">Airflow</Citation> is installed with the **official Helm chart**. Object storage (S3, GCS) and identity services (IAM) are still cloud-managed, but differentiated components run on K8s.
 
 ### Component Choices
 
@@ -135,7 +135,7 @@ Kubernetes-Centric is the right choice when:
 
 ### AI Accountability in Kubernetes-Centric
 
-Training data lives in S3/GCS, cataloged by **DataHub** or **OpenMetadata** (both deployed on Kubernetes). Embeddings are stored in **vector databases** like Weaviate or Milvus, also running on Kubernetes, with metadata registered in the same catalog.
+Training data lives in S3/GCS, cataloged by <Citation id="datahub-m1-l4" href="https://datahubproject.io/docs/" quality="official-docs">**DataHub**</Citation> or **OpenMetadata** (both deployed on Kubernetes). Embeddings are stored in **vector databases** like Weaviate or Milvus, also running on Kubernetes, with metadata registered in the same catalog.
 
 When a **Kubeflow** or **MLflow** training job consumes a data product, lineage is tracked by DataHub. When a RAG retrieval service queries a vector database, the source documents are linked to catalog entities. The trust plane is unified across analytics and AI workloads, all orchestrated through Kubernetes-native tools.
 
@@ -345,13 +345,13 @@ Here's how each archetype implements this flow:
 ### Kubernetes-Centric
 
 1. **Source change** — Salesforce writes to Postgres (RDS or Cloud SQL)
-2. **CDC** — **Debezium** (deployed on Kubernetes) captures change events, publishes to **Kafka** (Strimzi on K8s)
-3. **Processing** — **Spark Operator** (Kubernetes-native Spark) enriches events with lookup tables from **Trino** (also on K8s)
+2. **CDC** — <Citation id="debezium-m1-l4" href="https://debezium.io/documentation/" quality="official-docs">**Debezium**</Citation> (deployed on Kubernetes) captures change events, publishes to **Kafka** (Strimzi on K8s)
+3. **Processing** — **Spark Operator** (Kubernetes-native Spark) enriches events with lookup tables from <Citation id="trino-m1-l4" href="https://trino.io/docs/current/" quality="official-docs">**Trino**</Citation> (also on K8s)
 4. **Storage** — Enriched data lands in **S3/GCS** (object storage), cataloged by **DataHub** (on K8s)
 5. **ML consumption** — **Kubeflow** training job reads from S3, writes embeddings to **Weaviate** (vector DB on K8s)
 6. **RAG retrieval** — Application queries **Weaviate**, governed by **DataHub** lineage
 
-**Trust plane:** DataHub tracks lineage from Postgres → Kafka → S3 → Kubeflow → Weaviate. **Open Policy Agent** (on K8s) enforces access. **Great Expectations** (on K8s) enforces quality.
+**Trust plane:** DataHub tracks lineage from Postgres → Kafka → S3 → Kubeflow → Weaviate. <Citation id="opa-m1-l4" href="https://www.openpolicyagent.org/docs/latest/" quality="official-docs">**Open Policy Agent**</Citation> (on K8s) enforces access. **Great Expectations** (on K8s) enforces quality.
 
 ### Hybrid/Regulated Enterprise (GCP)
 
@@ -388,7 +388,7 @@ The third failure mode is **accepting vendor lock-in without an exit plan**. Tea
 
 Vendor lock-in is not inherently bad. BigQuery is fast, reliable, and scales automatically. But if you *assume* you'll never migrate, you'll make architectural decisions that make future migration prohibitively expensive: hard-coding BigQuery-specific SQL functions, storing embeddings in BigQuery vector columns, coupling orchestration logic to BigQuery APIs.
 
-**How to avoid:** Self-host the governance layer (DataHub or OpenMetadata) even if you use managed storage. Store data in open formats (Parquet, Iceberg) in object storage (S3, GCS), not proprietary warehouse formats. Use abstraction layers (dbt for SQL transformations, Trino for federated queries) so that switching from BigQuery to Snowflake requires changing configuration, not rewriting code.
+**How to avoid:** Self-host the governance layer (DataHub or OpenMetadata) even if you use managed storage. Store data in open formats (Parquet, <Citation id="iceberg-m1-l4" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation>) in object storage (S3, GCS), not proprietary warehouse formats. Use abstraction layers (<Citation id="dbt-m1-l4" href="https://docs.getdbt.com/" quality="official-docs">dbt</Citation> for SQL transformations, Trino for federated queries) so that switching from BigQuery to Snowflake requires changing configuration, not rewriting code.
 
 ## Summary
 

@@ -28,7 +28,7 @@ quiz:
 
 In the last lesson, you learned how **Apache Spark** handles batch processing with DataFrames and partitioned transformations. Batch processing works brilliantly when your data arrives in discrete chunks — daily exports, hourly logs, weekly snapshots. But what happens when events stream in continuously, and you need answers in seconds, not hours?
 
-This is the domain of **stream processing**, where systems like **Apache Flink** shine. Stream processing treats data as an unbounded flow of events rather than fixed datasets. The challenge isn't just speed — it's handling **out-of-order arrival**, **late data**, and **stateful computations** while guaranteeing correctness and fault tolerance.
+This is the domain of **stream processing**, where systems like <Citation id="flink-m5-l3" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">**Apache Flink**</Citation> shine. Stream processing treats data as an unbounded flow of events rather than fixed datasets. The challenge isn't just speed — it's handling **out-of-order arrival**, **late data**, and **stateful computations** while guaranteeing correctness and fault tolerance.
 
 Here's the problem: if you use the time when your system *processes* an event (processing time) instead of when the event *actually happened* (event time), your results become non-deterministic. Reprocess the same stream twice, and you'll get different answers. This is unacceptable for production analytics, fraud detection, or billing systems.
 
@@ -58,7 +58,7 @@ Source → Transformation(s) → Sink
 
 Unlike Spark, which executes in micro-batches, Flink is a **true streaming engine**. Events flow through the operator pipeline one at a time (or in small batches for efficiency). This gives Flink sub-second latency for many workloads.
 
-**Flink on Kubernetes** has become the de facto deployment model. The **Flink Kubernetes Operator** automates lifecycle management: deploying JobManager and TaskManager pods, managing savepoints, handling upgrades. You choose between two modes:
+**Flink on <Citation id="kubernetes-m5-l3" href="https://kubernetes.io/docs/" quality="official-docs">Kubernetes</Citation>** has become the de facto deployment model. The **Flink Kubernetes Operator** automates lifecycle management: deploying JobManager and TaskManager pods, managing savepoints, handling upgrades. You choose between two modes:
 
 - **Session mode**: Multiple jobs share a single Flink cluster. Good for resource efficiency but jobs interfere with each other.
 - **Application mode**: Each job gets its own dedicated cluster. Isolation is perfect, but overhead is higher.
@@ -198,7 +198,7 @@ Checkpoints are written to durable storage: S3, HDFS, or network-attached storag
 **Exactly-once vs at-least-once:** Flink's checkpoint mode defaults to exactly-once for internal state, but you can configure at-least-once (CHECKPOINT_MODE = AT_LEAST_ONCE) for lower overhead.
 
 <VerifyClaim status="verify">
-End-to-end exactly-once guarantees depend on source replay capabilities, sink transactional support (e.g., Kafka transactions, two-phase commit sinks), and the absence of external side effects. Verify the Flink fault-tolerance and connector documentation for your source/sink combination.
+End-to-end exactly-once guarantees depend on source replay capabilities, sink transactional support (e.g., Kafka transactions, two-phase commit sinks), and the absence of external side effects. Verify the <Citation id="flink-checkpointing-m5-l3" href="https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream/fault-tolerance/checkpointing/" quality="official-docs">Flink fault-tolerance and checkpointing documentation</Citation> and connector documentation for your source/sink combination.
 </VerifyClaim>
 
 At-least-once is faster (less checkpointing I/O) but means duplicate processing on failures. For analytics and reporting, exactly-once is mandatory. For approximate monitoring, at-least-once may suffice.

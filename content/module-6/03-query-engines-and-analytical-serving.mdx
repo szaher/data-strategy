@@ -50,7 +50,7 @@ Most lakehouse platforms deploy two engines by default: **Trino as the distribut
 
 ### Trino: Distributed SQL Across Multiple Data Sources
 
-**Trino** is a distributed SQL query engine originally designed to query data across Hadoop, S3, and relational databases without moving it. In a lakehouse architecture, Trino reads Iceberg tables from object storage, joins them with data still in PostgreSQL, queries Kafka topics as tables, and exposes all of it through standard SQL.
+<Citation id="trino-m6-l3" href="https://trino.io/docs/current/" quality="official-docs">**Trino**</Citation> is a distributed SQL query engine originally designed to query data across Hadoop, S3, and relational databases without moving it. In a lakehouse architecture, Trino reads Iceberg tables from object storage, joins them with data still in PostgreSQL, queries Kafka topics as tables, and exposes all of it through standard SQL.
 
 The key capability is **federation** — a single SQL query that spans multiple systems. An analyst writes:
 
@@ -76,7 +76,7 @@ Trino clusters typically run on **Kubernetes** with multiple worker nodes. A coo
 
 ### DuckDB: In-Process Analytical Engine
 
-**DuckDB** is an embedded analytical database that runs inside the application process — no server, no network, no cluster. Think of it as SQLite for analytics rather than transactions. DuckDB reads Parquet files, Iceberg tables, CSV, and JSON directly from local disk or object storage and processes them with columnar execution and vectorized query plans.
+<Citation id="duckdb-m6-l3" href="https://duckdb.org/docs/" quality="official-docs">**DuckDB**</Citation> is an embedded analytical database that runs inside the application process — no server, no network, no cluster. Think of it as SQLite for analytics rather than transactions. DuckDB reads Parquet files, Iceberg tables, CSV, and JSON directly from local disk or object storage and processes them with columnar execution and vectorized query plans.
 
 DuckDB excels at **single-node analytical workloads**:
 

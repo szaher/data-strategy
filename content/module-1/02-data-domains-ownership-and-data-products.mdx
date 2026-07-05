@@ -75,7 +75,7 @@ One **central platform team** owns everything: ingestion pipelines, transformati
 
 Each **domain team** owns its data products end-to-end: ingestion, transformation, quality, documentation, and serving. There is no central data team — instead, a platform team provides **self-service infrastructure** (compute, storage, orchestration, observability) that domain teams use to build and operate their own data products. Governance is **federated** through a cross-functional group that sets standards without owning execution.
 
-This is the **data mesh** model popularized by Zhamak Dehghani. It treats data as a product, domains as product teams, and the platform as an enabler rather than a gatekeeper.
+This is the **data mesh** model popularized by <Citation id="dehghani-m1-l2" href="https://martinfowler.com/articles/data-mesh-principles.html" quality="expert">Zhamak Dehghani</Citation>. It treats data as a product, domains as product teams, and the platform as an enabler rather than a gatekeeper.
 
 **Advantages:**
 - **Scalability** — no central bottleneck; domain teams move independently
@@ -178,7 +178,7 @@ These are **monitored** (not just documented) with alerts when SLOs are breached
 **Who can read** the data product? Row-level or column-level restrictions? Is PII masked for non-privileged users? Access policies are **enforced at the platform level** (Unity Catalog, BigQuery IAM, Snowflake RBAC) so domain teams can't bypass them.
 
 ### 5. Documentation
-**Human-readable description** of what the data product represents, how it's produced, common use cases, and known limitations. Includes **field-level descriptions** (not just "customer_id" but "unique identifier for customer, stable across CRM migrations"). Discoverable in a **data catalog** (Atlan, Alation, DataHub).
+**Human-readable description** of what the data product represents, how it's produced, common use cases, and known limitations. Includes **field-level descriptions** (not just "customer_id" but "unique identifier for customer, stable across CRM migrations"). Discoverable in a **data catalog** (Atlan, Alation, <Citation id="datahub-m1-l2" href="https://datahubproject.io/docs/" quality="official-docs">DataHub</Citation>).
 
 ### 6. Discoverability
 The data product appears in a **searchable catalog** tagged with business terms, domain, owner contact, and lineage. Consumers can search "customer churn risk" and find the relevant data product without knowing table names or file paths.
@@ -218,7 +218,7 @@ A deployed model needs **inference-time features** — the same transformations 
 
 **Anti-pattern:** The ML team owns training features (batch) and the application team owns inference features (real-time). Logic drifts, predictions degrade, and no one notices until customers complain.
 
-**Better pattern:** A **Feature Store** (Feast, Tecton, SageMaker Feature Store) provides a unified data product for both training and inference. Domain teams contribute features following the feature store's schema and quality contract. The ML team consumes features rather than reimplementing them.
+**Better pattern:** A **Feature Store** (<Citation id="feast-m1-l2" href="https://docs.feast.dev/" quality="official-docs">Feast</Citation>, Tecton, SageMaker Feature Store) provides a unified data product for both training and inference. Domain teams contribute features following the feature store's schema and quality contract. The ML team consumes features rather than reimplementing them.
 
 <MermaidDiagram chart={`flowchart LR
     subgraph Customer["Customer Domain"]

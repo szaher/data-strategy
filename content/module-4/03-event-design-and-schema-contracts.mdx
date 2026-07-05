@@ -73,7 +73,7 @@ The answer depends on the **serialization format** and **compatibility mode** yo
 
 ### Serialization Formats
 
-**Avro** is the most common choice for Kafka events. It's compact, fast, and has rich schema evolution semantics. Avro schemas are JSON definitions that specify fields, types, and documentation. The schema is stored in a **schema registry** (Confluent Schema Registry or Apicurio Registry), and each event payload includes a schema ID reference rather than embedding the full schema.
+<Citation id="avro-m4-l3" href="https://avro.apache.org/docs/" quality="official-docs">**Avro**</Citation> is the most common choice for Kafka events. It's compact, fast, and has rich schema evolution semantics. Avro schemas are JSON definitions that specify fields, types, and documentation. The schema is stored in a **schema registry** (<Citation id="schema-registry-m4-l3" href="https://docs.confluent.io/platform/current/schema-registry/" quality="official-docs">Confluent Schema Registry</Citation> or <Citation id="apicurio-m4-l3" href="https://www.apicur.io/registry/docs/" quality="official-docs">Apicurio Registry</Citation>), and each event payload includes a schema ID reference rather than embedding the full schema.
 
 **Protobuf** (Protocol Buffers) is Google's serialization format, also widely used. It has similar evolution capabilities to Avro and slightly better performance in some benchmarks. Protobuf uses field numbers instead of field names for wire encoding, which makes renaming fields safe (the number stays stable).
 
@@ -302,7 +302,7 @@ A data contract is a formal agreement between the producer (who owns the event) 
         migration_guide: https://wiki.company.internal/orders/legacy-id-migration
 `} language="yaml" filename="order-created-contract.yaml" />
 
-This contract is **not enforced by the schema registry**. It's a human agreement, often codified in YAML or Markdown and stored in a shared repository (or a data catalog like DataHub, Atlan, or Collibra). Some teams build tooling to validate contracts in CI/CD — for example, failing a deployment if a schema change violates the deprecation policy.
+This contract is **not enforced by the schema registry**. It's a human agreement, often codified in YAML or Markdown and stored in a shared repository (or a data catalog like <Citation id="datahub-m4-l3" href="https://datahubproject.io/docs/" quality="official-docs">DataHub</Citation>, Atlan, or Collibra). Some teams build tooling to validate contracts in CI/CD — for example, failing a deployment if a schema change violates the deprecation policy.
 
 ### Why Contracts Matter
 

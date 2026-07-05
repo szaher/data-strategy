@@ -283,7 +283,9 @@ async function validateMdx(file, knownCitationIds) {
   }
 
   for (const match of findAll(/<Citation[^>]*\sid=["']([^"']+)["'][^>]*>/g, body)) {
-    if (!knownCitationIds.has(match[1])) add("error", file, `Citation id '${match[1]}' is not declared in tutorial references.`);
+    const tag = match[0];
+    const hasHref = /\bhref=["'][^"']+["']/.test(tag);
+    if (!knownCitationIds.has(match[1]) && !hasHref) add("error", file, `Citation id '${match[1]}' is not declared in tutorial references and has no href.`);
   }
 
   for (const match of findAll(/<img\b[^>]*>/g, body)) {

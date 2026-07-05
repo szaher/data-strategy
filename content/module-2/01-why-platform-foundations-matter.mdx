@@ -60,7 +60,7 @@ The alternative is to treat the platform as a **product** whose customers are do
 
 The platform-as-a-product model means:
 
-- **Self-service interfaces** replace ticket queues. Domain teams provision Kafka topics via Terraform modules, not JIRA.
+- **Self-service interfaces** replace ticket queues. Domain teams provision <Citation id="kafka-m2-l1" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation> topics via <Citation id="terraform-m2-l1" href="https://developer.hashicorp.com/terraform/docs" quality="official-docs">Terraform</Citation> modules, not JIRA.
 - **Golden paths** replace bespoke implementations. New pipelines clone a template repo with CI/CD, observability, and testing already wired.
 - **Documentation and onboarding** replace tribal knowledge. A new engineer can ship their first pipeline in a day, not a month.
 - **Product roadmaps** replace reactive backlogs. The platform team invests in features (e.g., "multi-cloud data replication") based on customer demand, not whoever shouted loudest in Slack.
@@ -132,7 +132,7 @@ So what does the platform team's **product** consist of? Six core capabilities:
 
 **Golden path:** A Helm chart or Terraform module that deploys a Spark job with sane defaults (retry policies, resource limits, logging sidecars).
 
-**Guardrail:** A policy-as-code rule (e.g., OPA, Kyverno) that prevents workloads from requesting unbounded CPU/memory or running as root.
+**Guardrail:** A policy-as-code rule (e.g., <Citation id="opa-m2-l1" href="https://www.openpolicyagent.org/docs/latest/" quality="official-docs">OPA</Citation>, Kyverno) that prevents workloads from requesting unbounded CPU/memory or running as root.
 
 ### 2. Storage Substrate
 
@@ -148,7 +148,7 @@ So what does the platform team's **product** consist of? Six core capabilities:
 
 **What it is:** Networking, service discovery, ingress/egress, event backbones (Kafka, Pub/Sub, EventBridge).
 
-**What it provides:** VPCs, service meshes (Istio, Linkerd), DNS, load balancing, API gateways, CDC connectors.
+**What it provides:** VPCs, service meshes (<Citation id="istio-m2-l1" href="https://istio.io/latest/docs/" quality="official-docs">Istio</Citation>, Linkerd), DNS, load balancing, API gateways, CDC connectors.
 
 **Golden path:** A service mesh sidecar automatically injected into every pod, providing mTLS, retries, circuit-breaking, and distributed tracing with zero application code changes.
 
@@ -158,7 +158,7 @@ So what does the platform team's **product** consist of? Six core capabilities:
 
 **What it is:** Authentication, authorization, secrets management, encryption, audit logs.
 
-**What it provides:** IAM roles, service accounts, Vault for secrets, KMS for encryption keys, RBAC for Kubernetes, SAML/OIDC for user auth.
+**What it provides:** IAM roles, service accounts, <Citation id="vault-m2-l1" href="https://developer.hashicorp.com/vault/docs" quality="official-docs">Vault</Citation> for secrets, KMS for encryption keys, RBAC for Kubernetes, SAML/OIDC for user auth.
 
 **Golden path:** A CLI command (`platform create-service-account`) that provisions a K8s service account, binds it to a GCP Workload Identity, grants least-privilege IAM roles, and injects secrets into the pod via Vault.
 
@@ -168,7 +168,7 @@ So what does the platform team's **product** consist of? Six core capabilities:
 
 **What it is:** Metrics, logs, traces, alerts, dashboards, SLOs.
 
-**What it provides:** Prometheus + Grafana for metrics, Loki for logs, Tempo for traces, PagerDuty for alerting, pre-built dashboards for common services.
+**What it provides:** <Citation id="prometheus-m2-l1" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation> + <Citation id="grafana-m2-l1" href="https://grafana.com/docs/grafana/latest/" quality="official-docs">Grafana</Citation> for metrics, Loki for logs, Tempo for traces, PagerDuty for alerting, pre-built dashboards for common services.
 
 **Golden path:** Every service deployed via the platform's template automatically emits RED metrics (Rate, Errors, Duration) and logs are shipped to a centralized store with retention policies already configured.
 

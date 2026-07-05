@@ -42,7 +42,7 @@ In legacy systems, workloads authenticate using **shared credentials** — a sin
 
 ### How Workload Identity Works
 
-In Kubernetes on GKE, a pod runs with a **Kubernetes service account** (KSA). You bind that KSA to a **Google Cloud IAM service account** (GSA) using **Workload Identity Federation**. When the pod requests access to BigQuery, the flow is:
+In Kubernetes on GKE, a pod runs with a **Kubernetes service account** (KSA). You bind that KSA to a **Google Cloud IAM service account** (GSA) using **<Citation id="workload-identity-m2-l3" href="https://cloud.google.com/iam/docs/workload-identity-federation" quality="official-docs">Workload Identity Federation</Citation>**. When the pod requests access to BigQuery, the flow is:
 
 1. Pod authenticates to the Kubernetes API using its service account token (injected by the kubelet)
 2. GKE's metadata server intercepts the request and exchanges the KSA token for a GSA token
@@ -126,7 +126,7 @@ Kubernetes Secrets are fine for **non-sensitive configuration** (e.g., feature f
 
 ### Secrets Management Options
 
-The landscape is split between **self-hosted** (HashiCorp Vault) and **cloud-native** (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+The landscape is split between **self-hosted** (<Citation id="vault-m2-l3" href="https://developer.hashicorp.com/vault/docs" quality="official-docs">HashiCorp Vault</Citation>) and **cloud-native** (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
 
 #### HashiCorp Vault
 
@@ -219,7 +219,7 @@ For compliance-sensitive workloads (healthcare, finance), you may need **custome
 
 All traffic between workloads must be encrypted. This is achieved with **mutual TLS (mTLS)** — both client and server present certificates, and the connection is encrypted end-to-end.
 
-Kubernetes service meshes (Istio, Linkerd) automate mTLS:
+Kubernetes service meshes (<Citation id="istio-m2-l3" href="https://istio.io/latest/docs/" quality="official-docs">Istio</Citation>, Linkerd) automate mTLS:
 
 - Every pod gets a certificate issued by the mesh's CA
 - All pod-to-pod traffic is mTLS by default

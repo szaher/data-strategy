@@ -62,7 +62,7 @@ Not all feature stores are created equal. Choose the tier that matches your oper
 
 **Offline-Only Feature Store** — stores historical features in a data warehouse (Snowflake, BigQuery) for training and batch predictions. No real-time serving. Useful when you want feature reuse and point-in-time correctness across training jobs, but all predictions are batch.
 
-**Full Feature Platform** — unified offline + online storage with automated pipelines that keep both in sync. This is what Feast, Tecton, and enterprise platforms provide. High operational complexity, but necessary when you have many models with real-time and batch workloads.
+**Full Feature Platform** — unified offline + online storage with automated pipelines that keep both in sync. This is what <Citation id="feast-m8-l5" href="https://docs.feast.dev/" quality="official-docs">Feast</Citation>, Tecton, and enterprise platforms provide. High operational complexity, but necessary when you have many models with real-time and batch workloads.
 
 ## Model-Data Consistency Patterns
 

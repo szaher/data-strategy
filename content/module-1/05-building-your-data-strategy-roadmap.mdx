@@ -53,12 +53,12 @@ This is your baseline. The roadmap explains how you move from Level 1–2 to Lev
 Pull from your reference architecture (Lesson 4). For our recurring scenario (hybrid recommended archetype):
 
 - **Platform foundations:** Managed Kubernetes (GKE), object storage (GCS), managed Postgres, CI/CD (Cloud Build)
-- **Streaming:** Kafka (MSK or Confluent Cloud)
-- **Processing:** Spark on K8s, dbt for transformations
-- **Storage:** Iceberg lakehouse on object storage
-- **Catalog:** DataHub or Atlan
-- **AI/ML:** Feature store (Feast or Tecton), vector DB (Pinecone or pgvector), RAG orchestration (LangChain)
-- **Observability:** Prometheus, Grafana, OpenTelemetry tracing
+- **Streaming:** <Citation id="kafka-m1-l5" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation> (MSK or Confluent Cloud)
+- **Processing:** <Citation id="spark-m1-l5" href="https://spark.apache.org/docs/latest/" quality="official-docs">Spark</Citation> on K8s, <Citation id="dbt-m1-l5" href="https://docs.getdbt.com/" quality="official-docs">dbt</Citation> for transformations
+- **Storage:** <Citation id="iceberg-m1-l5" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation> lakehouse on object storage
+- **Catalog:** <Citation id="datahub-m1-l5" href="https://datahubproject.io/docs/" quality="official-docs">DataHub</Citation> or Atlan
+- **AI/ML:** Feature store (<Citation id="feast-m1-l5" href="https://docs.feast.dev/" quality="official-docs">Feast</Citation> or Tecton), vector DB (Pinecone or pgvector), RAG orchestration (LangChain)
+- **Observability:** <Citation id="prometheus-m1-l5" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation>, <Citation id="grafana-m1-l5" href="https://grafana.com/docs/grafana/latest/" quality="official-docs">Grafana</Citation>, OpenTelemetry tracing
 
 This is your 12-month destination, not Day 1 deliverables.
 
@@ -216,7 +216,7 @@ Let's apply the strategy canvas to our recurring scenario (e-commerce company, 2
 1. **Kubernetes cluster** on GKE (or EKS) with auto-scaling, pod security policies, network policies
 2. **Object storage** (GCS or S3) with bucket-level RBAC, lifecycle policies for archival
 3. **Managed Postgres** (Cloud SQL or RDS) for app database replication
-4. **Basic CDC pipeline** using Debezium to stream customer events from Postgres to object storage (Parquet files)
+4. **Basic CDC pipeline** using <Citation id="debezium-m1-l5" href="https://debezium.io/documentation/" quality="official-docs">Debezium</Citation> to stream customer events from Postgres to object storage (Parquet files)
 5. **CI/CD** with Cloud Build (or GitHub Actions) for automated deployments
 6. **Initial governance** — data classification schema (PII, confidential, public), RBAC on storage buckets
 

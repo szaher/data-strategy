@@ -173,7 +173,7 @@ For example, detecting account takeover requires knowing how many login attempts
 
 ### Architecture Pattern
 
-Streaming feature pipelines typically use Flink (from Module 5) or similar stream processors:
+Streaming feature pipelines typically use <Citation id="flink-m8-l2" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">Flink</Citation> (from Module 5) or similar stream processors:
 
 <MermaidDiagram chart={`graph LR
     A[Event Stream<br/>Kafka/Pub/Sub] --> B[Flink Job<br/>Windowed Aggregation]

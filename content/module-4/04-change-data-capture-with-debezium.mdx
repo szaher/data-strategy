@@ -8,7 +8,7 @@ Databases change constantly — orders are placed, inventory is updated, user pr
 
 **Change Data Capture (CDC)** solves this problem by capturing changes directly from the database's transaction log (the write-ahead log in PostgreSQL, binlog in MySQL). This approach has minimal impact on the source database and delivers changes with millisecond latency. Instead of asking "what changed?" every few minutes, CDC systems listen to the database's internal stream of changes and forward them to downstream consumers.
 
-This lesson covers four integration patterns — **dual write**, **transactional outbox**, **log-based CDC**, and **event sourcing** — and shows when to use each. We'll focus on **Debezium**, the leading open-source CDC platform, and demonstrate how combining the outbox pattern with Debezium gives you the best of both worlds: transactional guarantees from the application and comprehensive change capture from the database log.
+This lesson covers four integration patterns — **dual write**, **transactional outbox**, **log-based CDC**, and **event sourcing** — and shows when to use each. We'll focus on <Citation id="debezium-m4-l4" href="https://debezium.io/documentation/" quality="official-docs">**Debezium**</Citation>, the leading open-source CDC platform, and demonstrate how combining the outbox pattern with Debezium gives you the best of both worlds: transactional guarantees from the application and comprehensive change capture from the database log.
 
 By the end of this lesson, you'll understand why CDC is essential for modern data platforms, how to choose the right integration pattern for your use case, and how to deploy Debezium to keep derived systems synchronized with your source of truth.
 
@@ -25,7 +25,7 @@ The naive approach is **polling**: run a query every N minutes looking for recor
 
 **CDC captures changes from the database's transaction log.** Databases already write every change to a durable log before applying it to storage — this is how they ensure consistency and support replication. CDC tools read this log and translate it into a stream of change events.
 
-The write-ahead log (WAL) in PostgreSQL, for example, records every committed transaction. Debezium reads the WAL using a **replication slot** (a named position in the log that the database preserves), converts each log entry into a structured event (JSON), and publishes it to Kafka. Downstream consumers read from Kafka and apply the changes to their own data stores.
+The write-ahead log (WAL) in PostgreSQL, for example, records every committed transaction. Debezium reads the WAL using a **replication slot** (a named position in the log that the database preserves), converts each log entry into a structured event (JSON), and publishes it to <Citation id="kafka-m4-l4" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation>. Downstream consumers read from Kafka and apply the changes to their own data stores.
 
 This approach has three major advantages:
 
@@ -160,7 +160,7 @@ In this flow, the application never talks to Kafka. It only writes to the databa
 
 ## Debezium Architecture
 
-**Debezium** is a distributed platform for change data capture. It's built on top of **Kafka Connect**, a framework for streaming data between Kafka and external systems.
+**Debezium** is a distributed platform for change data capture. It's built on top of <Citation id="kafka-connect-m4-l4" href="https://kafka.apache.org/documentation/#connect" quality="official-docs">**Kafka Connect**</Citation>, a framework for streaming data between Kafka and external systems.
 
 Debezium provides **source connectors** for PostgreSQL, MySQL, MongoDB, SQL Server, and Oracle. Each connector knows how to read the database's transaction log and translate it into Kafka events.
 

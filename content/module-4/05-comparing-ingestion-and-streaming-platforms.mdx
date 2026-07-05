@@ -50,14 +50,14 @@ A **criteria-driven decision framework** prevents these failure modes. Compare p
 
 ## The Default: Apache Kafka
 
-**Apache Kafka** is the de facto standard for event streaming. It's battle-tested at massive scale (LinkedIn, Uber, Netflix) and offers the largest ecosystem of connectors, stream processing frameworks, and operational tooling.
+<Citation id="kafka-m4-l5" href="https://kafka.apache.org/documentation/" quality="official-docs">**Apache Kafka**</Citation> is the de facto standard for event streaming. It's battle-tested at massive scale (LinkedIn, Uber, Netflix) and offers the largest ecosystem of connectors, stream processing frameworks, and operational tooling.
 
 ### Kafka's Strengths
 
 - **Strong ordering guarantees:** Events in the same partition maintain strict order.
 - **High throughput:** Designed for millions of messages per second across hundreds of partitions.
 - **Massive ecosystem:** 100+ connectors via Kafka Connect, deep integration with Spark/Flink/Samza.
-- **Kubernetes-native deployment:** Strimzi provides production-grade operators for K8s.
+- **Kubernetes-native deployment:** <Citation id="strimzi-m4-l5" href="https://strimzi.io/documentation/" quality="official-docs">Strimzi</Citation> provides production-grade operators for K8s.
 - **Mature operational tooling:** Extensive monitoring, rebalancing tools, disaster recovery patterns.
 
 ### Kafka's Trade-Offs
@@ -339,8 +339,8 @@ Use this decision tree to map your requirements to the best-fit platform:
 
 Your streaming platform is the **data highway**—events flow through it, but the *real value* comes from **processing** those events:
 
-- **Stream processing frameworks** (Spark Structured Streaming, Flink, ksqlDB) consume events and compute aggregations, joins, and enrichments in real time.
-- **Workflow orchestration tools** (Airflow, Dagster, Prefect) trigger batch jobs when event thresholds are crossed or schedules are met.
+- **Stream processing frameworks** (<Citation id="spark-m4-l5" href="https://spark.apache.org/docs/latest/" quality="official-docs">Spark</Citation> Structured Streaming, <Citation id="flink-m4-l5" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">Flink</Citation>, ksqlDB) consume events and compute aggregations, joins, and enrichments in real time.
+- **Workflow orchestration tools** (<Citation id="airflow-m4-l5" href="https://airflow.apache.org/docs/" quality="official-docs">Airflow</Citation>, Dagster, Prefect) trigger batch jobs when event thresholds are crossed or schedules are met.
 - **Data pipelines** land events in warehouses, lakes, and vector indexes for analytics and AI workloads.
 
 In **Module 5: Orchestration, Workflow & Processing**, we'll connect your event streams to **Apache Airflow DAGs** and **Spark jobs** that transform raw events into queryable datasets. You'll learn when to process streams in real time versus landing them in a lake for batch processing—and how to orchestrate hybrid pipelines that do both.

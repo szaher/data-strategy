@@ -112,7 +112,7 @@ The source system exposes an HTTP API. Consumers send requests and receive respo
 
 ### 2. Events (Publish-Subscribe)
 
-The source system publishes **state change events** to a topic (Kafka, Pub/Sub, EventBridge). Consumers subscribe to the topic and process events asynchronously.
+The source system publishes **state change events** to a topic (<Citation id="kafka-m4-l1" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation>, Pub/Sub, EventBridge). Consumers subscribe to the topic and process events asynchronously.
 
 **Characteristics:**
 - Asynchronous — the producer does not wait for consumers
@@ -169,7 +169,7 @@ A scheduled job extracts data from the source system and loads it into the desti
 
 ### 5. Query Federation
 
-Data stays in the source system. Consumers query it **in-place** using a query engine that federates across multiple sources (Trino, Presto, data virtualization layers).
+Data stays in the source system. Consumers query it **in-place** using a query engine that federates across multiple sources (<Citation id="trino-m4-l1" href="https://trino.io/docs/current/" quality="official-docs">Trino</Citation>, Presto, data virtualization layers).
 
 **Characteristics:**
 - No data movement — queries run against the source

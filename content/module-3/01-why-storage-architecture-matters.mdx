@@ -138,7 +138,7 @@ Analytics workloads require:
 - **Column projection** — read only the columns needed for a query (not entire rows).
 - **Compression** — reduce I/O by compressing columnar data (e.g., run-length encoding for repeated values).
 
-Storage choice: **Parquet** or **ORC** files in object storage (S3, GCS, Azure Blob). These formats store data by column, enabling efficient scans and compression. Query engines like Presto, Trino, Spark, and DuckDB read Parquet directly from object storage.
+Storage choice: **<Citation id="parquet-m3-l1" href="https://parquet.apache.org/documentation/" quality="official-docs">Parquet</Citation>** or **<Citation id="orc-m3-l1" href="https://orc.apache.org/docs/" quality="official-docs">ORC</Citation>** files in object storage (S3, GCS, Azure Blob). These formats store data by column, enabling efficient scans and compression. Query engines like Presto, <Citation id="trino-m3-l1" href="https://trino.io/docs/current/" quality="official-docs">Trino</Citation>, Spark, and DuckDB read Parquet directly from object storage.
 
 ### Append-Heavy → Log/Event Stores
 
@@ -147,7 +147,7 @@ Event streaming workloads require:
 - **Ordered append** — events are written sequentially in time order.
 - **Replay and retention** — reprocess old events or retain for compliance.
 
-Storage choice: **Kafka**, **Kinesis**, **Pulsar**. These systems store events in immutable logs, optimized for sequential writes and sequential reads. Random access is slow or unsupported.
+Storage choice: **<Citation id="kafka-m3-l1" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation>**, **Kinesis**, **Pulsar**. These systems store events in immutable logs, optimized for sequential writes and sequential reads. Random access is slow or unsupported.
 
 ### Unstructured/Multimodal → Object Storage
 
@@ -156,7 +156,7 @@ AI and content workloads require:
 - **Cheap storage** — unstructured data is often large but accessed infrequently.
 - **HTTP-based access** — serve content directly to browsers or ML pipelines.
 
-Storage choice: **S3-compatible object stores** (AWS S3, MinIO, Ceph). These are designed for "write once, read many" workloads. They do not support in-place updates (you must overwrite the entire object) or transactional semantics.
+Storage choice: **S3-compatible object stores** (AWS S3, <Citation id="minio-m3-l1" href="https://min.io/docs/minio/kubernetes/upstream/" quality="official-docs">MinIO</Citation>, Ceph). These are designed for "write once, read many" workloads. They do not support in-place updates (you must overwrite the entire object) or transactional semantics.
 
 ### Low-Latency Key-Value → In-Memory Stores
 

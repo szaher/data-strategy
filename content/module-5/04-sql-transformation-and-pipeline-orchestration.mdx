@@ -6,7 +6,7 @@ title: "SQL Transformation & Pipeline Orchestration"
 
 Modern data platforms run dozens to hundreds of interdependent data pipelines — batch jobs that extract data from APIs, transform raw records into clean tables, aggregate metrics, and publish results to dashboards and machine learning models. Each pipeline depends on upstream data being ready, and failures in one pipeline cascade to everything downstream. Without orchestration, you manually trigger jobs in the right sequence. Without transformation discipline, your SQL logic scatters across scripts, notebooks, and scheduled queries with no testing, no version control, and no lineage visibility.
 
-**dbt** (data build tool) is a transformation framework that brings software engineering practices to SQL — models are SQL files with explicit dependencies, built-in testing, auto-generated documentation, and lineage graphs. **Airflow** is an orchestration platform that schedules and monitors pipelines as directed acyclic graphs (DAGs), handling cross-system dependencies, retries, and SLA enforcement. They solve different problems: dbt transforms data within your warehouse using SQL, Airflow orchestrates the entire pipeline lifecycle across systems (triggering dbt runs, Spark jobs, API calls, and validation tasks).
+<Citation id="dbt-m5-l4" href="https://docs.getdbt.com/" quality="official-docs">**dbt**</Citation> (data build tool) is a transformation framework that brings software engineering practices to SQL — models are SQL files with explicit dependencies, built-in testing, auto-generated documentation, and lineage graphs. **Airflow** is an orchestration platform that schedules and monitors pipelines as directed acyclic graphs (DAGs), handling cross-system dependencies, retries, and SLA enforcement. They solve different problems: dbt transforms data within your warehouse using SQL, Airflow orchestrates the entire pipeline lifecycle across systems (triggering dbt runs, Spark jobs, API calls, and validation tasks).
 
 This lesson clarifies the complementary roles of dbt and Airflow, introduces alternative orchestration models (Dagster, Argo Workflows), and covers pipeline SLAs, retry strategies, freshness guarantees, and idempotency patterns.
 
@@ -97,7 +97,7 @@ dbt auto-generates documentation from your `schema.yml` files and model queries.
 
 ## Airflow as Orchestrator
 
-**Apache Airflow** is a platform for authoring, scheduling, and monitoring workflows as directed acyclic graphs (DAGs). A DAG is a collection of tasks with dependencies — Airflow ensures tasks run in the correct order, retries failed tasks, and tracks execution history. Airflow does not transform data itself; it orchestrates external systems (triggers Spark jobs, calls APIs, runs dbt, validates outputs, publishes metrics).
+<Citation id="airflow-m5-l4" href="https://airflow.apache.org/docs/" quality="official-docs">**Apache Airflow**</Citation> is a platform for authoring, scheduling, and monitoring workflows as directed acyclic graphs (DAGs). A DAG is a collection of tasks with dependencies — Airflow ensures tasks run in the correct order, retries failed tasks, and tracks execution history. Airflow does not transform data itself; it orchestrates external systems (triggers Spark jobs, calls APIs, runs dbt, validates outputs, publishes metrics).
 
 ### DAGs, Operators, and Sensors
 
@@ -152,7 +152,7 @@ This DAG runs daily at 2am. The `extract_orders` task runs in a Kubernetes pod (
 
 ### Kubernetes Executor
 
-Airflow supports multiple executors (LocalExecutor, CeleryExecutor, KubernetesExecutor). The **KubernetesExecutor** launches each task in its own ephemeral Kubernetes pod, providing isolation, resource limits, and scalability. Each pod gets dedicated CPU and memory, runs in a clean environment, and is destroyed after task completion. This prevents resource contention and allows different tasks to use different Docker images (one task runs Spark, another runs dbt, another calls a Python API).
+Airflow supports multiple executors (LocalExecutor, CeleryExecutor, KubernetesExecutor). The **KubernetesExecutor** launches each task in its own ephemeral <Citation id="kubernetes-m5-l4" href="https://kubernetes.io/docs/" quality="official-docs">Kubernetes</Citation> pod, providing isolation, resource limits, and scalability. Each pod gets dedicated CPU and memory, runs in a clean environment, and is destroyed after task completion. This prevents resource contention and allows different tasks to use different Docker images (one task runs Spark, another runs dbt, another calls a Python API).
 
 ### Scheduling, Retries, and Backfill
 

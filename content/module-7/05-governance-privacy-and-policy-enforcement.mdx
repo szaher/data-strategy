@@ -28,7 +28,7 @@ quiz:
 
 You've built a catalog, established lineage, and deployed quality checks. Data can flow freely across your lakehouse, feature pipelines, and vector stores. Teams can discover tables, run queries, and build models. But **governance** is more than discovery — it's **enforcing who can see what, when, and for what purpose**.
 
-Consider a simple scenario: a user requests deletion under GDPR. Your system must:
+Consider a simple scenario: a user requests deletion under <Citation id="gdpr-m7-l5" href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" quality="primary">GDPR</Citation>. Your system must:
 
 - Remove rows from the lakehouse table
 - Purge event logs in Kafka or Kinesis
@@ -116,7 +116,7 @@ WHERE has_tag(column, 'pii')
 RETURNS 'REDACTED';
 `} language="sql" filename="tag-based-masking.sql" />
 
-This illustrates **policy as code** intent — the masking rule is defined once and applies to all columns tagged `pii`, across all tables.
+This illustrates **policy as code** intent — the masking rule is defined once and applies to all columns tagged `pii`, across all tables. See the <Citation id="trino-m7-l5" href="https://trino.io/docs/current/security/built-in-system-access-control.html" quality="official-docs">Trino security documentation</Citation> for configuration details specific to your version and access-control plugin.
 
 <VerifyClaim status="verify">
 The SQL syntax shown for row filters, column masks, and tag-based masking is illustrative. Trino's system access control plugin API, Ranger integration, and OPA integration each use different configuration mechanisms. Verify the Trino documentation for your version and access-control plugin.
@@ -130,7 +130,7 @@ PII doesn't always arrive with a label. A CSV upload might contain phone numbers
 
 ### Automated PII Scanning
 
-Use regex patterns, named entity recognition (NER), or specialized libraries (e.g., Presidio, AWS Macie) to scan new data for:
+Use regex patterns, named entity recognition (NER), or specialized libraries (e.g., <Citation id="presidio-m7-l5" href="https://microsoft.github.io/presidio/" quality="official-docs">Presidio</Citation>, AWS Macie) to scan new data for:
 
 - Email addresses
 - Phone numbers
@@ -297,7 +297,7 @@ Run a **retention enforcement job** (e.g., Airflow DAG) that:
 
 ## Policy-as-Code with Open Policy Agent (OPA)
 
-**Open Policy Agent (OPA)** is a declarative policy engine. You write policies in **Rego**, a logic programming language, and OPA evaluates access requests against those policies.
+<Citation id="opa-m7-l5" href="https://www.openpolicyagent.org/docs/latest/" quality="official-docs">**Open Policy Agent (OPA)**</Citation> is a declarative policy engine. You write policies in **Rego**, a logic programming language, and OPA evaluates access requests against those policies.
 
 ### OPA Architecture
 
@@ -416,7 +416,7 @@ def get_order(order_id):
 
 ### 3. Vector Retrieval and Embedding Stores
 
-Vector databases (Pinecone, Weaviate, Qdrant) often lack built-in RBAC. Enforcement must happen in the application layer:
+Vector databases (<Citation id="pinecone-m7-l5" href="https://docs.pinecone.io/" quality="official-docs">Pinecone</Citation>, <Citation id="weaviate-m7-l5" href="https://weaviate.io/developers/weaviate" quality="official-docs">Weaviate</Citation>, Qdrant) often lack built-in RBAC. Enforcement must happen in the application layer:
 
 - **Metadata filtering:** Store `user_id`, `region`, `tags` as metadata alongside embeddings; filter results based on user permissions
 - **PII-aware search:** Exclude embeddings derived from PII unless the user is authorized
@@ -478,7 +478,7 @@ This is **hard** — most ML systems don't track data-to-prediction lineage. Sta
 
 ## Learner Artifact: Trust and Policy Architecture
 
-**Scenario:** Your recurring lakehouse platform (Module 2–6) now handles customer orders, including PII (email, phone, address). EU customers are subject to GDPR; US customers are subject to CCPA. Data scientists need aggregated views; analysts need raw data but not PII.
+**Scenario:** Your recurring lakehouse platform (Module 2–6) now handles customer orders, including PII (email, phone, address). EU customers are subject to GDPR; US customers are subject to <Citation id="ccpa-m7-l5" href="https://oag.ca.gov/privacy/ccpa" quality="primary">CCPA</Citation>. Data scientists need aggregated views; analysts need raw data but not PII.
 
 **Design:**
 

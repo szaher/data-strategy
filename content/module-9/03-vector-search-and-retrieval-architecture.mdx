@@ -40,7 +40,7 @@ Before you can search, you need to store embeddings somewhere. The storage layer
 
 ### Option 1: Vector-Enabled Relational Databases
 
-**pgvector** is a PostgreSQL extension that adds vector similarity search to an existing relational database. You store embeddings in a column, create an index (IVFFlat or HNSW), and run similarity queries with SQL.
+<Citation id="pgvector-m9-l3" href="https://github.com/pgvector/pgvector" quality="official-docs">**pgvector**</Citation> is a PostgreSQL extension that adds vector similarity search to an existing relational database. You store embeddings in a column, create an index (IVFFlat or HNSW), and run similarity queries with SQL.
 
 **When to use pgvector:**
 - Your data already lives in PostgreSQL
@@ -84,7 +84,7 @@ The power of pgvector is that you can combine vector search with relational filt
 
 ### Option 2: Dedicated Vector Databases
 
-**Milvus**, **Weaviate**, **Qdrant**, and **Pinecone** are purpose-built for vector search. They optimize the entire stack — storage, indexing, query execution — for similarity search at scale.
+**Milvus**, <Citation id="weaviate-m9-l3" href="https://weaviate.io/developers/weaviate" quality="official-docs">**Weaviate**</Citation>, **Qdrant**, and <Citation id="pinecone-m9-l3" href="https://docs.pinecone.io/" quality="official-docs">**Pinecone**</Citation> are purpose-built for vector search. They optimize the entire stack — storage, indexing, query execution — for similarity search at scale.
 
 **When to use a dedicated vector database:**
 - Vector search is your core product (semantic search, recommendation, anomaly detection)

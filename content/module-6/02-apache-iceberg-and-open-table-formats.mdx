@@ -42,7 +42,7 @@ Traditional data lakes stored files in **Parquet** or **Avro** format with no me
 - **Partitioning mistakes:** Users wrote `WHERE date = '2024-01-15'` but forgot the partition column was `dt`, not `date`, causing full table scans.
 - **Time travel:** How do I query yesterday's data for debugging or reproducibility?
 
-Data warehouses solved these problems with **catalog services** and **transaction logs**, but lakehouses needed the same guarantees over object storage. **Apache Iceberg** introduced a metadata layer that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation — all while being designed for **multi-engine interoperability** (Spark, Trino, Flink, Dremio, and Athena support Iceberg, though feature coverage, SQL dialect, and catalog behavior vary by engine and version).
+Data warehouses solved these problems with **catalog services** and **transaction logs**, but lakehouses needed the same guarantees over object storage. <Citation id="iceberg-m6-l2" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">**Apache Iceberg**</Citation> introduced a metadata layer that provides ACID transactions, schema evolution, hidden partitioning, and snapshot isolation — all while being designed for **multi-engine interoperability** (Spark, Trino, Flink, Dremio, and Athena support Iceberg, though feature coverage, SQL dialect, and catalog behavior vary by engine and version).
 
 The second problem is **catalog selection**. The table format defines how data and metadata are structured on disk, but the **catalog** is the service that:
 
@@ -86,7 +86,7 @@ Iceberg's core innovation is a **layered metadata structure** that decouples sch
 
 ### Five-Layer Hierarchy
 
-1. **Catalog:** The external service (Hive Metastore, Nessie, REST catalog, Polaris, Unity Catalog) that stores the **current metadata file location**. When you run `SELECT * FROM orders`, the catalog returns the path to `metadata/v47.json`.
+1. **Catalog:** The external service (Hive Metastore, <Citation id="nessie-m6-l2" href="https://projectnessie.org/docs/" quality="official-docs">Nessie</Citation>, REST catalog, Polaris, Unity Catalog) that stores the **current metadata file location**. When you run `SELECT * FROM orders`, the catalog returns the path to `metadata/v47.json`.
 
 2. **Metadata File:** A JSON file containing:
    - **Current schema** (column names, types, nullability)
@@ -155,7 +155,7 @@ FROM
 **Why this matters for AI/ML reproducibility:** If your training pipeline reads the `orders` table at 9am and generates predictions, you can re-run the exact same training job three months later by querying `FOR SYSTEM_TIME AS OF '2024-06-19 09:00:00'`. This reproduces the table snapshot used during training — though full reproducibility also depends on matching the code version, feature engineering logic, model configuration, and runtime environment.
 
 <VerifyClaim status="verify">
-Time travel SQL syntax (`FOR SYSTEM_VERSION AS OF`, `FOR SYSTEM_TIME AS OF`) varies by query engine. Spark, Trino, and Athena each use different syntax. Verify the time travel query syntax for your specific engine and Iceberg version.
+Time travel SQL syntax (`FOR SYSTEM_VERSION AS OF`, `FOR SYSTEM_TIME AS OF`) varies by query engine. Spark, Trino, and Athena each use different syntax. Verify the time travel query syntax for your specific engine and <Citation id="iceberg-time-travel-m6-l2" href="https://iceberg.apache.org/docs/latest/spark-queries/#time-travel" quality="official-docs">Iceberg</Citation> version.
 </VerifyClaim>
 
 ---
@@ -352,7 +352,7 @@ MERGE BRANCH dev.experimental_pricing INTO main;
 
 ## Delta Lake and Hudi: Comparison Framework
 
-Apache Iceberg is not the only open table format. **Delta Lake** (Databricks) and **Apache Hudi** (Uber) offer overlapping features with different trade-offs.
+Apache Iceberg is not the only open table format. <Citation id="delta-lake-m6-l2" href="https://docs.delta.io/latest/" quality="official-docs">**Delta Lake**</Citation> (Databricks) and <Citation id="hudi-m6-l2" href="https://hudi.apache.org/docs/overview" quality="official-docs">**Apache Hudi**</Citation> (Uber) offer overlapping features with different trade-offs.
 
 <MermaidDiagram chart={`graph TD
     subgraph Iceberg["Apache Iceberg"]

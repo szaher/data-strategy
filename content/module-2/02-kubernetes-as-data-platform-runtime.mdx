@@ -28,7 +28,7 @@ quiz:
 
 Every data platform makes dozens of **workload placement decisions**: should Kafka run on a managed service, self-hosted on Kubernetes, or on bare-metal hardware? What about Spark? Airflow? Databases? Object storage? The answers shape operational cost, team velocity, vendor lock-in, and long-term platform flexibility.
 
-**Kubernetes is not a universal answer** — it is one deployment choice among several, each with trade-offs. Teams that default everything to K8s create operational burden without justification. Teams that default everything to managed services sacrifice control and cost efficiency at scale. The best platforms make **workload-by-workload decisions** using a clear framework.
+**<Citation id="kubernetes-m2-l2" href="https://kubernetes.io/docs/" quality="official-docs">Kubernetes</Citation> is not a universal answer** — it is one deployment choice among several, each with trade-offs. Teams that default everything to K8s create operational burden without justification. Teams that default everything to managed services sacrifice control and cost efficiency at scale. The best platforms make **workload-by-workload decisions** using a clear framework.
 
 This lesson presents that framework. You'll learn:
 
@@ -44,7 +44,7 @@ By the end, you'll know how to evaluate every component in your data stack again
 
 ## The Workload Placement Decision
 
-Modern data platforms are built from **dozens of components**: message brokers (Kafka), compute engines (Spark, Flink), orchestrators (Airflow, Prefect), data warehouses (BigQuery, Snowflake), databases (PostgreSQL, Cassandra), object storage (S3, GCS), monitoring tools (Prometheus, Grafana), and more.
+Modern data platforms are built from **dozens of components**: message brokers (<Citation id="kafka-m2-l2" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation>), compute engines (<Citation id="spark-m2-l2" href="https://spark.apache.org/docs/latest/" quality="official-docs">Spark</Citation>, <Citation id="flink-m2-l2" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">Flink</Citation>), orchestrators (<Citation id="airflow-m2-l2" href="https://airflow.apache.org/docs/" quality="official-docs">Airflow</Citation>, Prefect), data warehouses (BigQuery, Snowflake), databases (PostgreSQL, Cassandra), object storage (S3, GCS), monitoring tools (<Citation id="prometheus-m2-l2" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation>, Grafana), and more.
 
 For each component, platform teams must decide:
 
@@ -117,7 +117,7 @@ Running data workloads on Kubernetes requires **additional machinery** to handle
 A **Kubernetes operator** is a custom controller that extends K8s to manage complex, stateful applications. Instead of manually writing YAML for StatefulSets, Services, PersistentVolumeClaims, and ConfigMaps, you define a **custom resource** (e.g., a `Kafka` CR or a `SparkApplication` CR), and the operator handles the lifecycle.
 
 **Examples of mature data platform operators:**
-- **Strimzi** — manages Kafka clusters, Kafka Connect, MirrorMaker, schema registries
+- **<Citation id="strimzi-m2-l2" href="https://strimzi.io/documentation/" quality="official-docs">Strimzi</Citation>** — manages Kafka clusters, Kafka Connect, MirrorMaker, schema registries
 - **Spark Operator** — submits and monitors Spark jobs as Kubernetes-native resources
 - **Airflow on Kubernetes** — deploys Airflow with Helm, using KubernetesExecutor to run tasks as pods
 - **Postgres Operator (Zalando, Crunchy Data)** — manages highly available PostgreSQL clusters

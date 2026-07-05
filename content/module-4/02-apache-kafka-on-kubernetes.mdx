@@ -26,7 +26,7 @@ quiz:
 
 ## Overview
 
-**Apache Kafka** is a distributed event streaming platform widely adopted for high-throughput messaging, event sourcing, and change data capture in modern data architectures. When deployed on **Kubernetes** using the **Strimzi operator**, Kafka becomes a declarative, cloud-native component of your data platform that integrates seamlessly with container orchestration, autoscaling, and GitOps workflows.
+<Citation id="kafka-m4-l2" href="https://kafka.apache.org/documentation/" quality="official-docs">**Apache Kafka**</Citation> is a distributed event streaming platform widely adopted for high-throughput messaging, event sourcing, and change data capture in modern data architectures. When deployed on <Citation id="kubernetes-m4-l2" href="https://kubernetes.io/docs/" quality="official-docs">**Kubernetes**</Citation> using the <Citation id="strimzi-m4-l2" href="https://strimzi.io/documentation/" quality="official-docs">**Strimzi operator**</Citation>, Kafka becomes a declarative, cloud-native component of your data platform that integrates seamlessly with container orchestration, autoscaling, and GitOps workflows.
 
 This lesson covers Kafka fundamentals (topics, partitions, consumer groups), delivery semantics (at-most-once, at-least-once, exactly-once), production operations (capacity planning, lag monitoring, rebalancing), and the Strimzi operator's role in making Kafka a first-class Kubernetes citizen. You'll learn the most common misconceptions—especially around ordering guarantees and exactly-once semantics—and how to build resilient event-driven systems that handle failures gracefully.
 
@@ -176,7 +176,7 @@ A production Kafka cluster on Kubernetes should have:
 - **Rack awareness** — spread brokers across Kubernetes nodes or availability zones using pod anti-affinity
 - **Persistent volumes** — use a storage class with high IOPS (e.g., SSD-backed `gp3` on AWS, `pd-ssd` on GCP)
 - **Resource limits** — set CPU and memory limits to prevent noisy neighbor issues
-- **Monitoring** — export metrics to Prometheus (Strimzi provides built-in Prometheus exporters)
+- **Monitoring** — export metrics to <Citation id="prometheus-m4-l2" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation> (Strimzi provides built-in Prometheus exporters)
 
 <MermaidDiagram chart={`graph TD
     subgraph K8s["Kubernetes Cluster"]
@@ -305,7 +305,7 @@ spec:
 - **`storage.class: fast-ssd`** — use high-IOPS storage for low-latency writes
 
 <VerifyClaim status="verify">
-Strimzi API versions, Kafka version compatibility, KRaft support status, and CRD schema evolve across releases. Verify the current Strimzi release notes and Apache Kafka documentation for your target versions before using this configuration.
+Strimzi API versions, Kafka version compatibility, KRaft support status, and CRD schema evolve across releases. Verify the current <Citation id="strimzi-compat-m4-l2" href="https://strimzi.io/documentation/" quality="official-docs">Strimzi release notes</Citation> and <Citation id="kafka-compat-m4-l2" href="https://kafka.apache.org/documentation/" quality="official-docs">Apache Kafka documentation</Citation> for your target versions before using this configuration.
 </VerifyClaim>
 
 ---
@@ -337,7 +337,7 @@ Strimzi API versions, Kafka version compatibility, KRaft support status, and CRD
 - **Lag increasing** — consumer is falling behind (under-provisioned, slow processing, or downstream system is bottlenecked)
 
 **Monitoring tools:**
-- **Prometheus + Grafana** — Strimzi exports consumer lag metrics to Prometheus (`kafka_consumergroup_lag`)
+- **Prometheus + <Citation id="grafana-m4-l2" href="https://grafana.com/docs/grafana/latest/" quality="official-docs">Grafana</Citation>** — Strimzi exports consumer lag metrics to Prometheus (`kafka_consumergroup_lag`)
 - **`kafka-consumer-groups.sh`** — CLI tool to inspect lag: `kafka-consumer-groups.sh --bootstrap-server localhost:9092 --group my-group --describe`
 - **Burrow** — LinkedIn's consumer lag monitoring tool (detects stalls and stuck consumers)
 

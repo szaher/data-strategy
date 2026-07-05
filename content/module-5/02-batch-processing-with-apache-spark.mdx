@@ -34,7 +34,7 @@ By the end of this lesson, you will understand how to design Spark pipelines tha
 
 ## Spark Architecture: Driver and Executors
 
-**Apache Spark** is a distributed computing framework that runs data transformations in parallel across a cluster of machines. Unlike traditional batch systems that write intermediate results to disk after every step, Spark holds data in memory when possible and chains transformations into a single execution plan, minimizing I/O and network overhead.
+<Citation id="spark-m5-l2" href="https://spark.apache.org/docs/latest/" quality="official-docs">**Apache Spark**</Citation> is a distributed computing framework that runs data transformations in parallel across a cluster of machines. Unlike traditional batch systems that write intermediate results to disk after every step, Spark holds data in memory when possible and chains transformations into a single execution plan, minimizing I/O and network overhead.
 
 The architecture consists of two primary components:
 
@@ -160,7 +160,7 @@ Shuffles are expensive: they involve writing intermediate data to disk (or memor
 
 ## Spark Operator on Kubernetes
 
-Running Spark on **Kubernetes** using the **Spark Operator** has become the standard deployment model for cloud-native data platforms. Instead of provisioning a permanent Spark cluster (which sits idle between jobs and complicates resource management), Spark Operator allows you to submit Spark jobs as Kubernetes workloads that dynamically request resources, run, and terminate.
+Running Spark on <Citation id="kubernetes-m5-l2" href="https://kubernetes.io/docs/" quality="official-docs">**Kubernetes**</Citation> using the **Spark Operator** has become the standard deployment model for cloud-native data platforms. Instead of provisioning a permanent Spark cluster (which sits idle between jobs and complicates resource management), Spark Operator allows you to submit Spark jobs as Kubernetes workloads that dynamically request resources, run, and terminate.
 
 The **SparkApplication CRD (Custom Resource Definition)** defines a Spark job as a Kubernetes manifest:
 
@@ -231,13 +231,13 @@ Key benefits of this approach:
 
 **RBAC and security:** Kubernetes service accounts control access to storage, secrets, and other cluster resources.
 
-**Observability:** Spark logs and metrics integrate with Kubernetes monitoring tools (Prometheus, Grafana, ELK stack).
+**Observability:** Spark logs and metrics integrate with Kubernetes monitoring tools (<Citation id="prometheus-m5-l2" href="https://prometheus.io/docs/" quality="official-docs">Prometheus</Citation>, <Citation id="grafana-m5-l2" href="https://grafana.com/docs/grafana/latest/" quality="official-docs">Grafana</Citation>, ELK stack).
 
 ## Reading from Multiple Sources
 
 One of Spark's strengths is its ability to read from diverse data sources with a unified API. Common sources include:
 
-**Parquet files:** Columnar storage format optimized for analytics. Supports predicate pushdown and projection pruning.
+**<Citation id="parquet-m5-l2" href="https://parquet.apache.org/documentation/" quality="official-docs">Parquet</Citation> files:** Columnar storage format optimized for analytics. Supports predicate pushdown and projection pruning.
 
 ```python
 df = spark.read.parquet("s3a://data-lake/events/*.parquet")
@@ -337,7 +337,7 @@ recent_purchases = purchases_df \\
 
 ## Writing to Lakehouse: Iceberg Tables
 
-After transforming data, write results to the **lakehouse** for downstream analytics and reporting. **Apache Iceberg** is the preferred table format because it provides:
+After transforming data, write results to the **lakehouse** for downstream analytics and reporting. <Citation id="iceberg-m5-l2" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">**Apache Iceberg**</Citation> is the preferred table format because it provides:
 
 - **ACID transactions:** Writes are atomic; readers never see partial updates.
 - **Schema evolution:** Add or rename columns without rewriting existing data.

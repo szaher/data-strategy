@@ -63,7 +63,7 @@ The **S3 API** has become the de facto standard for object storage. Originally d
 
 **Everything lands in object storage first.** Logs stream from applications into S3. Database exports land as Parquet files. PDFs uploaded by users are written to S3. Training datasets for machine learning models are staged in S3. Fine-tuned LLM weights are versioned in S3. Embeddings for RAG retrieval are persisted in S3 before being indexed into vector databases.
 
-Think of object storage as the **data lake substrate**—the foundational layer on which all other systems are built. Query engines like Trino, Presto, Spark, and DuckDB read directly from S3. Orchestrators like Airflow and Prefect write intermediate outputs to S3. Vector databases ingest embeddings from S3. BI tools query Iceberg/Delta tables stored on S3.
+Think of object storage as the **data lake substrate**—the foundational layer on which all other systems are built. Query engines like <Citation id="trino-m3-l2" href="https://trino.io/docs/current/" quality="official-docs">Trino</Citation>, Presto, Spark, and DuckDB read directly from S3. Orchestrators like <Citation id="airflow-m3-l2" href="https://airflow.apache.org/docs/" quality="official-docs">Airflow</Citation> and Prefect write intermediate outputs to S3. Vector databases ingest embeddings from S3. BI tools query Iceberg/Delta tables stored on S3.
 
 The S3 API is the universal interface. Cloud providers abstract the complexity—replication, erasure coding, global distribution—behind a simple PUT/GET/DELETE API. Self-hosted implementations like MinIO replicate this interface for on-premises or Kubernetes environments.
 
@@ -71,7 +71,7 @@ The S3 API is the universal interface. Cloud providers abstract the complexity�
 
 ## MinIO: Local and Kubernetes Reference Implementation
 
-**MinIO** is an open-source, S3-compatible object storage server designed for cloud-native environments. It implements the S3 API, making it a drop-in replacement for AWS S3 in development, testing, or production scenarios where cloud-native object storage is not suitable.
+**<Citation id="minio-m3-l2" href="https://min.io/docs/minio/kubernetes/upstream/" quality="official-docs">MinIO</Citation>** is an open-source, S3-compatible object storage server designed for cloud-native environments. It implements the S3 API, making it a drop-in replacement for AWS S3 in development, testing, or production scenarios where cloud-native object storage is not suitable.
 
 **When to use MinIO:**
 
@@ -432,7 +432,7 @@ Enable versioning on a bucket. Every object gets a unique version ID. When you P
 
 - **Legal hold** — litigation requires preservation of all data related to a case.
 - **WORM (Write Once Read Many)** — financial records must remain immutable for 7 years.
-- **Audit trails** — compliance frameworks (GDPR, HIPAA, SOX) require immutable logs.
+- **Audit trails** — compliance frameworks (<Citation id="gdpr-m3-l2" href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" quality="primary">GDPR</Citation>, <Citation id="hipaa-m3-l2" href="https://www.hhs.gov/hipaa/index.html" quality="primary">HIPAA</Citation>, <Citation id="sox-m3-l2" href="https://www.congress.gov/bill/107th-congress/house-bill/3763" quality="primary">SOX</Citation>) require immutable logs.
 
 **Example: Enabling versioning and object lock (AWS S3 via boto3):**
 

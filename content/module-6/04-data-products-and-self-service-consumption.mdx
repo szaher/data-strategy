@@ -101,7 +101,7 @@ A common misconception is that **adding a semantic layer makes tables into data 
 - **Dimension**: "Region" maps `country_code` to a human-readable region name.
 - **Relationship**: "Orders" belong to "Customers" via `customer_id`.
 
-Semantic layers are valuable. They eliminate the "five different definitions of MAU" problem by centralizing business logic. Tools like **dbt Semantic Layer**, **Cube.js**, **Looker LookML**, and **Malloy** provide semantic modeling frameworks.
+Semantic layers are valuable. They eliminate the "five different definitions of MAU" problem by centralizing business logic. Tools like <Citation id="dbt-m6-l4" href="https://docs.getdbt.com/" quality="official-docs">**dbt Semantic Layer**</Citation>, **Cube.js**, **Looker LookML**, and **Malloy** provide semantic modeling frameworks.
 
 However, **a semantic layer alone does not make a data product**. It addresses one component—**interface and semantics**—but not the others. A semantic layer does not guarantee:
 
@@ -138,7 +138,7 @@ A complete data product contract includes:
 
 Contracts are not documentation—they are **machine-readable specifications** that the platform can **enforce**. For example:
 
-- **Schema contract** — enforced by Iceberg schema evolution policies, dbt schema tests, or Great Expectations validations.
+- **Schema contract** — enforced by Iceberg schema evolution policies, dbt schema tests, or <Citation id="great-expectations-m6-l4" href="https://docs.greatexpectations.io/docs/" quality="official-docs">Great Expectations</Citation> validations.
 - **Freshness contract** — monitored by data observability tools (Monte Carlo, Datadog, dbt exposures) that alert when SLAs are violated.
 - **Quality contract** — enforced by automated tests run after every data write (dbt tests, Great Expectations checkpoints, Soda checks).
 - **Versioning contract** — enforced by catalog versioning (Iceberg time travel, Delta table versioning, dbt model versions).
@@ -171,9 +171,9 @@ A data product is useless if no one can find it. **Discovery** is the problem of
 
 A **data catalog** is a metadata repository that indexes all data assets in the organization and surfaces them through a search interface. Modern catalogs include:
 
-- **DataHub** (LinkedIn open-source) — metadata graph with lineage, search, and governance.
+- <Citation id="datahub-m6-l4" href="https://datahubproject.io/docs/" quality="official-docs">**DataHub**</Citation> (LinkedIn open-source) — metadata graph with lineage, search, and governance.
 - **Amundsen** (Lyft open-source) — table discovery with popularity rankings and column-level search.
-- **OpenMetadata** — open-source catalog with data quality integration and collaboration features.
+- <Citation id="openmetadata-m6-l4" href="https://docs.open-metadata.org/" quality="official-docs">**OpenMetadata**</Citation> — open-source catalog with data quality integration and collaboration features.
 - **Alation** — commercial catalog with data governance and stewardship workflows.
 
 A catalog ingests metadata from:

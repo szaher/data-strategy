@@ -16,7 +16,7 @@ This lesson shows how to solve the data versioning problem using **Iceberg table
 
 ## Dataset Versioning with Iceberg Snapshots
 
-Iceberg tables (Module 6) support **time-travel**: every write creates an immutable snapshot, and you can query any historical version of the table. This property turns Iceberg into a **native dataset versioning system** for ML.
+<Citation id="iceberg-m8-l4" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation> tables (Module 6) support **time-travel**: every write creates an immutable snapshot, and you can query any historical version of the table. This property turns Iceberg into a **native dataset versioning system** for ML.
 
 ### How Snapshot-Based Versioning Works
 
@@ -68,6 +68,8 @@ The canonical pattern for ML dataset versioning:
 `} fallback="Dataset versioning flow: raw events go through an ETL pipeline into an Iceberg feature table. Each training run reads a specific snapshot (identified by ID and timestamp). The training job logs the snapshot ID to the model registry, which links the deployed model to its exact training data. Reproduction queries the same snapshot to regenerate the identical dataset." />
 
 ### Implementation: Snapshot Tracking in MLflow
+
+The following example uses <Citation id="mlflow-m8-l4" href="https://mlflow.org/docs/latest/" quality="official-docs">MLflow</Citation> to log dataset snapshot metadata alongside model artifacts.
 
 <CodeBlock code={`import mlflow
 from pyspark.sql import SparkSession
@@ -189,7 +191,7 @@ For human-annotated datasets (e.g., image classification, content moderation):
 
 ### Annotation Tools
 
-- **Label Studio** (open-source) — supports images, text, audio, video; integrates with ML pipelines
+- <Citation id="label-studio-m8-l4" href="https://labelstud.io/guide/" quality="official-docs">**Label Studio**</Citation> (open-source) — supports images, text, audio, video; integrates with ML pipelines
 - **Prodigy** (commercial) — active learning workflow, tight integration with spaCy
 - **Amazon SageMaker Ground Truth** — managed service, supports crowdsourcing
 - **Scale AI**, **Labelbox** — enterprise annotation platforms with managed workforce

@@ -38,9 +38,9 @@ Processing engines fall into four workload-fit categories. Each excels at a spec
 
 ### Spark: Large-Scale Batch ETL and Data Preparation
 
-**Apache Spark** is a distributed batch processing engine optimized for large-scale transformations. It reads from storage (S3, HDFS, cloud object stores), applies transformations in memory across a cluster, and writes results back to storage. Spark's **sweet spot** is TB-scale batch ETL — jobs that process hours or days of data at once, apply complex multi-stage transforms (joins, aggregations, window functions), and write results to a lakehouse or warehouse.
+<Citation id="spark-m5-l5" href="https://spark.apache.org/docs/latest/" quality="official-docs">**Apache Spark**</Citation> is a distributed batch processing engine optimized for large-scale transformations. It reads from storage (S3, HDFS, cloud object stores), applies transformations in memory across a cluster, and writes results back to storage. Spark's **sweet spot** is TB-scale batch ETL — jobs that process hours or days of data at once, apply complex multi-stage transforms (joins, aggregations, window functions), and write results to a lakehouse or warehouse.
 
-Spark supports **Spark SQL** (declarative queries), **PySpark** (Python DataFrame API), **Scala**, and **Java**. It integrates with warehouse formats like **Iceberg**, **Delta Lake**, and **Hudi**, making it the default choice for batch data preparation pipelines. Spark jobs are **ephemeral** — compute spins up when the job runs, processes data, and shuts down. You pay per-job, not per-hour.
+Spark supports **Spark SQL** (declarative queries), **PySpark** (Python DataFrame API), **Scala**, and **Java**. It integrates with warehouse formats like <Citation id="iceberg-m5-l5" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">**Iceberg**</Citation>, <Citation id="delta-lake-m5-l5" href="https://docs.delta.io/latest/" quality="official-docs">**Delta Lake**</Citation>, and <Citation id="hudi-m5-l5" href="https://hudi.apache.org/docs/overview" quality="official-docs">**Hudi**</Citation>, making it the default choice for batch data preparation pipelines. Spark jobs are **ephemeral** — compute spins up when the job runs, processes data, and shuts down. You pay per-job, not per-hour.
 
 **When to use Spark:**
 - Batch processing of TB-scale datasets (hourly, daily, weekly cadences)
@@ -56,7 +56,7 @@ Spark supports **Spark SQL** (declarative queries), **PySpark** (Python DataFram
 
 ### Flink: Stateful Streaming and Real-Time Analytics
 
-**Apache Flink** is a distributed streaming engine optimized for **stateful event processing**. Unlike Spark's batch-first model (micro-batching), Flink processes events **one at a time** with **event-time semantics** — it tracks state across windows, handles late-arriving data, and guarantees exactly-once processing. Flink's **sweet spot** is continuous streaming workloads that require low-latency aggregations, joins, or pattern detection over unbounded event streams.
+<Citation id="flink-m5-l5" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">**Apache Flink**</Citation> is a distributed streaming engine optimized for **stateful event processing**. Unlike Spark's batch-first model (micro-batching), Flink processes events **one at a time** with **event-time semantics** — it tracks state across windows, handles late-arriving data, and guarantees exactly-once processing. Flink's **sweet spot** is continuous streaming workloads that require low-latency aggregations, joins, or pattern detection over unbounded event streams.
 
 Flink is **always-on** — clusters run 24/7, even when event volume is low. This provides **millisecond to second latency** but incurs **constant compute cost**. Flink integrates with **Kafka**, **Kinesis**, and **Pulsar** for event ingestion, and writes to **Iceberg**, **S3**, or **Elasticsearch** for sink storage.
 
@@ -74,7 +74,7 @@ Flink is **always-on** — clusters run 24/7, even when event volume is low. Thi
 
 ### dbt: SQL-Based Analytics Engineering
 
-**dbt** (data build tool) is a **transformation framework** for SQL-native workflows. It runs **inside** a data warehouse (Snowflake, BigQuery, Redshift, Databricks) and orchestrates **SQL SELECT statements** as a DAG of transformations. dbt's **sweet spot** is analytics engineering — building curated tables, dimension models, and aggregates from raw warehouse data using version-controlled, tested, documented SQL.
+<Citation id="dbt-m5-l5" href="https://docs.getdbt.com/" quality="official-docs">**dbt**</Citation> (data build tool) is a **transformation framework** for SQL-native workflows. It runs **inside** a data warehouse (Snowflake, BigQuery, Redshift, Databricks) and orchestrates **SQL SELECT statements** as a DAG of transformations. dbt's **sweet spot** is analytics engineering — building curated tables, dimension models, and aggregates from raw warehouse data using version-controlled, tested, documented SQL.
 
 dbt does **not** move data between systems. It leverages the warehouse's compute engine, so you pay per query, not per cluster. dbt is **declarative** — you define the desired state (table definitions as SELECT statements), and dbt generates the DDL/DML to materialize them. It integrates with **Git** for version control, **CI/CD** for testing, and **Airflow/Dagster** for orchestration.
 
@@ -92,7 +92,7 @@ dbt does **not** move data between systems. It leverages the warehouse's compute
 
 ### Ray: Distributed Python for ML and AI Workloads
 
-**Ray** is a distributed Python runtime optimized for **machine learning training, hyperparameter tuning, and batch inference**. Ray is **not** a Spark or Flink replacement — it is explicitly designed for Python-native distributed compute, not SQL-based ETL. Ray's **sweet spot** is workloads that require **parallel execution of Python functions** across a cluster: training multiple models in parallel, running hyperparameter sweeps, or generating embeddings for millions of text documents.
+<Citation id="ray-m5-l5" href="https://docs.ray.io/en/latest/" quality="official-docs">**Ray**</Citation> is a distributed Python runtime optimized for **machine learning training, hyperparameter tuning, and batch inference**. Ray is **not** a Spark or Flink replacement — it is explicitly designed for Python-native distributed compute, not SQL-based ETL. Ray's **sweet spot** is workloads that require **parallel execution of Python functions** across a cluster: training multiple models in parallel, running hyperparameter sweeps, or generating embeddings for millions of text documents.
 
 Ray provides **Ray Train** (distributed training), **Ray Tune** (hyperparameter optimization), **Ray Serve** (model serving), and **Ray Data** (data loading for ML). Ray clusters are **session-based** — you spin up compute for a training job, run the job, and shut down. Ray integrates with **PyTorch**, **TensorFlow**, **scikit-learn**, and **Hugging Face** for model training.
 

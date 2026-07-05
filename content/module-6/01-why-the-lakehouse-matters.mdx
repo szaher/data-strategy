@@ -133,7 +133,7 @@ The lakehouse *is* a data lake with a governance layer on top.
 
 ### 1. Open File Formats
 
-Lakehouse tables are stored as **Parquet files** — a columnar format that compresses well, prunes columns efficiently, and works with any engine.
+Lakehouse tables are stored as <Citation id="parquet-m6-l1" href="https://parquet.apache.org/documentation/" quality="official-docs">**Parquet**</Citation> files — a columnar format that compresses well, prunes columns efficiently, and works with any engine.
 
 **Why Parquet?**
 - **Columnar storage** — reading one column from a billion rows is fast.
@@ -142,9 +142,9 @@ Lakehouse tables are stored as **Parquet files** — a columnar format that comp
 - **Open spec** — any tool can read Parquet without vendor permission.
 
 **Table format adds metadata:**
-- **Delta Lake** stores a `_delta_log/` directory with JSON files tracking file additions/removals, schema, and partition info.
-- **Iceberg** uses manifest files listing data files, partition values, and row counts.
-- **Hudi** tracks base files and log files for incremental updates.
+- <Citation id="delta-lake-m6-l1" href="https://docs.delta.io/latest/" quality="official-docs">**Delta Lake**</Citation> stores a `_delta_log/` directory with JSON files tracking file additions/removals, schema, and partition info.
+- <Citation id="iceberg-m6-l1" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">**Iceberg**</Citation> uses manifest files listing data files, partition values, and row counts.
+- <Citation id="hudi-m6-l1" href="https://hudi.apache.org/docs/overview" quality="official-docs">**Hudi**</Citation> tracks base files and log files for incremental updates.
 
 The metadata turns a pile of Parquet files into a **transactional table**.
 

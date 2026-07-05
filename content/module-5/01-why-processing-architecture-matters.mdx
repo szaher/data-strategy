@@ -86,8 +86,8 @@ Kappa's mistake was **over-generalization**. Not every workload needs sub-second
 
 The current best practice abandons one-size-fits-all architectures. Instead, it combines three principles:
 
-1. **Choose the right engine for each workload** — use batch engines (Spark, Trino) for historical analysis and backfills, streaming engines (Flink, Spark Structured Streaming) for real-time processing
-2. **Unify output formats** — both batch and streaming pipelines write to the same lakehouse tables (Apache Iceberg, Delta Lake), ensuring consistency without code duplication
+1. **Choose the right engine for each workload** — use batch engines (<Citation id="spark-m5-l1" href="https://spark.apache.org/docs/latest/" quality="official-docs">Spark</Citation>, <Citation id="trino-m5-l1" href="https://trino.io/docs/current/" quality="official-docs">Trino</Citation>) for historical analysis and backfills, streaming engines (<Citation id="flink-m5-l1" href="https://nightlies.apache.org/flink/flink-docs-stable/" quality="official-docs">Flink</Citation>, Spark Structured Streaming) for real-time processing
+2. **Unify output formats** — both batch and streaming pipelines write to the same lakehouse tables (<Citation id="iceberg-m5-l1" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Apache Iceberg</Citation>, <Citation id="delta-lake-m5-l1" href="https://docs.delta.io/latest/" quality="official-docs">Delta Lake</Citation>), ensuring consistency without code duplication
 3. **Recognize batch and stream serve different needs** — batch optimizes for throughput and cost, streaming optimizes for latency and freshness
 
 You no longer maintain two codebases computing the same metric. Instead, you maintain purpose-built pipelines that share storage formats. A batch job computes daily revenue aggregates and writes them to an Iceberg table. A streaming job computes real-time revenue and appends to the same table with a different partition key. Consumers query one table and get both historical accuracy and up-to-the-minute freshness.
@@ -156,7 +156,7 @@ The choice depends on your warehouse capabilities and team skills:
   - You need to filter or deduplicate massive datasets before loading (cost/performance optimization)
   - Source data is too messy to land raw (PII scrubbing, malformed JSON)
 
-Modern platforms favor ELT because lakehouse engines (Spark, Trino) handle complex transformations efficiently, and version-controlled SQL (dbt, SQLMesh) lets teams collaborate on transformation logic. But ETL still has a place for preprocessing that doesn't fit SQL.
+Modern platforms favor ELT because lakehouse engines (Spark, Trino) handle complex transformations efficiently, and version-controlled SQL (<Citation id="dbt-m5-l1" href="https://docs.getdbt.com/" quality="official-docs">dbt</Citation>, SQLMesh) lets teams collaborate on transformation logic. But ETL still has a place for preprocessing that doesn't fit SQL.
 
 ## Unified vs Specialized Processing Paths
 

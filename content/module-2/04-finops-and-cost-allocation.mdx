@@ -159,7 +159,7 @@ Object storage (GCS, S3) offers **storage classes** with different cost/performa
 - **Nearline/Cool** — monthly access, retrieval fee ($0.010/GB/month + $0.01/GB read)
 - **Coldline/Archive** — quarterly or annual access ($0.004/GB/month + $0.02/GB read)
 
-**Lifecycle policies** automate tiering: data lands in Standard, transitions to Nearline after 30 days, Coldline after 90 days, Archive after 365 days. For **Iceberg** and **Delta Lake** tables, you can tier by **partition age** — recent partitions stay hot, old partitions move to cold storage.
+**Lifecycle policies** automate tiering: data lands in Standard, transitions to Nearline after 30 days, Coldline after 90 days, Archive after 365 days. For **<Citation id="iceberg-m2-l4" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation>** and **<Citation id="delta-lake-m2-l4" href="https://docs.delta.io/latest/" quality="official-docs">Delta Lake</Citation>** tables, you can tier by **partition age** — recent partitions stay hot, old partitions move to cold storage.
 
 ### 3. Query Optimization
 

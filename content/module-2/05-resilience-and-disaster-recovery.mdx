@@ -45,7 +45,7 @@ Every infrastructure component exists within a **failure domain** — a boundary
 Data platforms naturally span multiple failure domains because storage, compute, and metadata layers are often deployed separately:
 
 - **Object storage (S3, GCS, Azure Blob)** is zone-redundant by default within a region, but not cross-region unless explicitly configured.
-- **Kafka brokers** are distributed across zones with in-sync replicas (ISR), but leadership elections during zone failures can pause production for 10-30 seconds.
+- **<Citation id="kafka-m2-l5" href="https://kafka.apache.org/documentation/" quality="official-docs">Kafka</Citation> brokers** are distributed across zones with in-sync replicas (ISR), but leadership elections during zone failures can pause production for 10-30 seconds.
 - **Spark executors and Flink TaskManagers** are stateless compute spread across zones, but job state in checkpoints may reside in a single zone's persistent volume.
 - **Metadata stores (Hive Metastore, Unity Catalog, Glue)** are typically multi-AZ for the control plane but may have single-zone caches or leader nodes.
 
@@ -330,7 +330,7 @@ Each layer has different blast radius, recovery speed, and consistency tradeoffs
 
 High availability and disaster recovery are consequences of storage architecture decisions. Where you store data, how many replicas you maintain, and whether you use synchronous or asynchronous replication all determine achievable RPO/RTO. Multi-AZ Kafka with `min.insync.replicas=2` provides sub-second RPO. Daily backups to S3 provide 24-hour RPO. You cannot retrofit low RPO onto a storage layer designed for cost optimization.
 
-**Module 3 (Data Storage & Lakehouse Architecture)** will unpack these durability tradeoffs in depth: the difference between S3 Standard (99.999999999% durability) and S3 One Zone-IA (single-zone risk), the consistency guarantees of Delta Lake transaction logs, and how Iceberg's metadata layer enables time-travel queries that simplify DR. The resilience patterns you have learned in this lesson — multi-AZ replication, service-tiered RPO/RTO, restore testing — are only implementable if the storage layer beneath them is architected for resilience from the start.
+**Module 3 (Data Storage & Lakehouse Architecture)** will unpack these durability tradeoffs in depth: the difference between S3 Standard (99.999999999% durability) and S3 One Zone-IA (single-zone risk), the consistency guarantees of <Citation id="delta-lake-m2-l5" href="https://docs.delta.io/latest/" quality="official-docs">Delta Lake</Citation> transaction logs, and how <Citation id="iceberg-m2-l5" href="https://iceberg.apache.org/docs/latest/" quality="official-docs">Iceberg</Citation>'s metadata layer enables time-travel queries that simplify DR. The resilience patterns you have learned in this lesson — multi-AZ replication, service-tiered RPO/RTO, restore testing — are only implementable if the storage layer beneath them is architected for resilience from the start.
 
 ## Summary
 
