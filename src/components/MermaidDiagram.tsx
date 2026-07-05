@@ -131,9 +131,6 @@ export default function MermaidDiagram({ chart, fallback, children }: MermaidDia
           </div>
         )}
       </div>
-      {svgHtml && (
-        <p className="sr-only">{fallback || "Diagram"}</p>
-      )}
     </>
   );
 }

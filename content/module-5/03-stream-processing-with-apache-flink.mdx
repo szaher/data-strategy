@@ -89,7 +89,7 @@ Flink generates watermarks based on the timestamps embedded in your events. A co
 
 If an event with timestamp 10:04:45 arrives after the watermark for 10:04:50 has passed, it's **late data**. Flink can either drop it, process it separately (side outputs), or allow a grace period (**allowed lateness**) before finalizing the window.
 
-**Processing time** still has valid use cases: when you care about *when the system observed the event* rather than when it happened. Example: monitoring pipeline lag, alerting on "no events received in the last 5 minutes," or approximations where determinism isn't critical. But for business logic — aggregations, analytics, machine learning features — always use event time.
+**Processing time** still has valid use cases: when you care about *when the system observed the event* rather than when it happened. Example: monitoring pipeline lag, alerting on "no events received in the last 5 minutes," or approximations where determinism isn't critical. For event-time business logic — aggregations, analytics, machine learning features — prefer event time unless the product requirement is explicitly about observation or processing time.
 
 ---
 

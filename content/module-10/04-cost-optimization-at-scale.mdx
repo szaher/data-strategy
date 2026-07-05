@@ -2,7 +2,7 @@
 title: "Cost Optimization at Scale"
 ---
 
-<Callout type="info" title="About the numbers in this lesson">
+<Callout tone="info" title="About the numbers in this lesson">
 All prices, percentages, and savings figures in this lesson are illustrative examples, not forecasts or provider quotes. Replace them with your organization's actual costs, negotiated rates, and workload measurements before using them for planning.
 </Callout>
 
@@ -77,7 +77,7 @@ Unit economics surfaces **cost regressions** before they compound. If cost per q
 
 ## Storage Tiering Optimization
 
-**Storage tiering** exploits the access frequency distribution of data. Most production data platforms follow a **power law**: 20% of data accounts for 80% of queries, and 50% of data is rarely accessed after the first week. Hot storage (SSD-backed, low-latency) costs 10x more than cold storage (object storage, higher latency). Paying hot-storage prices for data that's queried once a month is waste.
+**Storage tiering** exploits the access frequency distribution of data. Many production data platforms follow a skewed distribution: a small fraction of data serves most queries, while a large share is rarely accessed after the first week. The cost difference between hot storage (SSD-backed, low-latency) and cold storage (object storage, higher latency) varies by provider, region, and storage class — but is typically significant. Paying hot-storage prices for data that's queried once a month is waste.
 
 **Lifecycle automation** moves data across tiers based on last-access timestamps:
 
@@ -93,7 +93,7 @@ Unit economics surfaces **cost regressions** before they compound. If cost per q
 3. **Automate transitions** — lifecycle rules apply policies without manual intervention.
 4. **Monitor retrieval costs** — if cold data is frequently retrieved, the retrieval fees may exceed the storage savings. Promote it back to warm tier.
 
-**Common tiering mistake**: moving data to cold storage to save on storage costs, then incurring 10x the savings in retrieval fees because stakeholders still query it monthly. **Best practice**: track retrieval frequency before tiering. If a dataset is queried more than once per quarter, keep it in warm tier.
+**Common tiering mistake**: moving data to cold storage to save on storage costs, then incurring more in retrieval fees than was saved because stakeholders still query it monthly. **Best practice**: track retrieval frequency before tiering. If a dataset is queried more than once per quarter, keep it in warm tier.
 
 <CodeBlock code={`-- Storage tiering analysis query (BigQuery example)
 WITH table_access AS (
@@ -154,7 +154,7 @@ This query identifies tables larger than 100 GB, calculates current storage cost
 
 ### Batch Workloads: Spot/Preemptible Instances
 
-Batch jobs (ETL pipelines, training runs, report generation) are **interruptible** — if a spot instance is reclaimed, the job retries. Spot instances cost 50-80% less than on-demand. At scale, running all batch compute on spot saves tens of thousands per month.
+Batch jobs (ETL pipelines, training runs, report generation) are **interruptible** — if a spot instance is reclaimed, the job retries. Spot instances typically cost significantly less than on-demand (discounts vary by provider, region, instance type, and availability). At scale, running batch compute on spot can yield meaningful savings.
 
 **Best practices**:
 - Use **fault-tolerant orchestrators** (Airflow with retries, Kubernetes jobs with restart policies).
@@ -165,7 +165,7 @@ Batch jobs (ETL pipelines, training runs, report generation) are **interruptible
 
 ### Steady-State Workloads: Reserved Instances
 
-Services that run 24/7 (query engines, API servers, feature stores) have **predictable baseline load**. Reserved instances (1-year or 3-year commitments) cost 30-50% less than on-demand. If your query engine runs 12 nodes continuously, commit to reserved capacity for those 12 nodes.
+Services that run 24/7 (query engines, API servers, feature stores) have **predictable baseline load**. Reserved instances or committed-use contracts (1-year or 3-year commitments) offer discounts over on-demand pricing (the percentage varies by provider, term, and instance family). If your query engine runs a stable node count continuously, commit to reserved capacity for the baseline.
 
 **Best practices**:
 - Reserve for **baseline capacity**, not peak. Use autoscaling or on-demand for spikes.
@@ -185,12 +185,12 @@ User-facing services with **variable load** (dashboards with morning spike, ML i
     A[Workload Analysis] --> B{Workload Type}
     
     B -->|Batch ETL, Training| C[Spot/Preemptible]
-    C --> C1[50-80% cost savings]
+    C --> C1[Significant cost savings]
     C --> C2[Fault-tolerant orchestration]
     C --> C3[Checkpoint long jobs]
     
     B -->|24/7 Query Engine, APIs| D[Reserved Instances]
-    D --> D1[30-50% cost savings]
+    D --> D1[Commitment-based savings]
     D --> D2[Commit to baseline capacity]
     D --> D3[Review quarterly]
     
@@ -208,7 +208,7 @@ User-facing services with **variable load** (dashboards with morning spike, ML i
     style D fill:#bee3f8,stroke:#3182ce
     style E fill:#feebc8,stroke:#dd6b20
     style F fill:#e6fffa,stroke:#319795
-`} fallback="Compute right-sizing decision tree: workload analysis branches into three types. Batch ETL and training jobs use spot/preemptible instances (50-80% savings, fault-tolerant orchestration, checkpoint long jobs). Steady-state 24/7 query engines and APIs use reserved instances (30-50% savings, commit to baseline, review quarterly). Bursty dashboards and inference use autoscaling on-demand (provision for average, scale for peak, aggressive scale-down). All three paths feed into a unified cost optimization decision." />
+`} fallback="Compute right-sizing decision tree: workload analysis branches into three types. Batch ETL and training jobs use spot/preemptible instances (significant savings, fault-tolerant orchestration, checkpoint long jobs). Steady-state 24/7 query engines and APIs use reserved instances (commitment-based savings, commit to baseline, review quarterly). Bursty dashboards and inference use autoscaling on-demand (provision for average, scale for peak, aggressive scale-down). All three paths feed into a unified cost optimization decision." />
 
 **Example**: A machine learning platform runs 100 training jobs per day (batch), serves 50 models via API (steady-state), and handles inference spikes during product launches (bursty). Right-sized compute strategy:
 
@@ -361,7 +361,7 @@ At scale, you have dozens of optimization opportunities. **Prioritize by ROI**: 
 
 **High ROI optimizations** (do these first):
 
-1. **Storage tiering for cold data** — automated lifecycle policies, minimal engineering effort, 30-50% storage savings on cold data.
+1. **Storage tiering for cold data** — automated lifecycle policies, minimal engineering effort, meaningful storage savings on infrequently accessed data.
 2. **Spot instances for batch workloads** — change cluster configuration, savings appear immediately, 50-80% compute savings.
 3. **Reserved instances for steady-state workloads** — one-time commitment decision, 30-50% savings for predictable baseline load.
 4. **Query result caching** — implement caching layer, 20-40% query cost reduction for repeated queries.

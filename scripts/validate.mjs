@@ -307,7 +307,7 @@ async function validateMdx(file, knownCitationIds) {
     const nextComponent = body.slice(match.index + 1).search(/\n\s*<[A-Z/]/);
     const end = nextComponent === -1 ? body.length : match.index + 1 + nextComponent;
     const componentSource = body.slice(match.index, end);
-    if (!/\sfallback=/.test(componentSource)) add("warning", file, "MermaidDiagram is missing fallback text.");
+    if (!/\sfallback=/.test(componentSource)) add("error", file, "MermaidDiagram is missing fallback text.");
   }
 
   const riskyClaimPattern = /\b(best|most popular|guaranteed|always|never|latest)\b/i;

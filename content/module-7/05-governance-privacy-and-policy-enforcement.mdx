@@ -28,16 +28,16 @@ quiz:
 
 You've built a catalog, established lineage, and deployed quality checks. Data can flow freely across your lakehouse, feature pipelines, and vector stores. Teams can discover tables, run queries, and build models. But **governance** is more than discovery — it's **enforcing who can see what, when, and for what purpose**.
 
-Consider a simple scenario: a user requests deletion under <Citation id="gdpr-m7-l5" href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" quality="primary">GDPR</Citation>. Your system must:
+Consider a scenario: a user requests erasure under <Citation id="gdpr-m7-l5" href="https://eur-lex.europa.eu/eli/reg/2016/679/oj" quality="primary">GDPR</Citation> Article 17. The request triggers a review of where that user's data resides — potentially across:
 
-- Remove rows from the lakehouse table
-- Purge event logs in Kafka or Kinesis
-- Clear feature store values
-- Delete embeddings from vector indexes
-- Revoke cached query results
-- Remove derived aggregates and snapshots
+- Lakehouse tables
+- Event logs in Kafka or Kinesis
+- Feature store values
+- Embeddings in vector indexes
+- Cached query results
+- Derived aggregates and snapshots
 
-If deletion is not **propagated** across all copies, you are not compliant. If PII is not **masked** for analysts who don't need it, you expose the organization to risk. If data can flow across regional boundaries without enforcement, you violate residency requirements.
+Whether each copy requires deletion, anonymization, or retention depends on the applicable legal basis, contractual obligations, retention requirements, backup treatment, and legal holds. The challenge is **identifying all copies and applying the appropriate action to each** — not assuming every copy must be deleted unconditionally. If PII is not **masked** for analysts who don't need it, you expose the organization to risk. If data can flow across regional boundaries without enforcement, you violate residency requirements.
 
 Governance is the **policy enforcement layer** that sits on top of your infrastructure IAM. Infrastructure IAM (Module 2) controls **who can deploy resources or run pipelines**. Data governance controls **who can read which rows and columns, based on tags, roles, and data sensitivity**.
 
@@ -203,20 +203,24 @@ A privileged service can call the vault to detokenize, but analysts querying the
 
 ### Enforcement Points
 
-1. **Storage partitioning:** Use Iceberg's partitioning to store EU data in S3 EU buckets and US data in S3 US buckets.
+1. **Jurisdictional storage separation:** Maintain separate tables or catalogs per jurisdiction, each backed by a region-local bucket. A single table with `LOCATION 's3://lakehouse-{region}/...'` does **not** dynamically route writes by partition value — the location is a static path. Instead, use separate tables with explicit locations and route writes at ingestion time:
 
-<CodeBlock code={`CREATE TABLE lakehouse.sales.orders (
-  order_id BIGINT,
-  customer_id BIGINT,
-  region STRING,
-  order_date DATE,
-  amount DECIMAL(10,2)
+<CodeBlock code={`-- Separate tables per jurisdiction, each in a region-local bucket
+CREATE TABLE lakehouse_eu.sales.orders (
+  order_id BIGINT, customer_id BIGINT, order_date DATE, amount DECIMAL(10,2)
 )
-PARTITIONED BY (region)
-LOCATION 's3://lakehouse-{region}/orders/';
-`} language="sql" filename="partitioned-residency.sql" />
+LOCATION 's3://lakehouse-eu-west-1/sales/orders/';
 
-When data is written with `region='eu'`, it lands in `s3://lakehouse-eu/orders/region=eu/`. Storage is physically separated.
+CREATE TABLE lakehouse_us.sales.orders (
+  order_id BIGINT, customer_id BIGINT, order_date DATE, amount DECIMAL(10,2)
+)
+LOCATION 's3://lakehouse-us-east-1/sales/orders/';
+
+-- Ingestion routing decides which table receives each record
+-- based on the customer's jurisdiction (determined upstream)
+`} language="sql" filename="jurisdictional-storage.sql" />
+
+Storage is physically separated by design — EU data never lands in US buckets. Ingestion pipelines route records to the correct jurisdictional table based on customer metadata.
 
 2. **Query-time enforcement:** If a US analyst queries EU data, reject the query or return masked results.
 

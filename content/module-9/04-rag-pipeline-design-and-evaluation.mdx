@@ -309,12 +309,12 @@ Not all RAG applications have the same quality requirements. Prioritize metrics 
 - **Cost** drives viability at scale — shave tokens wherever possible
 - **Safety** avoids PR disasters — one offensive response shuts down the product
 
-Set **SLA thresholds** for critical metrics and alert when they degrade. For example:
+Set **SLA thresholds** for critical metrics and alert when they degrade. The following are illustrative starting points — calibrate to your use case, risk tolerance, corpus size, and model:
 
-- Recall@10 must stay above 0.85
-- Groundedness rate must stay above 0.95
-- p95 latency must stay below 2 seconds
-- Cost per query must stay below $0.02
+- Recall@10 above 0.85
+- Groundedness rate above 0.95
+- p95 latency below 2 seconds
+- Cost per query below $0.02
 
 Run evaluations **on every code change, reindex, and model swap.** Treat evaluation like integration tests — failures block deployment.
 
